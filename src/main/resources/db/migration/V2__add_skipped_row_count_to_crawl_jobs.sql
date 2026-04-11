@@ -1,0 +1,2 @@
+ALTER TABLE crawl_jobs
+ADD COLUMN skipped_row_count INTEGER NOT NULL DEFAULT 0;
