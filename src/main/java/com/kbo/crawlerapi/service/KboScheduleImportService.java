@@ -11,12 +11,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import com.kbo.crawlerapi.crawler.KboScheduleClient;
-import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboScheduleParser;
 import com.kbo.crawlerapi.parser.KboScheduleParser.MonthlyScheduleParseResult;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
-import com.kbo.crawlerapi.repository.GameRepository;
+import com.kbo.crawlerapi.repository.ScheduleGameWriteRepository;
 import com.kbo.crawlerapi.repository.TeamRepository;
 import com.kbo.crawlerapi.support.TeamCatalog;
 import com.kbo.crawlerapi.support.TeamCatalog.TeamDefinition;
@@ -29,7 +28,7 @@ public class KboScheduleImportService {
     private final KboScheduleClient kboScheduleClient;
     private final KboScheduleParser kboScheduleParser;
     private final TeamRepository teamRepository;
-    private final GameRepository gameRepository;
+    private final ScheduleGameWriteRepository scheduleGameWriteRepository;
     private final CrawlJobTrackingService crawlJobTrackingService;
     private final Clock applicationClock;
 
@@ -37,14 +36,14 @@ public class KboScheduleImportService {
             KboScheduleClient kboScheduleClient,
             KboScheduleParser kboScheduleParser,
             TeamRepository teamRepository,
-            GameRepository gameRepository,
+            ScheduleGameWriteRepository scheduleGameWriteRepository,
             CrawlJobTrackingService crawlJobTrackingService,
             Clock applicationClock
     ) {
         this.kboScheduleClient = kboScheduleClient;
         this.kboScheduleParser = kboScheduleParser;
         this.teamRepository = teamRepository;
-        this.gameRepository = gameRepository;
+        this.scheduleGameWriteRepository = scheduleGameWriteRepository;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.applicationClock = applicationClock;
     }
@@ -210,7 +209,12 @@ public class KboScheduleImportService {
             teamUpdatedCount += awayTeamResult.updated() ? 1 : 0;
             teamUpdatedCount += homeTeamResult.updated() ? 1 : 0;
 
-            GameUpsertResult gameResult = upsertGame(parsedGame, awayTeamResult.team(), homeTeamResult.team(), appliedAt);
+            ScheduleGameWriteRepository.GameWriteResult gameResult = scheduleGameWriteRepository.upsertScheduleGame(
+                    parsedGame,
+                    awayTeamResult.team(),
+                    homeTeamResult.team(),
+                    sourceUpdatedAtForApply(parsedGame, appliedAt)
+            );
             gameCreatedCount += gameResult.created() ? 1 : 0;
             gameUpdatedCount += gameResult.updated() ? 1 : 0;
         }
@@ -248,111 +252,11 @@ public class KboScheduleImportService {
                 ));
     }
 
-    private GameUpsertResult upsertGame(ParsedScheduleGame parsedGame, Team awayTeam, Team homeTeam, OffsetDateTime appliedAt) {
-        String publicGameId = buildPublicGameId(parsedGame, awayTeam, homeTeam);
-        OffsetDateTime sourceUpdatedAt = sourceUpdatedAtForApply(parsedGame, appliedAt);
-        if (parsedGame.providerGameId() != null) {
-            var existingByProviderGameId = gameRepository.findByProviderAndProviderGameId(
-                    parsedGame.provider(),
-                    parsedGame.providerGameId()
-            );
-            if (existingByProviderGameId.isPresent()) {
-                Game existingGame = existingByProviderGameId.get();
-                boolean updated = existingGame.syncSchedule(
-                        publicGameId,
-                        parsedGame.providerGameId(),
-                        parsedGame.gameDate(),
-                        parsedGame.scheduledAt(),
-                        parsedGame.stadium(),
-                        parsedGame.status(),
-                        homeTeam,
-                        awayTeam,
-                        parsedGame.homeScore(),
-                        parsedGame.awayScore(),
-                        parsedGame.isCancelled(),
-                        parsedGame.isPostponed(),
-                        parsedGame.cancelReason(),
-                        parsedGame.rawCancelText(),
-                        sourceUpdatedAt
-                );
-                if (updated) {
-                    gameRepository.save(existingGame);
-                }
-                return new GameUpsertResult(existingGame, false, updated);
-            }
-        }
-
-        return gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
-                parsedGame.provider(),
-                parsedGame.gameDate(),
-                homeTeam.getId(),
-                awayTeam.getId()
-        ).map(existingGame -> {
-            boolean updated = existingGame.syncSchedule(
-                    publicGameId,
-                    parsedGame.providerGameId(),
-                    parsedGame.gameDate(),
-                    parsedGame.scheduledAt(),
-                    parsedGame.stadium(),
-                    parsedGame.status(),
-                    homeTeam,
-                    awayTeam,
-                    parsedGame.homeScore(),
-                    parsedGame.awayScore(),
-                    parsedGame.isCancelled(),
-                    parsedGame.isPostponed(),
-                    parsedGame.cancelReason(),
-                    parsedGame.rawCancelText(),
-                    sourceUpdatedAt
-            );
-            if (updated) {
-                gameRepository.save(existingGame);
-            }
-            return new GameUpsertResult(existingGame, false, updated);
-        }).orElseGet(() -> new GameUpsertResult(
-                gameRepository.save(new Game(
-                        UUID.randomUUID(),
-                        publicGameId,
-                        parsedGame.provider(),
-                        parsedGame.providerGameId(),
-                        parsedGame.gameDate(),
-                        parsedGame.scheduledAt(),
-                        parsedGame.stadium(),
-                        parsedGame.status(),
-                        homeTeam,
-                        awayTeam,
-                        parsedGame.homeScore(),
-                        parsedGame.awayScore(),
-                        null,
-                        parsedGame.isCancelled(),
-                        parsedGame.isPostponed(),
-                        parsedGame.cancelReason(),
-                        parsedGame.rawCancelText(),
-                        sourceUpdatedAt
-                )),
-                true,
-                false
-        ));
-    }
-
     private OffsetDateTime sourceUpdatedAtForApply(ParsedScheduleGame parsedGame, OffsetDateTime appliedAt) {
         return parsedGame.sourceUpdatedAt() == null ? appliedAt : parsedGame.sourceUpdatedAt();
     }
 
-    private String buildPublicGameId(ParsedScheduleGame parsedGame, Team awayTeam, Team homeTeam) {
-        TeamDefinition awayDefinition = TeamCatalog.fromProviderName(parsedGame.awayProviderTeamName());
-        TeamDefinition homeDefinition = TeamCatalog.fromProviderName(parsedGame.homeProviderTeamName());
-        return "%s-%s-%s".formatted(
-                parsedGame.gameDate().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE),
-                homeDefinition.publicCode(),
-                awayDefinition.publicCode()
-        );
-    }
-
     private record TeamUpsertResult(Team team, boolean created, boolean updated) {
-    }
-
-    private record GameUpsertResult(Game game, boolean created, boolean updated) {
     }
 
     private record PersistResult(

@@ -1,10 +1,6 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
@@ -20,19 +16,17 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import com.kbo.crawlerapi.crawler.KboScheduleClient;
 import com.kbo.crawlerapi.domain.CrawlJob;
-import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboScheduleParser;
 import com.kbo.crawlerapi.parser.KboScheduleParser.MonthlyScheduleParseResult;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
 import com.kbo.crawlerapi.parser.KboScheduleParser.SkippedScheduleRow;
-import com.kbo.crawlerapi.repository.GameRepository;
+import com.kbo.crawlerapi.repository.ScheduleGameWriteRepository;
 import com.kbo.crawlerapi.repository.TeamRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,12 +35,10 @@ class KboScheduleImportServiceTest {
     @Mock
     private TeamRepository teamRepository;
 
-    @Mock
-    private GameRepository gameRepository;
-
     private StubKboScheduleClient kboScheduleClient;
     private StubKboScheduleParser kboScheduleParser;
     private StubCrawlJobTrackingService crawlJobTrackingService;
+    private StubScheduleGameWriteRepository scheduleGameWriteRepository;
     private KboScheduleImportService kboScheduleImportService;
     private OffsetDateTime appliedAt;
 
@@ -57,11 +49,12 @@ class KboScheduleImportServiceTest {
         kboScheduleClient = new StubKboScheduleClient();
         kboScheduleParser = new StubKboScheduleParser();
         crawlJobTrackingService = new StubCrawlJobTrackingService();
+        scheduleGameWriteRepository = new StubScheduleGameWriteRepository();
         kboScheduleImportService = new KboScheduleImportService(
                 kboScheduleClient,
                 kboScheduleParser,
                 teamRepository,
-                gameRepository,
+                scheduleGameWriteRepository,
                 crawlJobTrackingService,
                 fixedClock
         );
@@ -104,13 +97,7 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
-                eq("kbo"),
-                eq(LocalDate.of(2026, 4, 17)),
-                eq(doosan.getId()),
-                eq(kia.getId())
-        )).thenReturn(Optional.empty());
-        when(gameRepository.save(any(Game.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(true, false);
 
         ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 4));
 
@@ -119,37 +106,18 @@ class KboScheduleImportServiceTest {
         assertThat(result.skippedRowCount()).isEqualTo(1);
         assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
 
-        ArgumentCaptor<Game> savedGame = ArgumentCaptor.forClass(Game.class);
-        verify(gameRepository).save(savedGame.capture());
-        assertThat(savedGame.getValue().getProviderGameId()).isNull();
-        assertThat(savedGame.getValue().getGameDate()).isEqualTo(LocalDate.of(2026, 4, 17));
-        assertThat(savedGame.getValue().getSourceUpdatedAt()).isEqualTo(appliedAt);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isNull();
+        assertThat(scheduleGameWriteRepository.parsedGame.gameDate()).isEqualTo(LocalDate.of(2026, 4, 17));
+        assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
+        assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
+        assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
     }
 
     @Test
-    void importMonthlyScheduleBackfillsProviderGameIdViaNaturalKeyMatch() {
+    void importMonthlyScheduleCountsPublicGameUpdate() {
         Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
         Team doosan = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
-        Game existingGame = new Game(
-                UUID.randomUUID(),
-                "20260417-DOO-KIA",
-                "kbo",
-                null,
-                LocalDate.of(2026, 4, 17),
-                OffsetDateTime.of(2026, 4, 17, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
-                "잠실",
-                GameStatus.SCHEDULED,
-                doosan,
-                kia,
-                null,
-                null,
-                null,
-                false,
-                false,
-                null,
-                null,
-                null
-        );
         ParsedScheduleGame parsedGame = new ParsedScheduleGame(
                 "kbo",
                 "20260417HTOB0",
@@ -171,21 +139,17 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndProviderGameId("kbo", "20260417HTOB0")).thenReturn(Optional.empty());
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
-                eq("kbo"),
-                eq(LocalDate.of(2026, 4, 17)),
-                eq(doosan.getId()),
-                eq(kia.getId())
-        )).thenReturn(Optional.of(existingGame));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
 
         ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 4));
 
         assertThat(result.gameCreatedCount()).isZero();
         assertThat(result.gameUpdatedCount()).isEqualTo(1);
-        assertThat(existingGame.getProviderGameId()).isEqualTo("20260417HTOB0");
-        assertThat(existingGame.getSourceUpdatedAt()).isEqualTo(appliedAt);
-        verify(gameRepository).save(existingGame);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame).isSameAs(parsedGame);
+        assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
+        assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
+        assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
     }
 
     @Test
@@ -237,14 +201,7 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndProviderGameId("kbo", "20260517HTOB0")).thenReturn(Optional.empty());
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
-                eq("kbo"),
-                eq(requestedDate),
-                eq(doosan.getId()),
-                eq(kia.getId())
-        )).thenReturn(Optional.empty());
-        when(gameRepository.save(any(Game.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(true, false);
 
         DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
 
@@ -258,11 +215,12 @@ class KboScheduleImportServiceTest {
         assertThat(result.skippedRowCount()).isEqualTo(1);
         assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
 
-        ArgumentCaptor<Game> savedGame = ArgumentCaptor.forClass(Game.class);
-        verify(gameRepository).save(savedGame.capture());
-        assertThat(savedGame.getValue().getProviderGameId()).isEqualTo("20260517HTOB0");
-        assertThat(savedGame.getValue().getGameDate()).isEqualTo(requestedDate);
-        assertThat(savedGame.getValue().getSourceUpdatedAt()).isEqualTo(appliedAt);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isEqualTo("20260517HTOB0");
+        assertThat(scheduleGameWriteRepository.parsedGame.gameDate()).isEqualTo(requestedDate);
+        assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
+        assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
+        assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
     }
 
     @Test
@@ -270,26 +228,6 @@ class KboScheduleImportServiceTest {
         LocalDate requestedDate = LocalDate.of(2026, 5, 17);
         Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
         Team doosan = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
-        Game existingGame = new Game(
-                UUID.randomUUID(),
-                "20260517-DOO-KIA",
-                "kbo",
-                "20260517HTOB0",
-                requestedDate,
-                OffsetDateTime.of(2026, 5, 17, 17, 0, 0, 0, ZoneOffset.ofHours(9)),
-                "잠실",
-                GameStatus.SCHEDULED,
-                doosan,
-                kia,
-                null,
-                null,
-                null,
-                false,
-                false,
-                null,
-                null,
-                OffsetDateTime.of(2026, 5, 17, 9, 0, 0, 0, ZoneOffset.ofHours(9))
-        );
         ParsedScheduleGame parsedGame = new ParsedScheduleGame(
                 "kbo",
                 "20260517HTOB0",
@@ -311,43 +249,24 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndProviderGameId("kbo", "20260517HTOB0")).thenReturn(Optional.of(existingGame));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
 
         DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
 
         assertThat(result.gameCreatedCount()).isZero();
         assertThat(result.gameUpdatedCount()).isEqualTo(1);
-        assertThat(existingGame.getScheduledAt()).isEqualTo(OffsetDateTime.of(2026, 5, 17, 18, 30, 0, 0, ZoneOffset.ofHours(9)));
-        assertThat(existingGame.getSourceUpdatedAt()).isEqualTo(appliedAt);
-        verify(gameRepository).save(existingGame);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame).isSameAs(parsedGame);
+        assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
+        assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
+        assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
     }
 
     @Test
     void crawlDayDoesNotSaveOrCountIdenticalExistingGame() {
         LocalDate requestedDate = LocalDate.of(2026, 5, 17);
-        OffsetDateTime existingSourceUpdatedAt = OffsetDateTime.of(2026, 5, 17, 9, 0, 0, 0, ZoneOffset.ofHours(9));
         Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
         Team doosan = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
-        Game existingGame = new Game(
-                UUID.randomUUID(),
-                "20260517-DOO-KIA",
-                "kbo",
-                "20260517HTOB0",
-                requestedDate,
-                OffsetDateTime.of(2026, 5, 17, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
-                "잠실",
-                GameStatus.SCHEDULED,
-                doosan,
-                kia,
-                null,
-                null,
-                null,
-                false,
-                false,
-                null,
-                null,
-                existingSourceUpdatedAt
-        );
         ParsedScheduleGame parsedGame = new ParsedScheduleGame(
                 "kbo",
                 "20260517HTOB0",
@@ -369,14 +288,17 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndProviderGameId("kbo", "20260517HTOB0")).thenReturn(Optional.of(existingGame));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, false);
 
         DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
 
         assertThat(result.gameCreatedCount()).isZero();
         assertThat(result.gameUpdatedCount()).isZero();
-        assertThat(existingGame.getSourceUpdatedAt()).isEqualTo(existingSourceUpdatedAt);
-        verify(gameRepository, never()).save(any(Game.class));
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame).isSameAs(parsedGame);
+        assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
+        assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
+        assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
     }
 
     private static final class StubKboScheduleClient extends KboScheduleClient {
@@ -437,6 +359,31 @@ class KboScheduleImportServiceTest {
         @Override
         public void markFailed(UUID crawlJobId, String failureStage, String errorMessage, Throwable throwable, int skippedRowCount) {
             this.failedJobId = crawlJobId;
+        }
+    }
+
+    private static final class StubScheduleGameWriteRepository implements ScheduleGameWriteRepository {
+
+        private GameWriteResult nextResult = new GameWriteResult(false, false);
+        private int callCount;
+        private ParsedScheduleGame parsedGame;
+        private Team awayTeam;
+        private Team homeTeam;
+        private OffsetDateTime sourceUpdatedAt;
+
+        @Override
+        public GameWriteResult upsertScheduleGame(
+                ParsedScheduleGame parsedGame,
+                Team awayTeam,
+                Team homeTeam,
+                OffsetDateTime sourceUpdatedAt
+        ) {
+            this.callCount++;
+            this.parsedGame = parsedGame;
+            this.awayTeam = awayTeam;
+            this.homeTeam = homeTeam;
+            this.sourceUpdatedAt = sourceUpdatedAt;
+            return nextResult;
         }
     }
 }
