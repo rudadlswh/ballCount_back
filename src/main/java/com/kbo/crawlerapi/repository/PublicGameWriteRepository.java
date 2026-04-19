@@ -1,0 +1,257 @@
+package com.kbo.crawlerapi.repository;
+
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
+import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
+
+@Repository
+public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
+
+    private static final DateTimeFormatter GENERATED_PROVIDER_GAME_ID_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmm");
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public PublicGameWriteRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Override
+    public GameWriteResult upsertScheduleGame(
+            ParsedScheduleGame parsedGame,
+            Team awayTeam,
+            Team homeTeam,
+            OffsetDateTime sourceUpdatedAt
+    ) {
+        Optional<PublicGameRow> existingByProviderGameId = parsedGame.providerGameId() == null
+                ? Optional.empty()
+                : findByProviderAndProviderGameId(parsedGame.provider(), parsedGame.providerGameId());
+
+        Optional<PublicGameRow> existingGame = existingByProviderGameId.isPresent()
+                ? existingByProviderGameId
+                : findByProviderAndNaturalKey(parsedGame, awayTeam, homeTeam);
+
+        if (existingGame.isPresent()) {
+            PublicGameRow existing = existingGame.get();
+            String providerGameId = parsedGame.providerGameId() == null
+                    ? existing.providerGameId()
+                    : parsedGame.providerGameId();
+            boolean changed = hasChanges(existing, parsedGame, awayTeam, homeTeam, providerGameId, sourceUpdatedAt);
+            if (changed) {
+                update(existing.id(), parsedGame, awayTeam, homeTeam, providerGameId, sourceUpdatedAt);
+            }
+            return new GameWriteResult(false, changed);
+        }
+
+        insert(parsedGame, awayTeam, homeTeam, effectiveProviderGameId(parsedGame, awayTeam, homeTeam), sourceUpdatedAt);
+        return new GameWriteResult(true, false);
+    }
+
+    private Optional<PublicGameRow> findByProviderAndProviderGameId(String provider, String providerGameId) {
+        return jdbcTemplate.query(
+                """
+                        SELECT id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
+                               home_team_id, away_team_id, home_score, away_score, is_cancelled,
+                               is_postponed, source_updated_at
+                        FROM public.games
+                        WHERE provider = ? AND provider_game_id = ?
+                        """,
+                rowMapper(),
+                provider,
+                providerGameId
+        ).stream().findFirst();
+    }
+
+    private Optional<PublicGameRow> findByProviderAndNaturalKey(
+            ParsedScheduleGame parsedGame,
+            Team awayTeam,
+            Team homeTeam
+    ) {
+        return jdbcTemplate.query(
+                """
+                        SELECT id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
+                               home_team_id, away_team_id, home_score, away_score, is_cancelled,
+                               is_postponed, source_updated_at
+                        FROM public.games
+                        WHERE provider = ?
+                          AND game_date = ?
+                          AND home_team_id = ?
+                          AND away_team_id = ?
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """,
+                rowMapper(),
+                parsedGame.provider(),
+                parsedGame.gameDate(),
+                homeTeam.getId(),
+                awayTeam.getId()
+        ).stream().findFirst();
+    }
+
+    private void insert(
+            ParsedScheduleGame parsedGame,
+            Team awayTeam,
+            Team homeTeam,
+            String providerGameId,
+            OffsetDateTime sourceUpdatedAt
+    ) {
+        jdbcTemplate.update(
+                """
+                        INSERT INTO public.games (
+                            id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
+                            home_team_id, away_team_id, home_score, away_score, inning_state,
+                            is_cancelled, is_postponed, source_updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+                        """,
+                UUID.randomUUID(),
+                parsedGame.provider(),
+                providerGameId,
+                parsedGame.gameDate(),
+                parsedGame.scheduledAt(),
+                parsedGame.stadium(),
+                parsedGame.status().getApiValue(),
+                homeTeam.getId(),
+                awayTeam.getId(),
+                normalizedScore(parsedGame.homeScore()),
+                normalizedScore(parsedGame.awayScore()),
+                parsedGame.isCancelled(),
+                parsedGame.isPostponed(),
+                sourceUpdatedAt
+        );
+    }
+
+    private void update(
+            UUID id,
+            ParsedScheduleGame parsedGame,
+            Team awayTeam,
+            Team homeTeam,
+            String providerGameId,
+            OffsetDateTime sourceUpdatedAt
+    ) {
+        jdbcTemplate.update(
+                """
+                        UPDATE public.games
+                        SET provider_game_id = ?,
+                            game_date = ?,
+                            scheduled_at = ?,
+                            stadium = ?,
+                            status = ?,
+                            home_team_id = ?,
+                            away_team_id = ?,
+                            home_score = ?,
+                            away_score = ?,
+                            is_cancelled = ?,
+                            is_postponed = ?,
+                            source_updated_at = ?,
+                            updated_at = now()
+                        WHERE id = ?
+                        """,
+                providerGameId,
+                parsedGame.gameDate(),
+                parsedGame.scheduledAt(),
+                parsedGame.stadium(),
+                parsedGame.status().getApiValue(),
+                homeTeam.getId(),
+                awayTeam.getId(),
+                normalizedScore(parsedGame.homeScore()),
+                normalizedScore(parsedGame.awayScore()),
+                parsedGame.isCancelled(),
+                parsedGame.isPostponed(),
+                sourceUpdatedAt,
+                id
+        );
+    }
+
+    private boolean hasChanges(
+            PublicGameRow existing,
+            ParsedScheduleGame parsedGame,
+            Team awayTeam,
+            Team homeTeam,
+            String providerGameId,
+            OffsetDateTime sourceUpdatedAt
+    ) {
+        return !Objects.equals(existing.providerGameId(), providerGameId)
+                || !Objects.equals(existing.gameDate(), parsedGame.gameDate())
+                || !sameInstant(existing.scheduledAt(), parsedGame.scheduledAt())
+                || !Objects.equals(existing.stadium(), parsedGame.stadium())
+                || !Objects.equals(existing.status(), parsedGame.status().getApiValue())
+                || !Objects.equals(existing.homeTeamId(), homeTeam.getId())
+                || !Objects.equals(existing.awayTeamId(), awayTeam.getId())
+                || !Objects.equals(existing.homeScore(), normalizedScore(parsedGame.homeScore()))
+                || !Objects.equals(existing.awayScore(), normalizedScore(parsedGame.awayScore()))
+                || existing.cancelled() != parsedGame.isCancelled()
+                || existing.postponed() != parsedGame.isPostponed()
+                || !sameInstant(existing.sourceUpdatedAt(), sourceUpdatedAt);
+    }
+
+    private String effectiveProviderGameId(ParsedScheduleGame parsedGame, Team awayTeam, Team homeTeam) {
+        if (parsedGame.providerGameId() != null) {
+            return parsedGame.providerGameId();
+        }
+        OffsetDateTime scheduledAt = parsedGame.scheduledAt() == null
+                ? parsedGame.gameDate().atStartOfDay().atOffset(ZoneOffset.UTC)
+                : parsedGame.scheduledAt().withOffsetSameInstant(ZoneOffset.UTC);
+        return "sched-%s-%s-%s".formatted(
+                scheduledAt.format(GENERATED_PROVIDER_GAME_ID_TIME_FORMAT),
+                awayTeam.getId().toString().substring(0, 8),
+                homeTeam.getId().toString().substring(0, 8)
+        );
+    }
+
+    private Integer normalizedScore(Integer score) {
+        return score == null ? 0 : score;
+    }
+
+    private boolean sameInstant(OffsetDateTime lhs, OffsetDateTime rhs) {
+        if (lhs == null || rhs == null) {
+            return lhs == rhs;
+        }
+        return lhs.toInstant().equals(rhs.toInstant());
+    }
+
+    private RowMapper<PublicGameRow> rowMapper() {
+        return (rs, rowNum) -> new PublicGameRow(
+                rs.getObject("id", UUID.class),
+                rs.getString("provider"),
+                rs.getString("provider_game_id"),
+                rs.getObject("game_date", java.time.LocalDate.class),
+                rs.getObject("scheduled_at", OffsetDateTime.class),
+                rs.getString("stadium"),
+                rs.getString("status"),
+                rs.getObject("home_team_id", UUID.class),
+                rs.getObject("away_team_id", UUID.class),
+                rs.getInt("home_score"),
+                rs.getInt("away_score"),
+                rs.getBoolean("is_cancelled"),
+                rs.getBoolean("is_postponed"),
+                rs.getObject("source_updated_at", OffsetDateTime.class)
+        );
+    }
+
+    private record PublicGameRow(
+            UUID id,
+            String provider,
+            String providerGameId,
+            java.time.LocalDate gameDate,
+            OffsetDateTime scheduledAt,
+            String stadium,
+            String status,
+            UUID homeTeamId,
+            UUID awayTeamId,
+            Integer homeScore,
+            Integer awayScore,
+            boolean cancelled,
+            boolean postponed,
+            OffsetDateTime sourceUpdatedAt
+    ) {
+    }
+}
