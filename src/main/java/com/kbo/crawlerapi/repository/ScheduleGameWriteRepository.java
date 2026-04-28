@@ -10,6 +10,7 @@ public interface ScheduleGameWriteRepository {
             ParsedScheduleGame parsedGame,
             Team awayTeam,
             Team homeTeam,
+            String publicGameId,
             OffsetDateTime sourceUpdatedAt
     );
 

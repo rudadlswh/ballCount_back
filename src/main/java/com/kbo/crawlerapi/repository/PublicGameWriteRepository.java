@@ -29,6 +29,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             ParsedScheduleGame parsedGame,
             Team awayTeam,
             Team homeTeam,
+            String publicGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
         Optional<PublicGameRow> existingByProviderGameId = parsedGame.providerGameId() == null
@@ -44,24 +45,24 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             String providerGameId = parsedGame.providerGameId() == null
                     ? existing.providerGameId()
                     : parsedGame.providerGameId();
-            boolean changed = hasChanges(existing, parsedGame, awayTeam, homeTeam, providerGameId, sourceUpdatedAt);
+            boolean changed = hasChanges(existing, parsedGame, awayTeam, homeTeam, publicGameId, providerGameId, sourceUpdatedAt);
             if (changed) {
-                update(existing.id(), parsedGame, awayTeam, homeTeam, providerGameId, sourceUpdatedAt);
+                update(existing.id(), parsedGame, awayTeam, homeTeam, publicGameId, providerGameId, sourceUpdatedAt);
             }
             return new GameWriteResult(false, changed);
         }
 
-        insert(parsedGame, awayTeam, homeTeam, effectiveProviderGameId(parsedGame, awayTeam, homeTeam), sourceUpdatedAt);
+        insert(parsedGame, awayTeam, homeTeam, publicGameId, effectiveProviderGameId(parsedGame, awayTeam, homeTeam), sourceUpdatedAt);
         return new GameWriteResult(true, false);
     }
 
     private Optional<PublicGameRow> findByProviderAndProviderGameId(String provider, String providerGameId) {
         return jdbcTemplate.query(
                 """
-                        SELECT id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
+                        SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                                home_team_id, away_team_id, home_score, away_score, is_cancelled,
                                is_postponed, source_updated_at
-                        FROM public.games
+                        FROM games
                         WHERE provider = ? AND provider_game_id = ?
                         """,
                 rowMapper(),
@@ -77,10 +78,10 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     ) {
         return jdbcTemplate.query(
                 """
-                        SELECT id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
+                        SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                                home_team_id, away_team_id, home_score, away_score, is_cancelled,
                                is_postponed, source_updated_at
-                        FROM public.games
+                        FROM games
                         WHERE provider = ?
                           AND game_date = ?
                           AND home_team_id = ?
@@ -100,17 +101,18 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             ParsedScheduleGame parsedGame,
             Team awayTeam,
             Team homeTeam,
+            String publicGameId,
             String providerGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
         jdbcTemplate.update(
                 """
-                        INSERT INTO public.games (
+                        INSERT INTO games (
                             id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                             home_team_id, away_team_id, home_score, away_score, inning_state,
-                            is_cancelled, is_postponed, source_updated_at
+                            is_cancelled, is_postponed, source_updated_at, public_game_id
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
                         """,
                 UUID.randomUUID(),
                 parsedGame.provider(),
@@ -125,7 +127,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 normalizedScore(parsedGame.awayScore()),
                 parsedGame.isCancelled(),
                 parsedGame.isPostponed(),
-                sourceUpdatedAt
+                sourceUpdatedAt,
+                publicGameId
         );
     }
 
@@ -134,13 +137,15 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             ParsedScheduleGame parsedGame,
             Team awayTeam,
             Team homeTeam,
+            String publicGameId,
             String providerGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
         jdbcTemplate.update(
                 """
-                        UPDATE public.games
+                        UPDATE games
                         SET provider_game_id = ?,
+                            public_game_id = ?,
                             game_date = ?,
                             scheduled_at = ?,
                             stadium = ?,
@@ -156,6 +161,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                         WHERE id = ?
                         """,
                 providerGameId,
+                publicGameId,
                 parsedGame.gameDate(),
                 parsedGame.scheduledAt(),
                 parsedGame.stadium(),
@@ -176,10 +182,12 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             ParsedScheduleGame parsedGame,
             Team awayTeam,
             Team homeTeam,
+            String publicGameId,
             String providerGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
-        return !Objects.equals(existing.providerGameId(), providerGameId)
+        return !Objects.equals(existing.publicGameId(), publicGameId)
+                || !Objects.equals(existing.providerGameId(), providerGameId)
                 || !Objects.equals(existing.gameDate(), parsedGame.gameDate())
                 || !sameInstant(existing.scheduledAt(), parsedGame.scheduledAt())
                 || !Objects.equals(existing.stadium(), parsedGame.stadium())
@@ -221,6 +229,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     private RowMapper<PublicGameRow> rowMapper() {
         return (rs, rowNum) -> new PublicGameRow(
                 rs.getObject("id", UUID.class),
+                rs.getString("public_game_id"),
                 rs.getString("provider"),
                 rs.getString("provider_game_id"),
                 rs.getObject("game_date", java.time.LocalDate.class),
@@ -239,6 +248,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
 
     private record PublicGameRow(
             UUID id,
+            String publicGameId,
             String provider,
             String providerGameId,
             java.time.LocalDate gameDate,

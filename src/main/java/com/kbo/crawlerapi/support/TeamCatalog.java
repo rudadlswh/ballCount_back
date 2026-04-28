@@ -16,6 +16,8 @@ public final class TeamCatalog {
             Map.entry("KT", new TeamDefinition("kt", "KT Wiz", "KT", "KT Wiz", null, "KT")),
             Map.entry("한화", new TeamDefinition("hanwha", "Hanwha Eagles", "Hanwha", "Hanwha Eagles", null, "HAN"))
     );
+    private static final Map<String, TeamDefinition> TEAM_CODE_MAP = PROVIDER_NAME_MAP.values().stream()
+            .collect(java.util.stream.Collectors.toUnmodifiableMap(TeamDefinition::teamCode, definition -> definition));
 
     private TeamCatalog() {
     }
@@ -26,6 +28,14 @@ public final class TeamCatalog {
             throw new IllegalArgumentException("Unsupported provider team name: " + providerName);
         }
         return teamDefinition;
+    }
+
+    public static String publicCodeForTeamCode(String teamCode) {
+        TeamDefinition teamDefinition = TEAM_CODE_MAP.get(teamCode);
+        if (teamDefinition == null) {
+            throw new IllegalArgumentException("Unsupported team code: " + teamCode);
+        }
+        return teamDefinition.publicCode();
     }
 
     public record TeamDefinition(

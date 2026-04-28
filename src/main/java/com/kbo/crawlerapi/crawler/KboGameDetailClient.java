@@ -58,4 +58,23 @@ public class KboGameDetailClient {
             throw new IllegalStateException("Failed to fetch KBO line score for " + providerGameId, exception);
         }
     }
+
+    public String fetchBoxScore(String providerGameId, int seasonId) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("leId", "1");
+        form.add("srId", "0");
+        form.add("seasonId", String.valueOf(seasonId));
+        form.add("gameId", providerGameId);
+
+        try {
+            return restClient.post()
+                    .uri("/ws/Schedule.asmx/GetBoxScoreScroll")
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientException exception) {
+            throw new IllegalStateException("Failed to fetch KBO box score for " + providerGameId, exception);
+        }
+    }
 }

@@ -108,6 +108,10 @@ class GameDetailImportServiceTest {
                 true,
                 false,
                 null,
+                null,
+                false,
+                null,
+                null,
                 "detail-hash"
         ));
         kboLineScoreParser.result = new KboLineScoreParser.ParsedLineScoreResult(
@@ -166,6 +170,77 @@ class GameDetailImportServiceTest {
         assertThat(crawlJobTrackingService.importedLineScoreCount).isEqualTo(2);
     }
 
+    @Test
+    void resolvesOfficialDetailByMatchupAndBackfillsProviderGameIdWhenStoredIdIsSynthetic() {
+        Game game = syntheticFixtureGame();
+        CrawlJob crawlJob = new CrawlJob(
+                UUID.randomUUID(),
+                "game-detail-import",
+                "game",
+                game.getPublicGameId(),
+                "running",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+        String officialProviderGameId = "20260423HHLG0";
+        kboGameDetailClient.detailBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260423HHLG0",
+                      "HOME_ID": "LG",
+                      "AWAY_ID": "HH",
+                      "S_NM": "잠실",
+                      "G_TM": "18:30"
+                    }
+                  ]
+                }
+                """;
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                officialProviderGameId,
+                GameStatus.FINAL,
+                false,
+                false,
+                null,
+                null,
+                6,
+                3,
+                9,
+                "top",
+                "Top 9",
+                0,
+                1,
+                3,
+                false,
+                false,
+                false,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(result.providerGameId()).isEqualTo(officialProviderGameId);
+        assertThat(game.getProviderGameId()).isEqualTo(officialProviderGameId);
+        assertThat(game.getStatus()).isEqualTo(GameStatus.FINAL);
+        assertThat(game.getAwayScore()).isEqualTo(6);
+        assertThat(game.getHomeScore()).isEqualTo(3);
+        assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).isEqualTo(officialProviderGameId);
+        assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
+    }
+
     private Game fixtureGame() {
         Team homeTeam = new Team(
                 UUID.fromString("11111111-1111-1111-1111-111111111111"),
@@ -205,6 +280,45 @@ class GameDetailImportServiceTest {
         );
     }
 
+    private Game syntheticFixtureGame() {
+        Team homeTeam = new Team(
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                "lg",
+                "LG Twins",
+                "LG",
+                "LG Twins",
+                null
+        );
+        Team awayTeam = new Team(
+                UUID.fromString("33333333-3333-3333-3333-333333333333"),
+                "hanwha",
+                "Hanwha Eagles",
+                "Hanwha",
+                "Hanwha Eagles",
+                null
+        );
+        return new Game(
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                "20260423-LG-HAN",
+                "kbo",
+                "sched-202604230930-c5d5aa85-799034c4",
+                LocalDate.of(2026, 4, 23),
+                OffsetDateTime.of(2026, 4, 23, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                GameStatus.LIVE,
+                homeTeam,
+                awayTeam,
+                0,
+                0,
+                null,
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+    }
+
     private String hash(String value) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -223,6 +337,7 @@ class GameDetailImportServiceTest {
 
         private String detailBody;
         private String lineScoreBody;
+        private String lastRequestedScoreboardProviderGameId;
 
         @Override
         public String fetchGameList(LocalDate gameDate) {
@@ -231,6 +346,7 @@ class GameDetailImportServiceTest {
 
         @Override
         public String fetchScoreBoard(String providerGameId, int seasonId) {
+            lastRequestedScoreboardProviderGameId = providerGameId;
             return lineScoreBody;
         }
     }

@@ -3,8 +3,10 @@ package com.kbo.crawlerapi.domain;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
@@ -72,6 +74,25 @@ public class Game {
 
     @Column(name = "raw_cancel_text")
     private String rawCancelText;
+
+    @Column(name = "home_starting_pitcher_name", length = 100)
+    private String homeStartingPitcherName;
+
+    @Column(name = "away_starting_pitcher_name", length = 100)
+    private String awayStartingPitcherName;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "lineup_data", columnDefinition = "jsonb")
+    private String lineupData;
+
+    @Column(name = "status_reason")
+    private String statusReason;
+
+    @Column(name = "final_confirmed_at")
+    private OffsetDateTime finalConfirmedAt;
+
+    @Column(name = "live_last_checked_at")
+    private OffsetDateTime liveLastCheckedAt;
 
     @Column(name = "source_updated_at")
     private OffsetDateTime sourceUpdatedAt;
@@ -195,6 +216,30 @@ public class Game {
         return rawCancelText;
     }
 
+    public String getHomeStartingPitcherName() {
+        return homeStartingPitcherName;
+    }
+
+    public String getAwayStartingPitcherName() {
+        return awayStartingPitcherName;
+    }
+
+    public String getLineupData() {
+        return lineupData;
+    }
+
+    public String getStatusReason() {
+        return statusReason;
+    }
+
+    public OffsetDateTime getFinalConfirmedAt() {
+        return finalConfirmedAt;
+    }
+
+    public OffsetDateTime getLiveLastCheckedAt() {
+        return liveLastCheckedAt;
+    }
+
     public OffsetDateTime getSourceUpdatedAt() {
         return sourceUpdatedAt;
     }
@@ -296,22 +341,27 @@ public class Game {
             boolean isPostponed,
             GameCancelReason cancelReason,
             String rawCancelText,
+            String homeStartingPitcherName,
+            String awayStartingPitcherName,
+            String lineupData,
+            String statusReason,
             OffsetDateTime sourceUpdatedAt
     ) {
         boolean changed = false;
-        if (this.status != status) {
-            this.status = status;
+        GameStatus effectiveStatus = shouldKeepFinalStatus(status) ? GameStatus.FINAL : status;
+        if (this.status != effectiveStatus) {
+            this.status = effectiveStatus;
             changed = true;
         }
-        if (!java.util.Objects.equals(this.homeScore, homeScore)) {
+        if (homeScore != null && !java.util.Objects.equals(this.homeScore, homeScore)) {
             this.homeScore = homeScore;
             changed = true;
         }
-        if (!java.util.Objects.equals(this.awayScore, awayScore)) {
+        if (awayScore != null && !java.util.Objects.equals(this.awayScore, awayScore)) {
             this.awayScore = awayScore;
             changed = true;
         }
-        if (!java.util.Objects.equals(this.inningState, inningState)) {
+        if (hasText(inningState) && !java.util.Objects.equals(this.inningState, inningState)) {
             this.inningState = inningState;
             changed = true;
         }
@@ -331,10 +381,49 @@ public class Game {
             this.rawCancelText = rawCancelText;
             changed = true;
         }
+        if (hasText(homeStartingPitcherName) && !java.util.Objects.equals(this.homeStartingPitcherName, homeStartingPitcherName)) {
+            this.homeStartingPitcherName = homeStartingPitcherName;
+            changed = true;
+        }
+        if (hasText(awayStartingPitcherName) && !java.util.Objects.equals(this.awayStartingPitcherName, awayStartingPitcherName)) {
+            this.awayStartingPitcherName = awayStartingPitcherName;
+            changed = true;
+        }
+        if (hasText(lineupData) && !java.util.Objects.equals(this.lineupData, lineupData)) {
+            this.lineupData = lineupData;
+            changed = true;
+        }
+        if (hasText(statusReason) && !java.util.Objects.equals(this.statusReason, statusReason)) {
+            this.statusReason = statusReason;
+            changed = true;
+        }
         if (!java.util.Objects.equals(this.sourceUpdatedAt, sourceUpdatedAt)) {
             this.sourceUpdatedAt = sourceUpdatedAt;
             changed = true;
         }
         return changed;
+    }
+
+    public void markLiveChecked(OffsetDateTime checkedAt) {
+        this.liveLastCheckedAt = checkedAt;
+    }
+
+    public boolean confirmFinal(OffsetDateTime confirmedAt) {
+        if (this.finalConfirmedAt != null) {
+            return false;
+        }
+        this.finalConfirmedAt = confirmedAt;
+        return true;
+    }
+
+    private boolean shouldKeepFinalStatus(GameStatus incomingStatus) {
+        return this.status == GameStatus.FINAL
+                && incomingStatus != GameStatus.FINAL
+                && incomingStatus != GameStatus.CANCELLED
+                && incomingStatus != GameStatus.POSTPONED;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }
