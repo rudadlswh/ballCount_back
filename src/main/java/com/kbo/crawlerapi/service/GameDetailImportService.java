@@ -1,13 +1,7 @@
 package com.kbo.crawlerapi.service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.UUID;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.api.ResourceNotFoundException;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.domain.Game;
@@ -15,14 +9,40 @@ import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.LineScore;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedGameDetail;
+import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
 import com.kbo.crawlerapi.parser.KboLineScoreParser;
 import com.kbo.crawlerapi.parser.KboLineScoreParser.ParsedLineScoreResult;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class GameDetailImportService {
+
+    private static final DateTimeFormatter OFFICIAL_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+    private static final Map<String, String> OFFICIAL_TEAM_CODES_BY_TEAM_CODE = Map.ofEntries(
+            Map.entry("doosan", "OB"),
+            Map.entry("hanwha", "HH"),
+            Map.entry("kia", "HT"),
+            Map.entry("kiwoom", "WO"),
+            Map.entry("kt", "KT"),
+            Map.entry("lg", "LG"),
+            Map.entry("lotte", "LT"),
+            Map.entry("nc", "NC"),
+            Map.entry("samsung", "SS"),
+            Map.entry("ssg", "SK")
+    );
 
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
@@ -31,6 +51,7 @@ public class GameDetailImportService {
     private final KboGameDetailParser kboGameDetailParser;
     private final KboLineScoreParser kboLineScoreParser;
     private final CrawlJobTrackingService crawlJobTrackingService;
+    private final ObjectMapper objectMapper;
 
     public GameDetailImportService(
             GameRepository gameRepository,
@@ -48,6 +69,7 @@ public class GameDetailImportService {
         this.kboGameDetailParser = kboGameDetailParser;
         this.kboLineScoreParser = kboLineScoreParser;
         this.crawlJobTrackingService = crawlJobTrackingService;
+        this.objectMapper = new ObjectMapper();
     }
 
     @Transactional
@@ -56,8 +78,10 @@ public class GameDetailImportService {
         Game game;
         String detailResponseBody;
         String lineScoreResponseBody;
+        ResolvedOfficialDetail resolvedOfficialDetail;
         ParsedGameDetail parsedDetail;
         ParsedLineScoreResult lineScoreResult;
+        ParsedLineupData lineupData;
 
         try {
             game = gameRepository.findByPublicGameId(publicGameId)
@@ -72,26 +96,27 @@ public class GameDetailImportService {
 
         try {
             detailResponseBody = kboGameDetailClient.fetchGameList(game.getGameDate());
-            lineScoreResponseBody = kboGameDetailClient.fetchScoreBoard(game.getProviderGameId(), game.getGameDate().getYear());
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "request", exception.getMessage(), exception, 0);
             throw exception;
         }
 
         try {
-            parsedDetail = kboGameDetailParser.parseGameList(detailResponseBody).stream()
-                    .filter(detail -> game.getProviderGameId().equals(detail.providerGameId()))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Official detail row not found for providerGameId " + game.getProviderGameId()
-                    ));
+            resolvedOfficialDetail = resolveOfficialDetail(game, detailResponseBody);
+            parsedDetail = resolvedOfficialDetail.parsedDetail();
+            lineScoreResponseBody = kboGameDetailClient.fetchScoreBoard(
+                    resolvedOfficialDetail.providerGameId(),
+                    game.getGameDate().getYear()
+            );
             lineScoreResult = kboLineScoreParser.parse(lineScoreResponseBody);
+            lineupData = fetchLineupDataIfAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
             throw exception;
         }
 
         try {
+            backfillProviderGameIdIfNeeded(game, resolvedOfficialDetail.providerGameId());
             OffsetDateTime fetchedAt = OffsetDateTime.now();
             String combinedRawHash = hash(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash());
             boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, combinedRawHash, fetchedAt);
@@ -105,6 +130,10 @@ public class GameDetailImportService {
                     parsedDetail.isPostponed(),
                     parsedDetail.cancelReason(),
                     parsedDetail.rawCancelText(),
+                    parsedDetail.homeStartingPitcherName(),
+                    parsedDetail.awayStartingPitcherName(),
+                    toLineupJson(lineupData),
+                    parsedDetail.statusReason(),
                     parsedDetail.sourceUpdatedAt()
             );
             crawlJobTrackingService.markGameDetailSucceeded(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size());
@@ -129,6 +158,122 @@ public class GameDetailImportService {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "persist", exception.getMessage(), exception, 0);
             throw exception;
         }
+    }
+
+    private ParsedLineupData fetchLineupDataIfAvailable(String providerGameId, int seasonId, ParsedGameDetail parsedDetail) {
+        if (!parsedDetail.lineupAvailable()) {
+            return ParsedLineupData.empty(null);
+        }
+        try {
+            return kboGameDetailParser.parseLineupData(kboGameDetailClient.fetchBoxScore(providerGameId, seasonId));
+        } catch (RuntimeException exception) {
+            return ParsedLineupData.empty(null);
+        }
+    }
+
+    private String toLineupJson(ParsedLineupData lineupData) {
+        if (lineupData == null || !lineupData.hasLineups()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(Map.of(
+                    "away", lineupData.away(),
+                    "home", lineupData.home(),
+                    "rawHash", lineupData.rawHash()
+            ));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to serialize parsed lineup data", exception);
+        }
+    }
+
+    private ResolvedOfficialDetail resolveOfficialDetail(Game game, String detailResponseBody) {
+        List<ParsedGameDetail> parsedDetails = kboGameDetailParser.parseGameList(detailResponseBody);
+        ParsedGameDetail exactMatch = parsedDetails.stream()
+                .filter(detail -> game.getProviderGameId().equals(detail.providerGameId()))
+                .findFirst()
+                .orElse(null);
+        if (exactMatch != null) {
+            return new ResolvedOfficialDetail(game.getProviderGameId(), exactMatch);
+        }
+
+        String officialProviderGameId = resolveOfficialProviderGameIdByMatchup(game, detailResponseBody);
+        ParsedGameDetail fallbackMatch = parsedDetails.stream()
+                .filter(detail -> officialProviderGameId.equals(detail.providerGameId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Official detail row not found after matchup resolution for game " + game.getPublicGameId()
+                                + " using providerGameId " + officialProviderGameId
+                ));
+        return new ResolvedOfficialDetail(officialProviderGameId, fallbackMatch);
+    }
+
+    private String resolveOfficialProviderGameIdByMatchup(Game game, String detailResponseBody) {
+        try {
+            JsonNode rows = objectMapper.readTree(detailResponseBody).path("game");
+            String homeTeamCode = officialTeamCode(game.getHomeTeam().getTeamCode());
+            String awayTeamCode = officialTeamCode(game.getAwayTeam().getTeamCode());
+            String normalizedStadium = normalizeValue(game.getStadium());
+            String scheduledTime = game.getScheduledAt() == null
+                    ? null
+                    : game.getScheduledAt().toLocalTime().format(OFFICIAL_TIME_FORMAT);
+
+            List<JsonNode> teamMatches = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                    .filter(row -> homeTeamCode.equals(text(row, "HOME_ID")) && awayTeamCode.equals(text(row, "AWAY_ID")))
+                    .toList();
+            if (teamMatches.isEmpty()) {
+                throw new IllegalStateException("Official detail row not found for matchup " + game.getPublicGameId());
+            }
+            if (teamMatches.size() == 1) {
+                return providerGameId(teamMatches.get(0));
+            }
+
+            if (normalizedStadium != null) {
+                JsonNode stadiumMatch = teamMatches.stream()
+                        .filter(row -> normalizedStadium.equals(normalizeValue(text(row, "S_NM"))))
+                        .findFirst()
+                        .orElse(null);
+                if (stadiumMatch != null) {
+                    return providerGameId(stadiumMatch);
+                }
+            }
+
+            if (scheduledTime != null) {
+                JsonNode timeMatch = teamMatches.stream()
+                        .filter(row -> scheduledTime.equals(text(row, "G_TM")))
+                        .findFirst()
+                        .orElse(null);
+                if (timeMatch != null) {
+                    return providerGameId(timeMatch);
+                }
+            }
+
+            return providerGameId(teamMatches.get(0));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to parse official detail payload for matchup resolution", exception);
+        }
+    }
+
+    private void backfillProviderGameIdIfNeeded(Game game, String providerGameId) {
+        if (providerGameId.equals(game.getProviderGameId())) {
+            return;
+        }
+        game.syncSchedule(
+                game.getPublicGameId(),
+                providerGameId,
+                game.getGameDate(),
+                game.getScheduledAt(),
+                game.getStadium(),
+                game.getStatus(),
+                game.getHomeTeam(),
+                game.getAwayTeam(),
+                game.getHomeScore(),
+                game.getAwayScore(),
+                game.isCancelled(),
+                game.isPostponed(),
+                game.getCancelReason(),
+                game.getRawCancelText(),
+                game.getSourceUpdatedAt()
+        );
     }
 
     private boolean persistSnapshotIfChanged(
@@ -226,5 +371,44 @@ public class GameDetailImportService {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is not available", exception);
         }
+    }
+
+    private String officialTeamCode(String teamCode) {
+        return OFFICIAL_TEAM_CODES_BY_TEAM_CODE.getOrDefault(teamCode, teamCode.toUpperCase());
+    }
+
+    private String text(JsonNode row, String fieldName) {
+        JsonNode node = row.path(fieldName);
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        String value = node.asText();
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String providerGameId(JsonNode row) {
+        String providerGameId = text(row, "G_ID");
+        if (providerGameId == null) {
+            throw new IllegalStateException("Official detail row is missing G_ID");
+        }
+        return providerGameId;
+    }
+
+    private String normalizeValue(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.replace("야구장", "")
+                .replace("구장", "")
+                .replace(" ", "")
+                .trim()
+                .toLowerCase();
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private record ResolvedOfficialDetail(
+            String providerGameId,
+            ParsedGameDetail parsedDetail
+    ) {
     }
 }

@@ -4,11 +4,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.config.LiveSyncProperties;
 import com.kbo.crawlerapi.config.SchedulerShellProperties;
 
 @SpringBootApplication
 @EnableScheduling
-@EnableConfigurationProperties(SchedulerShellProperties.class)
+@EnableConfigurationProperties({SchedulerShellProperties.class, LiveSyncProperties.class, ApnsProperties.class})
 public class KboCrawlerApiApplication {
 
     public static void main(String[] args) {

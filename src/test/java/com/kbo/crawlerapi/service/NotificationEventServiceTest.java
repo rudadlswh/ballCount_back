@@ -1,0 +1,176 @@
+package com.kbo.crawlerapi.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.NotificationDevice;
+import com.kbo.crawlerapi.domain.NotificationEvent;
+import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
+import com.kbo.crawlerapi.repository.NotificationEventRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class NotificationEventServiceTest {
+
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-04-09T09:31:00Z"), ZoneId.of("Asia/Seoul"));
+
+    @Mock
+    private NotificationEventRepository notificationEventRepository;
+
+    @Mock
+    private NotificationDeviceRepository notificationDeviceRepository;
+
+    @Test
+    void favoriteTeamRoutingSendsOnlyRelevantDevices() {
+        Game game = fixtureGame();
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationDevice relevant = device("kia", "token-a");
+        NotificationDevice unrelated = device("ssg", "token-b");
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant, unrelated));
+
+        var result = service.createAndDeliver(game, draft());
+
+        assertThat(result.eventCreated()).isTrue();
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(relevant);
+    }
+
+    @Test
+    void duplicateEventIsNotSentAgain() {
+        NotificationEvent existing = new NotificationEvent(UUID.randomUUID(), fixtureGame(), "SCORE_CHANGED", "event-key", "title", "body", "{}");
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.of(existing));
+
+        var result = service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(result.eventCreated()).isFalse();
+        verify(notificationEventRepository, never()).save(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
+    }
+
+    @Test
+    void invalidDeviceTokenDoesNotFailWholeBatch() {
+        Game game = fixtureGame();
+        RecordingApnsPushService pushService = new RecordingApnsPushService(new ApnsPushService.ApnsSendResult(false, false, true, "Unregistered"));
+        NotificationEventService service = service(pushService);
+        NotificationDevice relevant = device("kia", "token-a");
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
+
+        var result = service.createAndDeliver(game, draft());
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(relevant.isNotificationsEnabled()).isFalse();
+    }
+
+    @Test
+    void configMissingSkipsWithoutFailingEventCreation() {
+        Game game = fixtureGame();
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.skipped("config_missing")));
+        NotificationDevice relevant = device("kia", "token-a");
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
+
+        var result = service.createAndDeliver(game, draft());
+
+        assertThat(result.eventCreated()).isTrue();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+    }
+
+    private NotificationEventService service(RecordingApnsPushService pushService) {
+        return new NotificationEventService(
+                notificationEventRepository,
+                notificationDeviceRepository,
+                pushService,
+                new ObjectMapper(),
+                CLOCK
+        );
+    }
+
+    private NotificationEventService.NotificationEventDraft draft() {
+        return new NotificationEventService.NotificationEventDraft(
+                "SCORE_CHANGED",
+                "event-key",
+                "title",
+                "body",
+                Map.of("gameId", "game")
+        );
+    }
+
+    private NotificationDevice device(String favoriteTeamId, String token) {
+        return new NotificationDevice(UUID.randomUUID(), "ios", token, UUID.randomUUID().toString(), favoriteTeamId, true, OffsetDateTime.now(CLOCK));
+    }
+
+    private Game fixtureGame() {
+        Team homeTeam = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
+        Team awayTeam = new Team(UUID.randomUUID(), "kia", "KIA 타이거즈", "KIA", "KIA Tigers", null);
+        return new Game(
+                UUID.randomUUID(),
+                "20260409-LG-KIA",
+                "kbo",
+                "20260409HTLG0",
+                LocalDate.of(2026, 4, 9),
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                GameStatus.LIVE,
+                homeTeam,
+                awayTeam,
+                0,
+                1,
+                null,
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+    }
+
+    private static final class RecordingApnsPushService extends ApnsPushService {
+
+        private final ApnsSendResult result;
+        private final List<NotificationDevice> sentDevices = new java.util.ArrayList<>();
+
+        private RecordingApnsPushService(ApnsSendResult result) {
+            super(new ApnsProperties(), CLOCK);
+            this.result = result;
+        }
+
+        @Override
+        public ApnsSendResult send(NotificationEvent event, NotificationDevice device) {
+            sentDevices.add(device);
+            return result;
+        }
+    }
+}

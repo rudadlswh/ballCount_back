@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -24,6 +26,7 @@ import com.kbo.crawlerapi.support.TeamCatalog.TeamDefinition;
 public class KboScheduleImportService {
 
     private static final Logger log = LoggerFactory.getLogger(KboScheduleImportService.class);
+    private static final DateTimeFormatter PUBLIC_GAME_ID_DATE_FORMAT = DateTimeFormatter.BASIC_ISO_DATE;
 
     private final KboScheduleClient kboScheduleClient;
     private final KboScheduleParser kboScheduleParser;
@@ -187,6 +190,93 @@ public class KboScheduleImportService {
         }
     }
 
+    public MonthScheduleIngestionResult crawlMonth(YearMonth yearMonth) {
+        Objects.requireNonNull(yearMonth, "yearMonth must not be null");
+
+        LocalDate from = yearMonth.atDay(1);
+        LocalDate to = yearMonth.atEndOfMonth();
+        List<MonthScheduleIngestionResult.DailyResult> dailyResults = new ArrayList<>();
+        List<MonthScheduleIngestionResult.Failure> failures = new ArrayList<>();
+        int successDays = 0;
+        int failedDays = 0;
+        int createdCount = 0;
+        int updatedCount = 0;
+        int skippedCount = 0;
+        int failureCount = 0;
+
+        log.info("Starting monthly KBO schedule crawl. yearMonth={}, from={}, to={}", yearMonth, from, to);
+
+        for (LocalDate date = from; !date.isAfter(to); date = date.plusDays(1)) {
+            try {
+                DayScheduleIngestionResult result = crawlDay(date);
+                successDays++;
+                createdCount += result.gameCreatedCount();
+                updatedCount += result.gameUpdatedCount();
+                skippedCount += result.skippedRowCount();
+                failureCount += result.failureCount();
+                dailyResults.add(new MonthScheduleIngestionResult.DailyResult(
+                        date,
+                        result.gameCreatedCount(),
+                        result.gameUpdatedCount(),
+                        result.skippedRowCount(),
+                        result.failureCount(),
+                        MonthScheduleIngestionResult.DailyStatus.SUCCESS
+                ));
+            } catch (Exception exception) {
+                failedDays++;
+                failureCount++;
+                String message = exception.getMessage() == null
+                        ? exception.getClass().getSimpleName()
+                        : exception.getMessage();
+
+                log.warn(
+                        "Daily KBO schedule crawl failed during monthly crawl. requestedDate={}, yearMonth={}, message={}",
+                        date,
+                        yearMonth,
+                        message,
+                        exception
+                );
+
+                failures.add(new MonthScheduleIngestionResult.Failure(date, message));
+                dailyResults.add(new MonthScheduleIngestionResult.DailyResult(
+                        date,
+                        0,
+                        0,
+                        0,
+                        1,
+                        MonthScheduleIngestionResult.DailyStatus.FAILED
+                ));
+            }
+        }
+
+        log.info(
+                "Completed monthly KBO schedule crawl. yearMonth={}, totalDays={}, successDays={}, failedDays={}, gameCreatedCount={}, gameUpdatedCount={}, skippedRowCount={}, failureCount={}",
+                yearMonth,
+                dailyResults.size(),
+                successDays,
+                failedDays,
+                createdCount,
+                updatedCount,
+                skippedCount,
+                failureCount
+        );
+
+        return new MonthScheduleIngestionResult(
+                yearMonth,
+                from,
+                to,
+                dailyResults.size(),
+                successDays,
+                failedDays,
+                createdCount,
+                updatedCount,
+                skippedCount,
+                failureCount,
+                failures,
+                dailyResults
+        );
+    }
+
     private int skippedMissingProviderGameIdCount(List<KboScheduleParser.SkippedScheduleRow> skippedRows) {
         return (int) skippedRows.stream()
                 .filter(skippedRow -> "MISSING_PROVIDER_GAME_ID".equals(skippedRow.reason()))
@@ -203,6 +293,7 @@ public class KboScheduleImportService {
         for (ParsedScheduleGame parsedGame : parsedGames) {
             TeamUpsertResult awayTeamResult = upsertTeam(parsedGame.awayProviderTeamName());
             TeamUpsertResult homeTeamResult = upsertTeam(parsedGame.homeProviderTeamName());
+            String publicGameId = buildPublicGameId(parsedGame, homeTeamResult.team(), awayTeamResult.team());
 
             teamCreatedCount += awayTeamResult.created() ? 1 : 0;
             teamCreatedCount += homeTeamResult.created() ? 1 : 0;
@@ -213,6 +304,7 @@ public class KboScheduleImportService {
                     parsedGame,
                     awayTeamResult.team(),
                     homeTeamResult.team(),
+                    publicGameId,
                     sourceUpdatedAtForApply(parsedGame, appliedAt)
             );
             gameCreatedCount += gameResult.created() ? 1 : 0;
@@ -254,6 +346,14 @@ public class KboScheduleImportService {
 
     private OffsetDateTime sourceUpdatedAtForApply(ParsedScheduleGame parsedGame, OffsetDateTime appliedAt) {
         return parsedGame.sourceUpdatedAt() == null ? appliedAt : parsedGame.sourceUpdatedAt();
+    }
+
+    private String buildPublicGameId(ParsedScheduleGame parsedGame, Team homeTeam, Team awayTeam) {
+        return "%s-%s-%s".formatted(
+                parsedGame.gameDate().format(PUBLIC_GAME_ID_DATE_FORMAT),
+                TeamCatalog.publicCodeForTeamCode(homeTeam.getTeamCode()),
+                TeamCatalog.publicCodeForTeamCode(awayTeam.getTeamCode())
+        );
     }
 
     private record TeamUpsertResult(Team team, boolean created, boolean updated) {

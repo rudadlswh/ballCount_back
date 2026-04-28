@@ -4,7 +4,7 @@ spring:
   application:
     name: kbo-crawler-api
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:55432/kbo}
+    url: ${SPRING_DATASOURCE_URL:}
     username: ${SPRING_DATASOURCE_USERNAME:}
     password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: org.postgresql.Driver
@@ -39,3 +39,16 @@ app:
     pregame-interval: PT30M
     live-interval: PT15S
     post-final-interval: PT60S
+  live-sync:
+    enabled: ${KBO_LIVE_SYNC_ENABLED:false}
+    scheduler-interval: PT60S
+    pregame-ttl: PT3M
+    live-ttl: PT30S
+    final-confirmation-ttl: PT2M
+  apns:
+    push-enabled: ${KBO_PUSH_ENABLED:false}
+    team-id: ${APNS_TEAM_ID:}
+    key-id: ${APNS_KEY_ID:}
+    bundle-id: ${APNS_BUNDLE_ID:}
+    private-key: ${APNS_PRIVATE_KEY:}
+    env: ${APNS_ENV:sandbox}
