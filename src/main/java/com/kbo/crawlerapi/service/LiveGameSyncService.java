@@ -3,8 +3,10 @@ package com.kbo.crawlerapi.service;
 import com.kbo.crawlerapi.config.LiveSyncProperties;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameCancelReason;
+import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.repository.GameRepository;
+import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
@@ -35,6 +37,7 @@ public class LiveGameSyncService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     private final GameRepository gameRepository;
+    private final GameSnapshotRepository gameSnapshotRepository;
     private final LineScoreRepository lineScoreRepository;
     private final GameDetailImportService gameDetailImportService;
     private final NotificationEventService notificationEventService;
@@ -44,6 +47,7 @@ public class LiveGameSyncService {
 
     public LiveGameSyncService(
             GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
             LineScoreRepository lineScoreRepository,
             GameDetailImportService gameDetailImportService,
             NotificationEventService notificationEventService,
@@ -51,6 +55,7 @@ public class LiveGameSyncService {
             Clock applicationClock
     ) {
         this.gameRepository = gameRepository;
+        this.gameSnapshotRepository = gameSnapshotRepository;
         this.lineScoreRepository = lineScoreRepository;
         this.gameDetailImportService = gameDetailImportService;
         this.notificationEventService = notificationEventService;
@@ -85,7 +90,7 @@ public class LiveGameSyncService {
         List<String> errors = new ArrayList<>();
 
         for (Game candidate : candidates) {
-            GameState before = GameState.from(candidate);
+            GameState before = GameState.from(candidate, latestSnapshot(candidate));
             try {
                 gameDetailImportService.importGameDetail(candidate.getPublicGameId());
                 Game after = gameRepository.findByPublicGameId(candidate.getPublicGameId()).orElseThrow();
@@ -93,7 +98,7 @@ public class LiveGameSyncService {
                 boolean finalConfirmed = confirmFinalIfComplete(after);
                 gameRepository.save(after);
 
-                List<NotificationEventDraft> drafts = detectChanges(before, GameState.from(after), after, finalConfirmed);
+                List<NotificationEventDraft> drafts = detectChanges(before, GameState.from(after, latestSnapshot(after)), after);
                 if (!drafts.isEmpty()) {
                     updatedCount++;
                     updatedGames.add(after.getPublicGameId());
@@ -186,32 +191,20 @@ public class LiveGameSyncService {
         return game.confirmFinal(OffsetDateTime.now(applicationClock));
     }
 
-    private List<NotificationEventDraft> detectChanges(GameState before, GameState after, Game game, boolean finalConfirmed) {
+    private List<NotificationEventDraft> detectChanges(GameState before, GameState after, Game game) {
         List<NotificationEventDraft> drafts = new ArrayList<>();
-        if (!before.cancelledOrPostponed() && after.cancelledOrPostponed()) {
-            drafts.add(canceledDraft(game));
-        }
-        if (changedText(before.awayStartingPitcherName(), after.awayStartingPitcherName())
-                || changedText(before.homeStartingPitcherName(), after.homeStartingPitcherName())) {
-            drafts.add(pitchersDraft(game));
-        }
-        if (changedText(before.lineupHash(), after.lineupHash())) {
-            drafts.add(lineupDraft(game));
-        }
-        if ((before.status() == GameStatus.SCHEDULED || before.status() == GameStatus.UNKNOWN)
-                && after.status() == GameStatus.LIVE) {
-            drafts.add(startedDraft(game));
-        }
         if (after.status() == GameStatus.LIVE
                 && after.awayScore() != null
                 && after.homeScore() != null
                 && (changedInteger(before.awayScore(), after.awayScore()) || changedInteger(before.homeScore(), after.homeScore()))) {
-            drafts.add(scoreDraft(game));
+            drafts.add(scoreDraft(game, before, after));
         }
-        if (after.awayScore() != null
-                && after.homeScore() != null
-                && ((before.status() != GameStatus.FINAL && after.status() == GameStatus.FINAL) || finalConfirmed)) {
-            drafts.add(finalDraft(game));
+        if (after.status() == GameStatus.LIVE
+                && after.currentBatterName() != null
+                && after.currentPitcherName() != null
+                && baseCount(after) > baseCount(before)
+                && nullSafe(after.outs()) <= nullSafe(before.outs())) {
+            drafts.add(onBaseDraft(game, after));
         }
         return drafts;
     }
@@ -243,15 +236,52 @@ public class LiveGameSyncService {
         return draft(game, "GAME_STARTED", "game:%s:started".formatted(game.getId()), title, "경기가 시작되었습니다.");
     }
 
-    private NotificationEventDraft scoreDraft(Game game) {
+    private NotificationEventDraft scoreDraft(Game game, GameState before, GameState after) {
         String inning = game.getInningState() == null ? "경기" : game.getInningState();
+        int runCount = Math.max(
+                1,
+                Math.max(0, nullSafe(after.awayScore()) - nullSafe(before.awayScore()))
+                        + Math.max(0, nullSafe(after.homeScore()) - nullSafe(before.homeScore()))
+        );
+        String result = liveEventResult(game, "득점");
         String title = "%s %d : %d %s".formatted(game.getAwayTeam().getShortName(), game.getAwayScore(), game.getHomeScore(), game.getHomeTeam().getShortName());
-        return draft(
+        return liveDraft(
                 game,
                 "SCORE_CHANGED",
-                "game:%s:score:%d-%d:inning:%s".formatted(game.getId(), game.getAwayScore(), game.getHomeScore(), inning),
+                "game:%s:score:%d-%d:inning:%s:batter:%s:pitcher:%s".formatted(
+                        game.getId(),
+                        game.getAwayScore(),
+                        game.getHomeScore(),
+                        inning,
+                        safeKey(after.currentBatterName()),
+                        safeKey(after.currentPitcherName())
+                ),
                 title,
-                "%s 진행 중".formatted(inning)
+                liveEventBody(after, result, runCount),
+                after,
+                result,
+                runCount
+        );
+    }
+
+    private NotificationEventDraft onBaseDraft(Game game, GameState after) {
+        String inning = game.getInningState() == null ? "경기" : game.getInningState();
+        String result = liveEventResult(game, "출루");
+        return liveDraft(
+                game,
+                "ON_BASE",
+                "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s".formatted(
+                        game.getId(),
+                        inning,
+                        baseKey(after),
+                        safeKey(after.currentBatterName()),
+                        safeKey(after.currentPitcherName())
+                ),
+                "출루",
+                liveEventBody(after, result, null),
+                after,
+                result,
+                null
         );
     }
 
@@ -281,6 +311,67 @@ public class LiveGameSyncService {
         return new NotificationEventDraft(eventType, eventKey, title, body, payload);
     }
 
+    private NotificationEventDraft liveDraft(
+            Game game,
+            String eventType,
+            String eventKey,
+            String title,
+            String body,
+            GameState state,
+            String result,
+            Integer runCount
+    ) {
+        NotificationEventDraft draft = draft(game, eventType, eventKey, title, body);
+        draft.payload().put("batterName", state.currentBatterName());
+        draft.payload().put("pitcherName", state.currentPitcherName());
+        draft.payload().put("result", result);
+        draft.payload().put("runCount", runCount);
+        return draft;
+    }
+
+    private GameSnapshot latestSnapshot(Game game) {
+        if (gameSnapshotRepository == null || game == null || game.getId() == null) {
+            return null;
+        }
+        return gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId()).orElse(null);
+    }
+
+    private String liveEventBody(GameState state, String result, Integer runCount) {
+        String playText = state.currentBatterName() == null || state.currentPitcherName() == null
+                ? result + "."
+                : "%s 이 %s 을 상대로 %s.".formatted(state.currentBatterName(), state.currentPitcherName(), result);
+        return runCount == null ? playText : playText + "\n" + runCount + "득점";
+    }
+
+    private String liveEventResult(Game game, String fallback) {
+        String text = String.join(" ",
+                game.getStatusReason() == null ? "" : game.getStatusReason(),
+                game.getInningState() == null ? "" : game.getInningState()
+        );
+        for (String method : List.of("고의사구", "사구", "볼넷", "홈런", "적시타", "안타", "2루타", "3루타", "희생플라이", "실책")) {
+            if (text.contains(method)) {
+                return method;
+            }
+        }
+        return fallback;
+    }
+
+    private int baseCount(GameState state) {
+        return (state.runnerOnFirst() ? 1 : 0) + (state.runnerOnSecond() ? 1 : 0) + (state.runnerOnThird() ? 1 : 0);
+    }
+
+    private String baseKey(GameState state) {
+        return "%s%s%s".formatted(state.runnerOnFirst() ? "1" : "-", state.runnerOnSecond() ? "2" : "-", state.runnerOnThird() ? "3" : "-");
+    }
+
+    private int nullSafe(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    private String safeKey(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
     private boolean changedText(String before, String after) {
         return after != null && !after.isBlank() && !java.util.Objects.equals(before, after);
     }
@@ -305,9 +396,15 @@ public class LiveGameSyncService {
             Integer awayScore,
             String homeStartingPitcherName,
             String awayStartingPitcherName,
-            String lineupHash
+            String lineupHash,
+            Integer outs,
+            boolean runnerOnFirst,
+            boolean runnerOnSecond,
+            boolean runnerOnThird,
+            String currentPitcherName,
+            String currentBatterName
     ) {
-        static GameState from(Game game) {
+        static GameState from(Game game, GameSnapshot snapshot) {
             return new GameState(
                     game.getStatus(),
                     game.isCancelled(),
@@ -316,8 +413,21 @@ public class LiveGameSyncService {
                     game.getAwayScore(),
                     game.getHomeStartingPitcherName(),
                     game.getAwayStartingPitcherName(),
-                    game.getLineupData() == null ? null : String.valueOf(game.getLineupData().hashCode())
+                    game.getLineupData() == null ? null : String.valueOf(game.getLineupData().hashCode()),
+                    snapshot == null ? null : snapshot.getOuts(),
+                    snapshot != null && snapshot.isRunnerOnFirst(),
+                    snapshot != null && snapshot.isRunnerOnSecond(),
+                    snapshot != null && snapshot.isRunnerOnThird(),
+                    clean(snapshot == null ? null : snapshot.getCurrentPitcherName()),
+                    clean(snapshot == null ? null : snapshot.getCurrentBatterName())
             );
+        }
+
+        private static String clean(String value) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            return value.trim();
         }
 
         boolean cancelledOrPostponed() {
