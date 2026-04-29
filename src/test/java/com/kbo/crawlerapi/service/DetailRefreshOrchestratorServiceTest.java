@@ -94,6 +94,8 @@ class DetailRefreshOrchestratorServiceTest {
                         false,
                         false,
                         false,
+                        null,
+                        null,
                         7,
                         2,
                         8,

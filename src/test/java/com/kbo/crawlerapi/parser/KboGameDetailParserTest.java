@@ -81,6 +81,67 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void parsesCurrentPitcherAndBatterWithoutStartingPitcherFallback() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260409SKLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_RESULT_CK": 0,
+                      "CANCEL_SC_NM": "정상경기",
+                      "GAME_INN_NO": 4,
+                      "GAME_TB_SC": "B",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "2",
+                      "B_SCORE_CN": "3",
+                      "BALL_CN": 1,
+                      "STRIKE_CN": 2,
+                      "OUT_CN": 1,
+                      "T_PIT_P_NM": "원정선발",
+                      "B_PIT_P_NM": "홈선발",
+                      "PIT_P_NM": "현재투수",
+                      "BAT_P_NM": "현재타자"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).currentPitcherName()).isEqualTo("현재투수");
+        assertThat(result.get(0).currentBatterName()).isEqualTo("현재타자");
+        assertThat(result.get(0).homeStartingPitcherName()).isEqualTo("홈선발");
+        assertThat(result.get(0).awayStartingPitcherName()).isEqualTo("원정선발");
+    }
+
+    @Test
+    void leavesCurrentPitcherAndBatterNullWhenOfficialPayloadOmitsThem() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260409SKLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_RESULT_CK": 0,
+                      "GAME_INN_NO": 4,
+                      "GAME_TB_SC": "B",
+                      "T_PIT_P_NM": "원정선발",
+                      "B_PIT_P_NM": "홈선발"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).currentPitcherName()).isNull();
+        assertThat(result.get(0).currentBatterName()).isNull();
+    }
+
+    @Test
     void parsesCancelledGamesWithRainReason() {
         String payload = """
                 {

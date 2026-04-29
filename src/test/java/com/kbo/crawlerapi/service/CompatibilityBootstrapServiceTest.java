@@ -130,6 +130,8 @@ class CompatibilityBootstrapServiceTest {
                 true,
                 false,
                 true,
+                null,
+                null,
                 4,
                 3,
                 null,
