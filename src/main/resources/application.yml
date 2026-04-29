@@ -38,12 +38,12 @@ app:
     post-final-enabled: true
     pregame-interval: PT30M
     live-interval: PT15S
-    post-final-interval: PT60S
+    post-final-interval: PT10S
   live-sync:
     enabled: ${KBO_LIVE_SYNC_ENABLED:false}
-    scheduler-interval: PT60S
+    scheduler-interval: PT15S
     pregame-ttl: PT3M
-    live-ttl: PT30S
+    live-ttl: PT15S
     final-confirmation-ttl: PT2M
   apns:
     push-enabled: ${KBO_PUSH_ENABLED:false}

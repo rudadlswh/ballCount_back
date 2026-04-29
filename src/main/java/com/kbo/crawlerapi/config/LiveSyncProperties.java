@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class LiveSyncProperties {
 
     private boolean enabled = false;
-    private Duration schedulerInterval = Duration.ofSeconds(60);
+    private Duration schedulerInterval = Duration.ofSeconds(10);
     private Duration pregameTtl = Duration.ofMinutes(3);
     private Duration liveTtl = Duration.ofSeconds(30);
     private Duration finalConfirmationTtl = Duration.ofMinutes(2);

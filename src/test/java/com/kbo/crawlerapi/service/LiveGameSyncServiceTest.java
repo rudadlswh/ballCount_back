@@ -8,9 +8,11 @@ import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.config.LiveSyncProperties;
 import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameRepository;
+import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
@@ -41,6 +43,9 @@ class LiveGameSyncServiceTest {
     private GameRepository gameRepository;
 
     @Mock
+    private GameSnapshotRepository gameSnapshotRepository;
+
+    @Mock
     private LineScoreRepository lineScoreRepository;
 
     @Test
@@ -55,13 +60,16 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
-    void liveScoreChangeCreatesOneDeduplicatedNotificationDraft() {
+    void liveScoreChangeCreatesScoringNotificationDraft() {
         Game before = fixtureGame(GameStatus.SCHEDULED, 0, 0);
         Game after = fixtureGame(GameStatus.LIVE, 1, 0);
+        GameSnapshot snapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
                 .thenReturn(List.of(before));
         when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(snapshot));
 
         StubNotificationEventService notificationEventService = new StubNotificationEventService();
         LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
@@ -70,10 +78,38 @@ class LiveGameSyncServiceTest {
 
         assertThat(result.candidateCount()).isEqualTo(1);
         assertThat(result.updatedCount()).isEqualTo(1);
-        assertThat(result.eventCreatedCount()).isEqualTo(2);
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
-                .containsExactly("GAME_STARTED", "SCORE_CHANGED");
+                .containsExactly("SCORE_CHANGED");
+        assertThat(notificationEventService.drafts.get(0).body())
+                .isEqualTo("김타자 이 박투수 을 상대로 득점.\n1득점");
+    }
+
+    @Test
+    void batterReachingBaseCreatesOnBaseDraftWithoutScoreChange() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0);
+        GameSnapshot beforeSnapshot = snapshot(before, "이전타자", "박투수", 1, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "홍길동", "박투수", 1, true, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly("ON_BASE");
+        assertThat(notificationEventService.drafts.get(0).body())
+                .isEqualTo("홍길동 이 박투수 을 상대로 출루.");
     }
 
     @Test
@@ -100,6 +136,7 @@ class LiveGameSyncServiceTest {
     ) {
         return new LiveGameSyncService(
                 gameRepository,
+                gameSnapshotRepository,
                 lineScoreRepository,
                 importService,
                 notificationEventService,
@@ -130,6 +167,43 @@ class LiveGameSyncServiceTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private GameSnapshot snapshot(
+            Game game,
+            String batter,
+            String pitcher,
+            Integer outs,
+            boolean runnerOnFirst,
+            boolean runnerOnSecond,
+            boolean runnerOnThird
+    ) {
+        return new GameSnapshot(
+                UUID.randomUUID(),
+                game,
+                3,
+                "top",
+                "Top 3",
+                0,
+                0,
+                outs,
+                runnerOnFirst,
+                runnerOnSecond,
+                runnerOnThird,
+                pitcher,
+                batter,
+                game.getHomeScore(),
+                game.getAwayScore(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                UUID.randomUUID().toString(),
+                null,
+                OffsetDateTime.now(ACTIVE_KST_CLOCK)
         );
     }
 
