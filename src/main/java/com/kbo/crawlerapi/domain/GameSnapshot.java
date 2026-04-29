@@ -49,6 +49,12 @@ public class GameSnapshot {
     @Column(name = "runner_on_third", nullable = false)
     private boolean runnerOnThird;
 
+    @Column(name = "current_pitcher_name", length = 100)
+    private String currentPitcherName;
+
+    @Column(name = "current_batter_name", length = 100)
+    private String currentBatterName;
+
     @Column(name = "home_score")
     private Integer homeScore;
 
@@ -101,6 +107,8 @@ public class GameSnapshot {
             boolean runnerOnFirst,
             boolean runnerOnSecond,
             boolean runnerOnThird,
+            String currentPitcherName,
+            String currentBatterName,
             Integer homeScore,
             Integer awayScore,
             Integer homeHits,
@@ -124,6 +132,8 @@ public class GameSnapshot {
         this.runnerOnFirst = runnerOnFirst;
         this.runnerOnSecond = runnerOnSecond;
         this.runnerOnThird = runnerOnThird;
+        this.currentPitcherName = currentPitcherName;
+        this.currentBatterName = currentBatterName;
         this.homeScore = homeScore;
         this.awayScore = awayScore;
         this.homeHits = homeHits;
@@ -171,6 +181,14 @@ public class GameSnapshot {
 
     public boolean isRunnerOnThird() {
         return runnerOnThird;
+    }
+
+    public String getCurrentPitcherName() {
+        return currentPitcherName;
+    }
+
+    public String getCurrentBatterName() {
+        return currentBatterName;
     }
 
     public Integer getHomeScore() {

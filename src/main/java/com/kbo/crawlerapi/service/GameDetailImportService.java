@@ -24,12 +24,15 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class GameDetailImportService {
 
+    private static final Logger log = LoggerFactory.getLogger(GameDetailImportService.class);
     private static final DateTimeFormatter OFFICIAL_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
     private static final Map<String, String> OFFICIAL_TEAM_CODES_BY_TEAM_CODE = Map.ofEntries(
             Map.entry("doosan", "OB"),
@@ -300,6 +303,8 @@ public class GameDetailImportService {
                 parsedDetail.runnerOnFirst(),
                 parsedDetail.runnerOnSecond(),
                 parsedDetail.runnerOnThird(),
+                parsedDetail.currentPitcherName(),
+                parsedDetail.currentBatterName(),
                 parsedDetail.homeScore(),
                 parsedDetail.awayScore(),
                 lineScoreResult.homeTotals().hits(),
@@ -312,6 +317,19 @@ public class GameDetailImportService {
                 parsedDetail.sourceUpdatedAt(),
                 fetchedAt
         ));
+        log.info(
+                "live snapshot game_id={} inning_label={} balls={} strikes={} outs={} runners={}/{}/{} current_pitcher_name={} current_batter_name={}",
+                game.getId(),
+                parsedDetail.inningLabel(),
+                parsedDetail.balls(),
+                parsedDetail.strikes(),
+                parsedDetail.outs(),
+                parsedDetail.runnerOnFirst(),
+                parsedDetail.runnerOnSecond(),
+                parsedDetail.runnerOnThird(),
+                parsedDetail.currentPitcherName(),
+                parsedDetail.currentBatterName()
+        );
         return true;
     }
 

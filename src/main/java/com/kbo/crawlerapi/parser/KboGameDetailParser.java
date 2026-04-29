@@ -92,6 +92,25 @@ public class KboGameDetailParser {
                 String rawCancelText = text(row, "CANCEL_SC_NM");
                 String awayStartingPitcherName = text(row, "T_PIT_P_NM");
                 String homeStartingPitcherName = text(row, "B_PIT_P_NM");
+                String currentPitcherName = firstText(row,
+                        "PIT_P_NM",
+                        "PIT_NM",
+                        "PITCHER_NM",
+                        "PITCHER_NAME",
+                        "CURRENT_PITCHER_NAME",
+                        "CUR_PIT_P_NM",
+                        "LIVE_PIT_P_NM",
+                        "NOW_PIT_P_NM");
+                String currentBatterName = firstText(row,
+                        "BAT_P_NM",
+                        "BATTER_NM",
+                        "BATTER_NAME",
+                        "HIT_P_NM",
+                        "HITTER_NM",
+                        "CURRENT_BATTER_NAME",
+                        "CUR_BAT_P_NM",
+                        "LIVE_BAT_P_NM",
+                        "NOW_BAT_P_NM");
                 boolean lineupAvailable = integer(row, "LINEUP_CK") != null && integer(row, "LINEUP_CK") > 0;
 
                 details.add(new ParsedGameDetail(
@@ -112,6 +131,8 @@ public class KboGameDetailParser {
                         integer(row, "B1_BAT_ORDER_NO") != null && integer(row, "B1_BAT_ORDER_NO") > 0,
                         integer(row, "B2_BAT_ORDER_NO") != null && integer(row, "B2_BAT_ORDER_NO") > 0,
                         integer(row, "B3_BAT_ORDER_NO") != null && integer(row, "B3_BAT_ORDER_NO") > 0,
+                        currentPitcherName,
+                        currentBatterName,
                         homeStartingPitcherName,
                         awayStartingPitcherName,
                         lineupAvailable,
@@ -242,6 +263,16 @@ public class KboGameDetailParser {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private String firstText(JsonNode row, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            String value = text(row, fieldName);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     private String gridText(JsonNode cell) {
         String value = text(cell, "Text");
         if (value == null) {
@@ -290,6 +321,8 @@ public class KboGameDetailParser {
             boolean runnerOnFirst,
             boolean runnerOnSecond,
             boolean runnerOnThird,
+            String currentPitcherName,
+            String currentBatterName,
             String homeStartingPitcherName,
             String awayStartingPitcherName,
             boolean lineupAvailable,
