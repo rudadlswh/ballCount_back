@@ -8,6 +8,8 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import org.jsoup.Jsoup;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +18,8 @@ import com.kbo.crawlerapi.domain.GameStatus;
 
 @Component
 public class KboGameDetailParser {
+
+    private static final Logger log = LoggerFactory.getLogger(KboGameDetailParser.class);
 
     private final ObjectMapper objectMapper;
 
@@ -92,25 +96,9 @@ public class KboGameDetailParser {
                 String rawCancelText = text(row, "CANCEL_SC_NM");
                 String awayStartingPitcherName = text(row, "T_PIT_P_NM");
                 String homeStartingPitcherName = text(row, "B_PIT_P_NM");
-                String currentPitcherName = firstText(row,
-                        "PIT_P_NM",
-                        "PIT_NM",
-                        "PITCHER_NM",
-                        "PITCHER_NAME",
-                        "CURRENT_PITCHER_NAME",
-                        "CUR_PIT_P_NM",
-                        "LIVE_PIT_P_NM",
-                        "NOW_PIT_P_NM");
-                String currentBatterName = firstText(row,
-                        "BAT_P_NM",
-                        "BATTER_NM",
-                        "BATTER_NAME",
-                        "HIT_P_NM",
-                        "HITTER_NM",
-                        "CURRENT_BATTER_NAME",
-                        "CUR_BAT_P_NM",
-                        "LIVE_BAT_P_NM",
-                        "NOW_BAT_P_NM");
+                String currentPitcherName = currentPitcherName(row, inningHalf);
+                String currentBatterName = currentBatterName(row, inningHalf);
+                logCurrentPlayerSourceState(row, providerGameId, inningHalf, currentPitcherName, currentBatterName);
                 boolean lineupAvailable = integer(row, "LINEUP_CK") != null && integer(row, "LINEUP_CK") > 0;
 
                 details.add(new ParsedGameDetail(
@@ -146,6 +134,61 @@ public class KboGameDetailParser {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse KBO game detail response", exception);
         }
+    }
+
+    private String currentPitcherName(JsonNode row, String inningHalf) {
+        if ("top".equals(inningHalf)) {
+            return text(row, "B_P_NM");
+        }
+        if ("bottom".equals(inningHalf)) {
+            return text(row, "T_P_NM");
+        }
+        return null;
+    }
+
+    private String currentBatterName(JsonNode row, String inningHalf) {
+        if ("top".equals(inningHalf)) {
+            return text(row, "T_P_NM");
+        }
+        if ("bottom".equals(inningHalf)) {
+            return text(row, "B_P_NM");
+        }
+        return null;
+    }
+
+    private void logCurrentPlayerSourceState(
+            JsonNode row,
+            String providerGameId,
+            String inningHalf,
+            String currentPitcherName,
+            String currentBatterName
+    ) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        String awaySidePlayerName = text(row, "T_P_NM");
+        String homeSidePlayerName = text(row, "B_P_NM");
+        if (currentPitcherName == null || currentBatterName == null) {
+            log.debug(
+                    "current player source missing provider_game_id={} inning_half={} t_p_nm={} b_p_nm={} parsed_pitcher={} parsed_batter={}",
+                    providerGameId,
+                    inningHalf,
+                    awaySidePlayerName,
+                    homeSidePlayerName,
+                    currentPitcherName,
+                    currentBatterName
+            );
+            return;
+        }
+        log.debug(
+                "current player source mapped provider_game_id={} inning_half={} t_p_nm={} b_p_nm={} parsed_pitcher={} parsed_batter={}",
+                providerGameId,
+                inningHalf,
+                awaySidePlayerName,
+                homeSidePlayerName,
+                currentPitcherName,
+                currentBatterName
+        );
     }
 
     private GameStatus resolveStatus(JsonNode row) {
@@ -261,16 +304,6 @@ public class KboGameDetailParser {
         }
         String value = node.asText();
         return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    private String firstText(JsonNode row, String... fieldNames) {
-        for (String fieldName : fieldNames) {
-            String value = text(row, fieldName);
-            if (value != null) {
-                return value;
-            }
-        }
-        return null;
     }
 
     private String gridText(JsonNode cell) {

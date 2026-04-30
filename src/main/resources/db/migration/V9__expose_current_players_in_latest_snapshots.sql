@@ -1,4 +1,6 @@
-CREATE OR REPLACE VIEW public_latest_game_snapshots AS
+DROP VIEW IF EXISTS public_latest_game_snapshots;
+
+CREATE VIEW public_latest_game_snapshots AS
 SELECT DISTINCT ON (snapshot.game_id)
     snapshot.game_id,
     snapshot.inning_label,

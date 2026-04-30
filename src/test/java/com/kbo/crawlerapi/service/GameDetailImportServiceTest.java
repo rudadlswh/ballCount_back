@@ -19,6 +19,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -247,6 +248,284 @@ class GameDetailImportServiceTest {
         assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
     }
 
+    @Test
+    void persistsCurrentPitcherAndBatterIntoSnapshot() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                6,
+                "top",
+                "Top 6",
+                1,
+                2,
+                1,
+                true,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                false,
+                null,
+                null,
+                "detail-hash-with-current"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(snapshotCaptor.getValue().getCurrentPitcherName()).isEqualTo("홈투수");
+        assertThat(snapshotCaptor.getValue().getCurrentBatterName()).isEqualTo("원정타자");
+    }
+
+    @Test
+    void preGamePayloadWithNoLiveStateDoesNotWriteSnapshot() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "pregame-detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(result.snapshotCreated()).isFalse();
+        verify(gameSnapshotRepository, never()).findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(any(UUID.class));
+        verify(gameSnapshotRepository, never()).save(any(GameSnapshot.class));
+        assertThat(crawlJobTrackingService.snapshotCreated).isFalse();
+    }
+
+    @Test
+    void livePayloadWithInningAndCountWritesSnapshotWhenCurrentPlayersAreMissing() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                0,
+                0,
+                1,
+                "bottom",
+                "Bottom 1",
+                3,
+                2,
+                1,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "live-count-detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(snapshotCaptor.getValue().getInning()).isEqualTo(1);
+        assertThat(snapshotCaptor.getValue().getBalls()).isEqualTo(3);
+        assertThat(snapshotCaptor.getValue().getStrikes()).isEqualTo(2);
+        assertThat(snapshotCaptor.getValue().getOuts()).isEqualTo(1);
+        assertThat(snapshotCaptor.getValue().getCurrentPitcherName()).isNull();
+        assertThat(snapshotCaptor.getValue().getCurrentBatterName()).isNull();
+    }
+
+    @Test
+    void payloadWithCurrentPitcherAndBatterWritesSnapshotEvenWithoutCountState() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                null,
+                null,
+                false,
+                null,
+                null,
+                "current-players-detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(snapshotCaptor.getValue().getCurrentPitcherName()).isEqualTo("홈투수");
+        assertThat(snapshotCaptor.getValue().getCurrentBatterName()).isEqualTo("원정타자");
+    }
+
+    @Test
+    void createsCorrectedSnapshotWhenRawHashIsUnchangedButCurrentPlayersWereMissing() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                6,
+                "top",
+                "Top 6",
+                1,
+                2,
+                1,
+                true,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                false,
+                null,
+                null,
+                "detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+        GameSnapshot latestSnapshot = new GameSnapshot(
+                UUID.randomUUID(),
+                game,
+                6,
+                "top",
+                "Top 6",
+                1,
+                2,
+                1,
+                true,
+                false,
+                false,
+                null,
+                null,
+                7,
+                2,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                hash("detail-hash:line-hash"),
+                null,
+                OffsetDateTime.now()
+        );
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.of(latestSnapshot));
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(snapshotCaptor.getValue().getRawHash()).isEqualTo(latestSnapshot.getRawHash());
+        assertThat(snapshotCaptor.getValue().getCurrentPitcherName()).isEqualTo("홈투수");
+        assertThat(snapshotCaptor.getValue().getCurrentBatterName()).isEqualTo("원정타자");
+    }
+
     private Game fixtureGame() {
         Team homeTeam = new Team(
                 UUID.fromString("11111111-1111-1111-1111-111111111111"),
@@ -283,6 +562,18 @@ class GameDetailImportServiceTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private CrawlJob crawlJob(Game game) {
+        return new CrawlJob(
+                UUID.randomUUID(),
+                "game-detail-import",
+                "game",
+                game.getPublicGameId(),
+                "running",
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
         );
     }
 

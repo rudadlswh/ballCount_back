@@ -43,7 +43,7 @@ class NotificationEventServiceTest {
     private NotificationDeviceRepository notificationDeviceRepository;
 
     @Test
-    void favoriteTeamRoutingSendsOnlyRelevantDevices() {
+    void scoreEventSendsOneApnsNotificationToRelevantDevice() {
         Game game = fixtureGame();
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -59,6 +59,7 @@ class NotificationEventServiceTest {
         assertThat(result.eventCreated()).isTrue();
         assertThat(result.sentCount()).isEqualTo(1);
         assertThat(pushService.sentDevices).containsExactly(relevant);
+        assertThat(pushService.sentEvents).extracting(NotificationEvent::getEventType).containsExactly("SCORE_CHANGED");
     }
 
     @Test
@@ -107,6 +108,26 @@ class NotificationEventServiceTest {
         assertThat(result.skippedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
     }
+
+    @Test
+    void nonScoringAndNonOnBaseEventsAreNotSent() {
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+        NotificationEventService.NotificationEventDraft draft = new NotificationEventService.NotificationEventDraft(
+                "GAME_FINAL",
+                "final-event-key",
+                "title",
+                "body",
+                Map.of("gameId", "game")
+        );
+
+        var result = service.createAndDeliver(fixtureGame(), draft);
+
+        assertThat(result.eventCreated()).isFalse();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        verify(notificationEventRepository, never()).save(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
+    }
+
 
     private NotificationEventService service(RecordingApnsPushService pushService) {
         return new NotificationEventService(
@@ -161,6 +182,7 @@ class NotificationEventServiceTest {
 
         private final ApnsSendResult result;
         private final List<NotificationDevice> sentDevices = new java.util.ArrayList<>();
+        private final List<NotificationEvent> sentEvents = new java.util.ArrayList<>();
 
         private RecordingApnsPushService(ApnsSendResult result) {
             super(new ApnsProperties(), CLOCK);
@@ -169,6 +191,7 @@ class NotificationEventServiceTest {
 
         @Override
         public ApnsSendResult send(NotificationEvent event, NotificationDevice device) {
+            sentEvents.add(event);
             sentDevices.add(device);
             return result;
         }

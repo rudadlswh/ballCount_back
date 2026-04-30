@@ -19,6 +19,9 @@ public class NotificationDevice {
     @Column(nullable = false, length = 20)
     private String platform;
 
+    @Column(nullable = false, length = 30)
+    private String environment;
+
     @Column(name = "device_token", nullable = false)
     private String deviceToken;
 
@@ -46,8 +49,13 @@ public class NotificationDevice {
     }
 
     public NotificationDevice(UUID id, String platform, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime lastSeenAt) {
+        this(id, platform, "sandbox", deviceToken, installationId, favoriteTeamId, notificationsEnabled, lastSeenAt);
+    }
+
+    public NotificationDevice(UUID id, String platform, String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime lastSeenAt) {
         this.id = id;
         this.platform = platform;
+        this.environment = environment;
         this.deviceToken = deviceToken;
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
@@ -63,6 +71,10 @@ public class NotificationDevice {
         return platform;
     }
 
+    public String getEnvironment() {
+        return environment;
+    }
+
     public String getDeviceToken() {
         return deviceToken;
     }
@@ -75,7 +87,8 @@ public class NotificationDevice {
         return notificationsEnabled;
     }
 
-    public void update(String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
+    public void update(String environment, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
+        this.environment = environment;
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
         this.notificationsEnabled = notificationsEnabled;

@@ -40,6 +40,9 @@ public class NotificationEventService {
 
     @Transactional
     public EventDeliveryResult createAndDeliver(Game game, NotificationEventDraft draft) {
+        if (!isDeliverableEventType(draft.eventType())) {
+            return EventDeliveryResult.skipped(draft.eventKey());
+        }
         if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()) {
             return EventDeliveryResult.duplicate(draft.eventKey());
         }
@@ -101,6 +104,10 @@ public class NotificationEventService {
                 && (favoriteTeamId.equals(game.getHomeTeam().getTeamCode()) || favoriteTeamId.equals(game.getAwayTeam().getTeamCode()));
     }
 
+    private boolean isDeliverableEventType(String eventType) {
+        return "SCORE_CHANGED".equals(eventType) || "ON_BASE".equals(eventType);
+    }
+
     private String toJson(Map<String, Object> payload) {
         try {
             return objectMapper.writeValueAsString(payload);
@@ -128,6 +135,10 @@ public class NotificationEventService {
     ) {
         public static EventDeliveryResult duplicate(String eventKey) {
             return new EventDeliveryResult(null, eventKey, false, 0, 0, 0);
+        }
+
+        public static EventDeliveryResult skipped(String eventKey) {
+            return new EventDeliveryResult(null, eventKey, false, 0, 1, 0);
         }
     }
 }

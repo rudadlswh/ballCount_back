@@ -6,6 +6,7 @@ import com.kbo.crawlerapi.api.ResourceNotFoundException;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
+import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.LineScore;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedGameDetail;
@@ -23,6 +24,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,6 +109,7 @@ public class GameDetailImportService {
         try {
             resolvedOfficialDetail = resolveOfficialDetail(game, detailResponseBody);
             parsedDetail = resolvedOfficialDetail.parsedDetail();
+            logCurrentPlayerDtoState(game, parsedDetail);
             lineScoreResponseBody = kboGameDetailClient.fetchScoreBoard(
                     resolvedOfficialDetail.providerGameId(),
                     game.getGameDate().getYear()
@@ -286,12 +289,39 @@ public class GameDetailImportService {
             String combinedRawHash,
             OffsetDateTime fetchedAt
     ) {
-        var latestSnapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId());
-        if (latestSnapshot.map(GameSnapshot::getRawHash).filter(combinedRawHash::equals).isPresent()) {
+        if (!hasMeaningfulLiveState(parsedDetail) && !isLiveLike(parsedDetail.status())) {
+            log.debug(
+                    "snapshot persistence skipped empty non-live state game_id={} status={} raw_hash={} inning={} balls={} strikes={} outs={} runners={}/{}/{} current_pitcher_name={} current_batter_name={}",
+                    game.getId(),
+                    parsedDetail.status(),
+                    combinedRawHash,
+                    parsedDetail.inning(),
+                    parsedDetail.balls(),
+                    parsedDetail.strikes(),
+                    parsedDetail.outs(),
+                    parsedDetail.runnerOnFirst(),
+                    parsedDetail.runnerOnSecond(),
+                    parsedDetail.runnerOnThird(),
+                    parsedDetail.currentPitcherName(),
+                    parsedDetail.currentBatterName()
+            );
             return false;
         }
 
-        gameSnapshotRepository.save(new GameSnapshot(
+        var latestSnapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId());
+        if (latestSnapshot.map(GameSnapshot::getRawHash).filter(combinedRawHash::equals).isPresent()
+                && latestSnapshot.map(snapshot -> snapshotCurrentPlayersMatch(snapshot, parsedDetail)).orElse(false)) {
+            log.debug(
+                    "snapshot persistence skipped unchanged game_id={} raw_hash={} current_pitcher_name={} current_batter_name={}",
+                    game.getId(),
+                    combinedRawHash,
+                    parsedDetail.currentPitcherName(),
+                    parsedDetail.currentBatterName()
+            );
+            return false;
+        }
+
+        GameSnapshot snapshot = new GameSnapshot(
                 UUID.randomUUID(),
                 game,
                 parsedDetail.inning(),
@@ -316,7 +346,15 @@ public class GameDetailImportService {
                 combinedRawHash,
                 parsedDetail.sourceUpdatedAt(),
                 fetchedAt
-        ));
+        );
+        gameSnapshotRepository.save(snapshot);
+        log.debug(
+                "snapshot persistence saved game_id={} raw_hash={} current_pitcher_name={} current_batter_name={}",
+                game.getId(),
+                combinedRawHash,
+                snapshot.getCurrentPitcherName(),
+                snapshot.getCurrentBatterName()
+        );
         log.info(
                 "live snapshot game_id={} inning_label={} balls={} strikes={} outs={} runners={}/{}/{} current_pitcher_name={} current_batter_name={}",
                 game.getId(),
@@ -331,6 +369,54 @@ public class GameDetailImportService {
                 parsedDetail.currentBatterName()
         );
         return true;
+    }
+
+    private boolean hasMeaningfulLiveState(ParsedGameDetail parsedDetail) {
+        return parsedDetail.inning() != null
+                || parsedDetail.balls() != null
+                || parsedDetail.strikes() != null
+                || parsedDetail.outs() != null
+                || parsedDetail.runnerOnFirst()
+                || parsedDetail.runnerOnSecond()
+                || parsedDetail.runnerOnThird()
+                || clean(parsedDetail.currentPitcherName()) != null
+                || clean(parsedDetail.currentBatterName()) != null;
+    }
+
+    private boolean isLiveLike(GameStatus status) {
+        return status == GameStatus.LIVE || status == GameStatus.SUSPENDED;
+    }
+
+    private boolean snapshotCurrentPlayersMatch(GameSnapshot snapshot, ParsedGameDetail parsedDetail) {
+        return Objects.equals(clean(snapshot.getCurrentPitcherName()), clean(parsedDetail.currentPitcherName()))
+                && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()));
+    }
+
+    private void logCurrentPlayerDtoState(Game game, ParsedGameDetail parsedDetail) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        if (parsedDetail.currentPitcherName() == null || parsedDetail.currentBatterName() == null) {
+            log.debug(
+                    "current player parser dto missing public_game_id={} provider_game_id={} current_pitcher_name={} current_batter_name={}",
+                    game.getPublicGameId(),
+                    parsedDetail.providerGameId(),
+                    parsedDetail.currentPitcherName(),
+                    parsedDetail.currentBatterName()
+            );
+            return;
+        }
+        log.debug(
+                "current player parser dto mapped public_game_id={} provider_game_id={} current_pitcher_name={} current_batter_name={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                parsedDetail.currentPitcherName(),
+                parsedDetail.currentBatterName()
+        );
+    }
+
+    private String clean(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private boolean syncLineScoresIfChanged(Game game, List<KboLineScoreParser.ParsedLineScoreInning> innings) {

@@ -8,9 +8,9 @@ import com.kbo.crawlerapi.domain.NotificationDevice;
 
 public interface NotificationDeviceRepository extends JpaRepository<NotificationDevice, UUID> {
 
-    Optional<NotificationDevice> findByPlatformAndDeviceToken(String platform, String deviceToken);
+    Optional<NotificationDevice> findByPlatformAndEnvironmentAndDeviceToken(String platform, String environment, String deviceToken);
 
-    Optional<NotificationDevice> findByPlatformAndInstallationId(String platform, String installationId);
+    Optional<NotificationDevice> findByPlatformAndEnvironmentAndInstallationId(String platform, String environment, String installationId);
 
     List<NotificationDevice> findByPlatformAndNotificationsEnabledTrue(String platform);
 }

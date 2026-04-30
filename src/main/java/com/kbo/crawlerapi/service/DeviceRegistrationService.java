@@ -22,27 +22,39 @@ public class DeviceRegistrationService {
 
     @Transactional
     public DeviceRegistrationResult register(String platform, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled) {
+        return register(platform, null, deviceToken, installationId, favoriteTeamId, notificationsEnabled);
+    }
+
+    @Transactional
+    public DeviceRegistrationResult register(String platform, String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled) {
         String normalizedPlatform = normalizePlatform(platform);
+        String normalizedEnvironment = normalizeEnvironment(environment);
         String normalizedToken = requireDeviceToken(deviceToken);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        NotificationDevice device = notificationDeviceRepository.findByPlatformAndDeviceToken(normalizedPlatform, normalizedToken)
+        NotificationDevice device = notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, normalizedToken)
                 .or(() -> installationId == null || installationId.isBlank()
                         ? java.util.Optional.empty()
-                        : notificationDeviceRepository.findByPlatformAndInstallationId(normalizedPlatform, installationId))
-                .orElseGet(() -> new NotificationDevice(UUID.randomUUID(), normalizedPlatform, normalizedToken, installationId, favoriteTeamId, notificationsEnabled, now));
-        device.update(blankToNull(installationId), blankToNull(favoriteTeamId), notificationsEnabled, now);
+                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, installationId))
+                .orElseGet(() -> new NotificationDevice(UUID.randomUUID(), normalizedPlatform, normalizedEnvironment, normalizedToken, installationId, favoriteTeamId, notificationsEnabled, now));
+        device.update(normalizedEnvironment, blankToNull(installationId), blankToNull(favoriteTeamId), notificationsEnabled, now);
         notificationDeviceRepository.save(device);
-        return new DeviceRegistrationResult(device.getId(), normalizedPlatform, maskToken(normalizedToken), device.isNotificationsEnabled());
+        return new DeviceRegistrationResult(device.getId(), normalizedPlatform, normalizedEnvironment, maskToken(normalizedToken), device.isNotificationsEnabled());
     }
 
     @Transactional
     public void unregister(String platform, String deviceToken, String installationId) {
+        unregister(platform, null, deviceToken, installationId);
+    }
+
+    @Transactional
+    public void unregister(String platform, String environment, String deviceToken, String installationId) {
         String normalizedPlatform = normalizePlatform(platform);
+        String normalizedEnvironment = normalizeEnvironment(environment);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        notificationDeviceRepository.findByPlatformAndDeviceToken(normalizedPlatform, requireDeviceToken(deviceToken))
+        notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, requireDeviceToken(deviceToken))
                 .or(() -> installationId == null || installationId.isBlank()
                         ? java.util.Optional.empty()
-                        : notificationDeviceRepository.findByPlatformAndInstallationId(normalizedPlatform, installationId))
+                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, installationId))
                 .ifPresent(device -> device.disable(now));
     }
 
@@ -51,6 +63,23 @@ public class DeviceRegistrationService {
             return "ios";
         }
         return platform.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeEnvironment(String environment) {
+        if (environment == null || environment.isBlank()) {
+            return "sandbox";
+        }
+        String normalized = environment.trim().toLowerCase(Locale.ROOT);
+        if ("development".equals(normalized) || "debug".equals(normalized)) {
+            return "sandbox";
+        }
+        if ("release".equals(normalized)) {
+            return "production";
+        }
+        if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
+            throw new IllegalArgumentException("environment must be sandbox or production");
+        }
+        return normalized;
     }
 
     private String requireDeviceToken(String deviceToken) {
@@ -74,6 +103,7 @@ public class DeviceRegistrationService {
     public record DeviceRegistrationResult(
             UUID id,
             String platform,
+            String environment,
             String maskedDeviceToken,
             boolean notificationsEnabled
     ) {
