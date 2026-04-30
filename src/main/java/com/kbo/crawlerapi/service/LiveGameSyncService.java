@@ -200,8 +200,6 @@ public class LiveGameSyncService {
             drafts.add(scoreDraft(game, before, after));
         }
         if (after.status() == GameStatus.LIVE
-                && after.currentBatterName() != null
-                && after.currentPitcherName() != null
                 && baseCount(after) > baseCount(before)
                 && nullSafe(after.outs()) <= nullSafe(before.outs())) {
             drafts.add(onBaseDraft(game, after));

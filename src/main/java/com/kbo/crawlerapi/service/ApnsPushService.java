@@ -58,7 +58,7 @@ public class ApnsPushService {
                     {"aps":{"alert":{"title":%s,"body":%s},"sound":"default"},"data":%s}
                     """.formatted(jsonString(event.getTitle()), jsonString(event.getBody()), event.getPayload());
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(endpoint(device.getDeviceToken())))
+                    .uri(URI.create(endpoint(device)))
                     .header("authorization", "bearer " + token)
                     .header("apns-topic", properties.getBundleId())
                     .header("apns-push-type", "alert")
@@ -81,11 +81,14 @@ public class ApnsPushService {
         }
     }
 
-    private String endpoint(String deviceToken) {
-        String host = "production".equalsIgnoreCase(properties.getEnv())
+    private String endpoint(NotificationDevice device) {
+        String env = device.getEnvironment() == null || device.getEnvironment().isBlank()
+                ? properties.getEnv()
+                : device.getEnvironment();
+        String host = "production".equalsIgnoreCase(env)
                 ? "https://api.push.apple.com"
                 : "https://api.sandbox.push.apple.com";
-        return host + "/3/device/" + deviceToken;
+        return host + "/3/device/" + device.getDeviceToken();
     }
 
     private boolean isInvalidTokenResponse(int statusCode, String reason) {

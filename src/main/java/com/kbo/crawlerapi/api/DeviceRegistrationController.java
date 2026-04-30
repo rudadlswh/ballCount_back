@@ -21,6 +21,7 @@ public class DeviceRegistrationController {
         try {
             return deviceRegistrationService.register(
                     request.platform(),
+                    request.environment(),
                     request.deviceToken(),
                     request.installationId(),
                     request.favoriteTeamId(),
@@ -34,7 +35,7 @@ public class DeviceRegistrationController {
     @PostMapping("/devices/unregister")
     public void unregister(@RequestBody DeviceUnregisterRequest request) {
         try {
-            deviceRegistrationService.unregister(request.platform(), request.deviceToken(), request.installationId());
+            deviceRegistrationService.unregister(request.platform(), request.environment(), request.deviceToken(), request.installationId());
         } catch (IllegalArgumentException exception) {
             throw new InvalidParameterException(exception.getMessage());
         }
@@ -42,6 +43,7 @@ public class DeviceRegistrationController {
 
     public record DeviceRegisterRequest(
             String platform,
+            String environment,
             String deviceToken,
             String installationId,
             @JsonAlias("favoriteTeamID")
@@ -53,6 +55,7 @@ public class DeviceRegistrationController {
 
     public record DeviceUnregisterRequest(
             String platform,
+            String environment,
             String deviceToken,
             String installationId
     ) {

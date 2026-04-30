@@ -113,6 +113,53 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void onBaseDraftUsesFallbackTextWhenPlayerDetailsAreUnavailable() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0);
+        GameSnapshot beforeSnapshot = snapshot(before, null, null, 1, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, null, null, 1, true, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly("ON_BASE");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("출루.");
+    }
+
+    @Test
+    void outsInningAndCountOnlyChangesDoNotNotify() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Top 4");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 1);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 2, false, false, false, 2, 2);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
     void finalConfirmedGameIsNotRefreshedForever() {
         Game finalGame = fixtureGame(GameStatus.FINAL, 4, 3);
         finalGame.confirmFinal(OffsetDateTime.now(ACTIVE_KST_CLOCK));
@@ -146,6 +193,10 @@ class LiveGameSyncServiceTest {
     }
 
     private Game fixtureGame(GameStatus status, Integer awayScore, Integer homeScore) {
+        return fixtureGame(status, awayScore, homeScore, null);
+    }
+
+    private Game fixtureGame(GameStatus status, Integer awayScore, Integer homeScore, String inningState) {
         Team homeTeam = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
         Team awayTeam = new Team(UUID.randomUUID(), "kia", "KIA 타이거즈", "KIA", "KIA Tigers", null);
         return new Game(
@@ -161,7 +212,7 @@ class LiveGameSyncServiceTest {
                 awayTeam,
                 homeScore,
                 awayScore,
-                null,
+                inningState,
                 false,
                 false,
                 null,
@@ -179,14 +230,28 @@ class LiveGameSyncServiceTest {
             boolean runnerOnSecond,
             boolean runnerOnThird
     ) {
+        return snapshot(game, batter, pitcher, outs, runnerOnFirst, runnerOnSecond, runnerOnThird, 0, 0);
+    }
+
+    private GameSnapshot snapshot(
+            Game game,
+            String batter,
+            String pitcher,
+            Integer outs,
+            boolean runnerOnFirst,
+            boolean runnerOnSecond,
+            boolean runnerOnThird,
+            Integer balls,
+            Integer strikes
+    ) {
         return new GameSnapshot(
                 UUID.randomUUID(),
                 game,
                 3,
                 "top",
                 "Top 3",
-                0,
-                0,
+                balls,
+                strikes,
                 outs,
                 runnerOnFirst,
                 runnerOnSecond,
