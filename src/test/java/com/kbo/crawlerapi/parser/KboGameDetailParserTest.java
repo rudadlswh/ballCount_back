@@ -81,7 +81,43 @@ class KboGameDetailParserTest {
     }
 
     @Test
-    void parsesCurrentPitcherAndBatterWithoutStartingPitcherFallback() {
+    void parsesCurrentPitcherAndBatterFromOfficialTeamSideFieldsForTopHalf() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260409SKLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_RESULT_CK": 0,
+                      "CANCEL_SC_NM": "정상경기",
+                      "GAME_INN_NO": 4,
+                      "GAME_TB_SC": "T",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "2",
+                      "B_SCORE_CN": "3",
+                      "BALL_CN": 1,
+                      "STRIKE_CN": 2,
+                      "OUT_CN": 1,
+                      "T_PIT_P_NM": "원정선발",
+                      "B_PIT_P_NM": "홈선발",
+                      "T_P_NM": "원정타자",
+                      "B_P_NM": "홈투수"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).currentPitcherName()).isEqualTo("홈투수");
+        assertThat(result.get(0).currentBatterName()).isEqualTo("원정타자");
+        assertThat(result.get(0).homeStartingPitcherName()).isEqualTo("홈선발");
+        assertThat(result.get(0).awayStartingPitcherName()).isEqualTo("원정선발");
+    }
+
+    @Test
+    void parsesCurrentPitcherAndBatterFromOfficialTeamSideFieldsForBottomHalf() {
         String payload = """
                 {
                   "game": [
@@ -95,13 +131,8 @@ class KboGameDetailParserTest {
                       "SCORE_CK": "1",
                       "T_SCORE_CN": "2",
                       "B_SCORE_CN": "3",
-                      "BALL_CN": 1,
-                      "STRIKE_CN": 2,
-                      "OUT_CN": 1,
-                      "T_PIT_P_NM": "원정선발",
-                      "B_PIT_P_NM": "홈선발",
-                      "PIT_P_NM": "현재투수",
-                      "BAT_P_NM": "현재타자"
+                      "T_P_NM": "원정투수",
+                      "B_P_NM": "홈타자"
                     }
                   ]
                 }
@@ -110,14 +141,12 @@ class KboGameDetailParserTest {
         var result = parser.parseGameList(payload);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).currentPitcherName()).isEqualTo("현재투수");
-        assertThat(result.get(0).currentBatterName()).isEqualTo("현재타자");
-        assertThat(result.get(0).homeStartingPitcherName()).isEqualTo("홈선발");
-        assertThat(result.get(0).awayStartingPitcherName()).isEqualTo("원정선발");
+        assertThat(result.get(0).currentPitcherName()).isEqualTo("원정투수");
+        assertThat(result.get(0).currentBatterName()).isEqualTo("홈타자");
     }
 
     @Test
-    void leavesCurrentPitcherAndBatterNullWhenOfficialPayloadOmitsThem() {
+    void doesNotUseGuessedOrStartingPitcherFieldsForCurrentPitcherAndBatter() {
         String payload = """
                 {
                   "game": [
@@ -128,7 +157,9 @@ class KboGameDetailParserTest {
                       "GAME_INN_NO": 4,
                       "GAME_TB_SC": "B",
                       "T_PIT_P_NM": "원정선발",
-                      "B_PIT_P_NM": "홈선발"
+                      "B_PIT_P_NM": "홈선발",
+                      "PIT_P_NM": "현재투수",
+                      "BAT_P_NM": "현재타자"
                     }
                   ]
                 }
