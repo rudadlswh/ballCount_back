@@ -58,4 +58,33 @@ class DeviceRegistrationServiceTest {
 
         verify(notificationDeviceRepository).save(any(NotificationDevice.class));
     }
+
+    @Test
+    void duplicateInstallationRegistrationUpdatesExistingTokenRow() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = new NotificationDevice(
+                java.util.UUID.randomUUID(),
+                "ios",
+                "sandbox",
+                "old-token",
+                "install-1",
+                "lg",
+                true,
+                java.time.OffsetDateTime.parse("2026-04-09T09:00:00+09:00")
+        );
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("new-token")))
+                .thenReturn(Optional.empty());
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
+                .thenReturn(Optional.of(existing));
+
+        service.register("ios", "sandbox", "new-token", "install-1", "kia", false);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        NotificationDevice device = deviceCaptor.getValue();
+        assertThat(device.getDeviceToken()).isEqualTo("new-token");
+        assertThat(device.getInstallationId()).isEqualTo("install-1");
+        assertThat(device.getFavoriteTeamId()).isEqualTo("kia");
+        assertThat(device.isNotificationsEnabled()).isFalse();
+    }
 }

@@ -36,7 +36,7 @@ public class DeviceRegistrationService {
                         ? java.util.Optional.empty()
                         : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, installationId))
                 .orElseGet(() -> new NotificationDevice(UUID.randomUUID(), normalizedPlatform, normalizedEnvironment, normalizedToken, installationId, favoriteTeamId, notificationsEnabled, now));
-        device.update(normalizedEnvironment, blankToNull(installationId), blankToNull(favoriteTeamId), notificationsEnabled, now);
+        device.update(normalizedEnvironment, normalizedToken, blankToNull(installationId), blankToNull(favoriteTeamId), notificationsEnabled, now);
         notificationDeviceRepository.save(device);
         return new DeviceRegistrationResult(device.getId(), normalizedPlatform, normalizedEnvironment, maskToken(normalizedToken), device.isNotificationsEnabled());
     }

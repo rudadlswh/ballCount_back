@@ -54,17 +54,7 @@ public class ApnsPushService {
 
         try {
             String token = jwt();
-            String body = """
-                    {"aps":{"alert":{"title":%s,"body":%s},"sound":"default"},"data":%s}
-                    """.formatted(jsonString(event.getTitle()), jsonString(event.getBody()), event.getPayload());
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(endpoint(device)))
-                    .header("authorization", "bearer " + token)
-                    .header("apns-topic", properties.getBundleId())
-                    .header("apns-push-type", "alert")
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
+            HttpRequest request = buildRequest(event, device, token);
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
                 log.info("[APNs] push sent eventId={}", event.getId());
@@ -89,6 +79,21 @@ public class ApnsPushService {
                 ? "https://api.push.apple.com"
                 : "https://api.sandbox.push.apple.com";
         return host + "/3/device/" + device.getDeviceToken();
+    }
+
+    HttpRequest buildRequest(NotificationEvent event, NotificationDevice device, String token) {
+        String body = """
+                {"aps":{"alert":{"title":%s,"body":%s},"sound":"default"},"data":%s}
+                """.formatted(jsonString(event.getTitle()), jsonString(event.getBody()), event.getPayload());
+        return HttpRequest.newBuilder()
+                .uri(URI.create(endpoint(device)))
+                .header("authorization", "bearer " + token)
+                .header("apns-topic", properties.getBundleId())
+                .header("apns-push-type", "alert")
+                .header("apns-priority", "10")
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
     }
 
     private boolean isInvalidTokenResponse(int statusCode, String reason) {

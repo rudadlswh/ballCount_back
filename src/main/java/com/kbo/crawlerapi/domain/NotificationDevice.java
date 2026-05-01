@@ -79,6 +79,10 @@ public class NotificationDevice {
         return deviceToken;
     }
 
+    public String getInstallationId() {
+        return installationId;
+    }
+
     public String getFavoriteTeamId() {
         return favoriteTeamId;
     }
@@ -88,7 +92,12 @@ public class NotificationDevice {
     }
 
     public void update(String environment, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
+        update(environment, this.deviceToken, installationId, favoriteTeamId, notificationsEnabled, seenAt);
+    }
+
+    public void update(String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
         this.environment = environment;
+        this.deviceToken = deviceToken;
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
         this.notificationsEnabled = notificationsEnabled;
