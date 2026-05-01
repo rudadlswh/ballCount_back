@@ -9,8 +9,10 @@ public class ApnsProperties {
     private String teamId;
     private String keyId;
     private String bundleId;
+    private String privateKeyPath;
     private String privateKey;
     private String env = "sandbox";
+    private boolean testEnabled = false;
 
     public boolean isPushEnabled() {
         return pushEnabled;
@@ -52,6 +54,14 @@ public class ApnsProperties {
         this.privateKey = privateKey;
     }
 
+    public String getPrivateKeyPath() {
+        return privateKeyPath;
+    }
+
+    public void setPrivateKeyPath(String privateKeyPath) {
+        this.privateKeyPath = privateKeyPath;
+    }
+
     public String getEnv() {
         return env;
     }
@@ -60,8 +70,40 @@ public class ApnsProperties {
         this.env = env;
     }
 
+    public boolean isTestEnabled() {
+        return testEnabled;
+    }
+
+    public void setTestEnabled(boolean testEnabled) {
+        this.testEnabled = testEnabled;
+    }
+
     public boolean isConfigPresent() {
-        return hasText(teamId) && hasText(keyId) && hasText(bundleId) && hasText(privateKey);
+        return hasTeamId() && hasKeyId() && hasBundleId() && hasPrivateKeySource();
+    }
+
+    public boolean hasTeamId() {
+        return hasText(teamId);
+    }
+
+    public boolean hasKeyId() {
+        return hasText(keyId);
+    }
+
+    public boolean hasBundleId() {
+        return hasText(bundleId);
+    }
+
+    public boolean hasPrivateKey() {
+        return hasText(privateKey);
+    }
+
+    public boolean hasPrivateKeyPath() {
+        return hasText(privateKeyPath);
+    }
+
+    public boolean hasPrivateKeySource() {
+        return hasPrivateKeyPath() || hasPrivateKey();
     }
 
     private boolean hasText(String value) {
