@@ -28,6 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -52,7 +53,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant, unrelated));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant, unrelated));
 
         var result = service.createAndDeliver(game, draft());
 
@@ -72,7 +73,7 @@ class NotificationEventServiceTest {
 
         assertThat(result.eventCreated()).isFalse();
         verify(notificationEventRepository, never()).save(any());
-        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
+        verify(notificationDeviceRepository, never()).findByFavoriteTeamIdIn(any());
     }
 
     @Test
@@ -84,7 +85,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(game, draft());
 
@@ -95,18 +96,126 @@ class NotificationEventServiceTest {
     @Test
     void configMissingSkipsWithoutFailingEventCreation() {
         Game game = fixtureGame();
-        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.skipped("config_missing")));
+        NotificationEventService service = service(new RecordingApnsPushService(
+                ApnsPushService.ApnsSendResult.sentResult(),
+                ApnsPushService.APNS_CONFIG_MISSING,
+                "sandbox"
+        ));
         NotificationDevice relevant = device("kia", "token-a");
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(game, draft());
 
         assertThat(result.eventCreated()).isTrue();
         assertThat(result.skippedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.APNS_CONFIG_MISSING);
+    }
+
+    @Test
+    void pushDisabledSkipsWithExplicitReason() {
+        NotificationEventService service = service(new RecordingApnsPushService(
+                ApnsPushService.ApnsSendResult.sentResult(),
+                ApnsPushService.APNS_PUSH_DISABLED,
+                "sandbox"
+        ));
+        NotificationDevice relevant = device("kia", "token-a");
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+
+        var result = service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.APNS_PUSH_DISABLED);
+    }
+
+    @Test
+    void invalidApnsPrivateKeySkipsWithExplicitReason() {
+        NotificationEventService service = service(new RecordingApnsPushService(
+                ApnsPushService.ApnsSendResult.sentResult(),
+                ApnsPushService.APNS_PRIVATE_KEY_INVALID,
+                "sandbox"
+        ));
+        NotificationDevice relevant = device("kia", "token-a");
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+
+        service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.APNS_PRIVATE_KEY_INVALID);
+    }
+
+    @Test
+    void disabledRelevantDeviceSkipsWithDeviceNotificationsDisabled() {
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+        NotificationDevice disabled = device("ios", "sandbox", "kia", "token-a", false);
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(disabled));
+
+        service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.DEVICE_NOTIFICATIONS_DISABLED);
+    }
+
+    @Test
+    void mismatchedDeviceEnvironmentSkipsWithEnvironmentMismatch() {
+        NotificationEventService service = service(new RecordingApnsPushService(
+                ApnsPushService.ApnsSendResult.sentResult(),
+                null,
+                "production"
+        ));
+        NotificationDevice sandboxDevice = device("ios", "sandbox", "kia", "token-a", true);
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(sandboxDevice));
+
+        service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.ENVIRONMENT_MISMATCH);
+    }
+
+    @Test
+    void unsupportedPlatformSkipsWithUnsupportedPlatform() {
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+        NotificationDevice android = device("android", "sandbox", "kia", "token-a", true);
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(android));
+
+        service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.UNSUPPORTED_PLATFORM);
+    }
+
+    @Test
+    void noRelevantDevicesSkipsWithNoRelevantDevices() {
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of());
+
+        service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.NO_RELEVANT_DEVICES);
     }
 
     @Test
@@ -125,7 +234,7 @@ class NotificationEventServiceTest {
         assertThat(result.eventCreated()).isFalse();
         assertThat(result.skippedCount()).isEqualTo(1);
         verify(notificationEventRepository, never()).save(any());
-        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
+        verify(notificationDeviceRepository, never()).findByFavoriteTeamIdIn(any());
     }
 
 
@@ -151,6 +260,16 @@ class NotificationEventServiceTest {
 
     private NotificationDevice device(String favoriteTeamId, String token) {
         return new NotificationDevice(UUID.randomUUID(), "ios", token, UUID.randomUUID().toString(), favoriteTeamId, true, OffsetDateTime.now(CLOCK));
+    }
+
+    private NotificationDevice device(String platform, String environment, String favoriteTeamId, String token, boolean notificationsEnabled) {
+        return new NotificationDevice(UUID.randomUUID(), platform, environment, token, UUID.randomUUID().toString(), favoriteTeamId, notificationsEnabled, OffsetDateTime.now(CLOCK));
+    }
+
+    private NotificationEvent savedEvent() {
+        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationEventRepository).save(eventCaptor.capture());
+        return eventCaptor.getValue();
     }
 
     private Game fixtureGame() {
@@ -181,12 +300,48 @@ class NotificationEventServiceTest {
     private static final class RecordingApnsPushService extends ApnsPushService {
 
         private final ApnsSendResult result;
+        private final String readinessSkipReason;
+        private final String configuredEnvironment;
         private final List<NotificationDevice> sentDevices = new java.util.ArrayList<>();
         private final List<NotificationEvent> sentEvents = new java.util.ArrayList<>();
 
         private RecordingApnsPushService(ApnsSendResult result) {
+            this(result, null, "sandbox");
+        }
+
+        private RecordingApnsPushService(ApnsSendResult result, String readinessSkipReason, String configuredEnvironment) {
             super(new ApnsProperties(), CLOCK);
             this.result = result;
+            this.readinessSkipReason = readinessSkipReason;
+            this.configuredEnvironment = configuredEnvironment;
+        }
+
+        @Override
+        public String readinessSkipReason() {
+            return readinessSkipReason;
+        }
+
+        @Override
+        public ApnsDiagnostics diagnostics() {
+            return new ApnsDiagnostics(
+                    readinessSkipReason == null || !ApnsPushService.APNS_PUSH_DISABLED.equals(readinessSkipReason),
+                    true,
+                    true,
+                    true,
+                    false,
+                    readinessSkipReason == null || !ApnsPushService.APNS_CONFIG_MISSING.equals(readinessSkipReason),
+                    configuredEnvironment
+            );
+        }
+
+        @Override
+        public boolean environmentMatches(String deviceEnvironment) {
+            return configuredEnvironment.equalsIgnoreCase(deviceEnvironment);
+        }
+
+        @Override
+        public String configuredEnvironment() {
+            return configuredEnvironment;
         }
 
         @Override

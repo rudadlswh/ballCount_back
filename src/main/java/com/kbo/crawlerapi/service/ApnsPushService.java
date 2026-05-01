@@ -4,12 +4,16 @@ import com.kbo.crawlerapi.config.ApnsProperties;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.Signature;
@@ -27,6 +31,17 @@ import org.springframework.stereotype.Service;
 public class ApnsPushService {
 
     private static final Logger log = LoggerFactory.getLogger(ApnsPushService.class);
+    public static final String APNS_PUSH_DISABLED = "apns_push_disabled";
+    public static final String APNS_CONFIG_MISSING = "apns_config_missing";
+    public static final String APNS_PRIVATE_KEY_INVALID = "apns_private_key_invalid";
+    public static final String DEVICE_NOTIFICATIONS_DISABLED = "device_notifications_disabled";
+    public static final String ENVIRONMENT_MISMATCH = "environment_mismatch";
+    public static final String UNSUPPORTED_PLATFORM = "unsupported_platform";
+    public static final String NO_RELEVANT_DEVICES = "no_relevant_devices";
+    public static final String APNS_PRIVATE_KEY_PATH_NOT_FOUND = "apns_private_key_path_not_found";
+    public static final String APNS_PRIVATE_KEY_UNREADABLE = "apns_private_key_unreadable";
+    public static final String APNS_INVALID_PROVIDER_TOKEN = "apns_invalid_provider_token";
+    public static final String APNS_BAD_DEVICE_TOKEN = "apns_bad_device_token";
 
     private final ApnsProperties properties;
     private final Clock applicationClock;
@@ -44,12 +59,42 @@ public class ApnsPushService {
     }
 
     public ApnsSendResult send(NotificationEvent event, NotificationDevice device) {
-        if (!properties.isPushEnabled()) {
-            return ApnsSendResult.skipped("disabled");
+        String deviceSkipReason = deviceSkipReason(device);
+        if (deviceSkipReason != null) {
+            log.info(
+                    "[APNs] device skipped eventId={} deviceId={} reason={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} deviceEnv={}",
+                    event.getId(),
+                    device.getId(),
+                    deviceSkipReason,
+                    properties.isPushEnabled(),
+                    properties.hasTeamId(),
+                    properties.hasKeyId(),
+                    properties.hasBundleId(),
+                    properties.hasPrivateKeyPath(),
+                    properties.hasPrivateKey(),
+                    configuredEnvironment(),
+                    device.getEnvironment()
+            );
+            return ApnsSendResult.skipped(deviceSkipReason);
         }
-        if (!properties.isConfigPresent()) {
-            log.warn("[APNs] config missing");
-            return ApnsSendResult.skipped("config_missing");
+
+        String readinessSkipReason = readinessSkipReason();
+        if (readinessSkipReason != null) {
+            log.warn(
+                    "[APNs] delivery skipped eventId={} deviceId={} reason={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} deviceEnv={}",
+                    event.getId(),
+                    device.getId(),
+                    readinessSkipReason,
+                    properties.isPushEnabled(),
+                    properties.hasTeamId(),
+                    properties.hasKeyId(),
+                    properties.hasBundleId(),
+                    properties.hasPrivateKeyPath(),
+                    properties.hasPrivateKey(),
+                    configuredEnvironment(),
+                    device.getEnvironment()
+            );
+            return ApnsSendResult.skipped(readinessSkipReason);
         }
 
         try {
@@ -63,18 +108,87 @@ public class ApnsPushService {
             String reason = response.body() == null || response.body().isBlank()
                     ? "status_" + response.statusCode()
                     : response.body();
-            log.warn("[APNs] push failed eventId={} reason={}", event.getId(), reason);
-            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), reason), reason);
+            String mappedReason = mapApnsFailureReason(reason);
+            log.warn("[APNs] push failed eventId={} reason={}", event.getId(), mappedReason);
+            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), mappedReason), mappedReason);
         } catch (Exception exception) {
             log.warn("[APNs] push failed eventId={} reason={}", event.getId(), exception.getClass().getSimpleName());
             return new ApnsSendResult(false, false, false, exception.getMessage());
         }
     }
 
+    public String readinessSkipReason() {
+        if (!properties.isPushEnabled()) {
+            return APNS_PUSH_DISABLED;
+        }
+        if (!properties.isConfigPresent()) {
+            return APNS_CONFIG_MISSING;
+        }
+        PrivateKeyLoadResult privateKeyLoadResult = privateKeyLoadResult();
+        log.info(
+                "[APNs] key diagnostics pushEnabled={} configuredEnv={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} privateKeyParseSuccess={} privateKeyReadSuccess={}",
+                properties.isPushEnabled(),
+                configuredEnvironment(),
+                properties.hasTeamId(),
+                properties.hasKeyId(),
+                properties.hasBundleId(),
+                properties.hasPrivateKeyPath(),
+                properties.hasPrivateKey(),
+                privateKeyLoadResult.success(),
+                privateKeyLoadResult.readSuccess()
+        );
+        if (!privateKeyLoadResult.success()) {
+            return privateKeyLoadResult.reason();
+        }
+        return null;
+    }
+
+    public ApnsDiagnostics diagnostics() {
+        return new ApnsDiagnostics(
+                properties.isPushEnabled(),
+                properties.hasTeamId(),
+                properties.hasKeyId(),
+                properties.hasBundleId(),
+                properties.hasPrivateKeyPath(),
+                properties.hasPrivateKey(),
+                configuredEnvironment()
+        );
+    }
+
+    public boolean environmentMatches(String deviceEnvironment) {
+        return configuredEnvironment().equalsIgnoreCase(normalizeEnvironment(deviceEnvironment));
+    }
+
+    public String configuredEnvironment() {
+        return normalizeEnvironment(properties.getEnv());
+    }
+
+    private String deviceSkipReason(NotificationDevice device) {
+        if (!"ios".equalsIgnoreCase(device.getPlatform())) {
+            return UNSUPPORTED_PLATFORM;
+        }
+        if (!device.isNotificationsEnabled()) {
+            return DEVICE_NOTIFICATIONS_DISABLED;
+        }
+        if (!environmentMatches(device.getEnvironment())) {
+            return ENVIRONMENT_MISMATCH;
+        }
+        return null;
+    }
+
+    private PrivateKeyLoadResult privateKeyLoadResult() {
+        try {
+            privateKey();
+            return PrivateKeyLoadResult.loaded();
+        } catch (PrivateKeyLoadException exception) {
+            return PrivateKeyLoadResult.failed(exception.reason(), exception.readSuccess());
+        } catch (Exception exception) {
+            return PrivateKeyLoadResult.failed(APNS_PRIVATE_KEY_INVALID, true);
+        }
+    }
+
     private String endpoint(NotificationDevice device) {
-        String env = device.getEnvironment() == null || device.getEnvironment().isBlank()
-                ? properties.getEnv()
-                : device.getEnvironment();
+        String env = normalizeEnvironment(device.getEnvironment());
         String host = "production".equalsIgnoreCase(env)
                 ? "https://api.push.apple.com"
                 : "https://api.sandbox.push.apple.com";
@@ -94,13 +208,36 @@ public class ApnsPushService {
                 .header("content-type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
+    private String normalizeEnvironment(String environment) {
+        if (environment == null || environment.isBlank()) {
+            return "sandbox";
+        }
+        String normalized = environment.trim().toLowerCase(java.util.Locale.ROOT);
+        if ("development".equals(normalized) || "debug".equals(normalized)) {
+            return "sandbox";
+        }
+        if ("release".equals(normalized)) {
+            return "production";
+        }
+        return normalized;
     }
 
     private boolean isInvalidTokenResponse(int statusCode, String reason) {
         return statusCode == 410
                 || reason.contains("BadDeviceToken")
                 || reason.contains("Unregistered")
-                || reason.contains("DeviceTokenNotForTopic");
+                || reason.contains("DeviceTokenNotForTopic")
+                || APNS_BAD_DEVICE_TOKEN.equals(reason);
+    }
+
+    String mapApnsFailureReason(String reason) {
+        if (reason != null && reason.contains("InvalidProviderToken")) {
+            return APNS_INVALID_PROVIDER_TOKEN;
+        }
+        if (reason != null && reason.contains("BadDeviceToken")) {
+            return APNS_BAD_DEVICE_TOKEN;
+        }
+        return reason;
     }
 
     private String jwt() throws Exception {
@@ -120,17 +257,62 @@ public class ApnsPushService {
     }
 
     private PrivateKey privateKey() throws Exception {
-        String pem = properties.getPrivateKey()
-                .replace("\\n", "\n")
+        byte[] encoded = decodePemBody(loadPem());
+        try {
+            PrivateKey key = KeyFactory.getInstance("EC").generatePrivate(new PKCS8EncodedKeySpec(encoded));
+            if (!(key instanceof ECPrivateKey)) {
+                throw new PrivateKeyLoadException(APNS_PRIVATE_KEY_INVALID, true);
+            }
+            return key;
+        } catch (PrivateKeyLoadException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new PrivateKeyLoadException(APNS_PRIVATE_KEY_INVALID, true, exception);
+        }
+    }
+
+    private String loadPem() {
+        if (properties.hasPrivateKeyPath()) {
+            return loadPemFromPath();
+        }
+        return normalizeInlinePem(properties.getPrivateKey());
+    }
+
+    private String loadPemFromPath() {
+        Path path;
+        try {
+            path = Path.of(properties.getPrivateKeyPath().trim());
+        } catch (InvalidPathException exception) {
+            throw new PrivateKeyLoadException(APNS_PRIVATE_KEY_PATH_NOT_FOUND, false, exception);
+        }
+        if (!Files.exists(path)) {
+            throw new PrivateKeyLoadException(APNS_PRIVATE_KEY_PATH_NOT_FOUND, false);
+        }
+        try {
+            return Files.readString(path, StandardCharsets.UTF_8).trim();
+        } catch (IOException | SecurityException exception) {
+            throw new PrivateKeyLoadException(APNS_PRIVATE_KEY_UNREADABLE, false, exception);
+        }
+    }
+
+    private String normalizeInlinePem(String privateKey) {
+        String pem = privateKey == null ? "" : privateKey.trim();
+        if ((pem.startsWith("\"") && pem.endsWith("\"")) || (pem.startsWith("'") && pem.endsWith("'"))) {
+            pem = pem.substring(1, pem.length() - 1).trim();
+        }
+        return pem.replace("\\n", "\n").trim();
+    }
+
+    private byte[] decodePemBody(String pem) {
+        String body = pem
                 .replace("-----BEGIN PRIVATE KEY-----", "")
                 .replace("-----END PRIVATE KEY-----", "")
                 .replaceAll("\\s", "");
-        byte[] encoded = Base64.getDecoder().decode(pem);
-        PrivateKey key = KeyFactory.getInstance("EC").generatePrivate(new PKCS8EncodedKeySpec(encoded));
-        if (!(key instanceof ECPrivateKey)) {
-            throw new IllegalStateException("APNs private key is not an EC key");
+        try {
+            return Base64.getDecoder().decode(body);
+        } catch (IllegalArgumentException exception) {
+            throw new PrivateKeyLoadException(APNS_PRIVATE_KEY_INVALID, true, exception);
         }
-        return key;
     }
 
     private byte[] derToJose(byte[] derSignature, int outputLength) throws Exception {
@@ -183,6 +365,55 @@ public class ApnsPushService {
 
         public static ApnsSendResult skipped(String reason) {
             return new ApnsSendResult(false, true, false, reason);
+        }
+    }
+
+    public record ApnsDiagnostics(
+            boolean pushEnabled,
+            boolean teamIdPresent,
+            boolean keyIdPresent,
+            boolean bundleIdPresent,
+            boolean privateKeyPathPresent,
+            boolean inlinePrivateKeyPresent,
+            String configuredEnvironment
+    ) {
+    }
+
+    private record PrivateKeyLoadResult(
+            boolean success,
+            String reason,
+            boolean readSuccess
+    ) {
+        private static PrivateKeyLoadResult loaded() {
+            return new PrivateKeyLoadResult(true, null, true);
+        }
+
+        private static PrivateKeyLoadResult failed(String reason, boolean readSuccess) {
+            return new PrivateKeyLoadResult(false, reason, readSuccess);
+        }
+    }
+
+    private static final class PrivateKeyLoadException extends RuntimeException {
+
+        private final String reason;
+        private final boolean readSuccess;
+
+        private PrivateKeyLoadException(String reason, boolean readSuccess) {
+            this(reason, readSuccess, null);
+        }
+
+        private PrivateKeyLoadException(String reason, boolean readSuccess, Throwable cause) {
+            super(reason, cause);
+            this.reason = reason;
+            this.readSuccess = readSuccess;
+        }
+
+        private String reason() {
+            return reason;
+        }
+
+        private boolean readSuccess() {
+            return readSuccess;
         }
     }
 }

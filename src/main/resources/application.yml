@@ -46,9 +46,11 @@ app:
     live-ttl: PT15S
     final-confirmation-ttl: PT2M
   apns:
-    push-enabled: ${KBO_PUSH_ENABLED:false}
+    push-enabled: ${KBO_PUSH_ENABLED:true}
     team-id: ${APNS_TEAM_ID:}
     key-id: ${APNS_KEY_ID:}
     bundle-id: ${APNS_BUNDLE_ID:}
-    private-key: ${APNS_PRIVATE_KEY:}
+    private-key-path: ${APNS_PRIVATE_KEY_PATH:}
+#    private-key: ${APNS_PRIVATE_KEY:}
     env: ${APNS_ENV:sandbox}
+    test-enabled: ${KBO_APNS_TEST_ENABLED:false}
