@@ -5,12 +5,18 @@ import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class DeviceRegistrationService {
+
+    private static final Logger log = LoggerFactory.getLogger(DeviceRegistrationService.class);
+    private static final int TOKEN_PREFIX_LENGTH = 12;
 
     private final NotificationDeviceRepository notificationDeviceRepository;
     private final Clock applicationClock;
@@ -30,14 +36,35 @@ public class DeviceRegistrationService {
         String normalizedPlatform = normalizePlatform(platform);
         String normalizedEnvironment = normalizeEnvironment(environment);
         String normalizedToken = requireDeviceToken(deviceToken);
+        String normalizedInstallationId = blankToNull(installationId);
+        String normalizedFavoriteTeamId = blankToNull(favoriteTeamId);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        NotificationDevice device = notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, normalizedToken)
-                .or(() -> installationId == null || installationId.isBlank()
-                        ? java.util.Optional.empty()
-                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, installationId))
+
+        Optional<NotificationDevice> tokenMatchedDevice = notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(
+                normalizedPlatform,
+                normalizedEnvironment,
+                normalizedToken
+        );
+        Optional<NotificationDevice> installationMatchedDevice = normalizedInstallationId == null
+                ? Optional.empty()
+                : notificationDeviceRepository.findByInstallationId(normalizedInstallationId);
+
+        boolean created = installationMatchedDevice.isEmpty() && tokenMatchedDevice.isEmpty();
+        NotificationDevice device = installationMatchedDevice
+                .or(() -> tokenMatchedDevice)
                 .orElseGet(() -> new NotificationDevice(UUID.randomUUID(), normalizedPlatform, normalizedEnvironment, normalizedToken, installationId, favoriteTeamId, notificationsEnabled, now));
-        device.update(normalizedEnvironment, normalizedToken, blankToNull(installationId), blankToNull(favoriteTeamId), notificationsEnabled, now);
+        tokenMatchedDevice
+                .filter(tokenDevice -> !tokenDevice.getId().equals(device.getId()))
+                .ifPresent(tokenDevice -> {
+                    notificationDeviceRepository.delete(tokenDevice);
+                    notificationDeviceRepository.flush();
+                });
+
+        String previousTokenPrefix = tokenPrefix(device.getDeviceToken());
+        boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
+        device.update(normalizedPlatform, normalizedEnvironment, normalizedToken, normalizedInstallationId, normalizedFavoriteTeamId, notificationsEnabled, now);
         notificationDeviceRepository.save(device);
+        logRegistration(normalizedInstallationId, normalizedToken, tokenChanged ? previousTokenPrefix : null, normalizedFavoriteTeamId, normalizedEnvironment, created);
         return new DeviceRegistrationResult(device.getId(), normalizedPlatform, normalizedEnvironment, maskToken(normalizedToken), device.isNotificationsEnabled());
     }
 
@@ -98,6 +125,36 @@ public class DeviceRegistrationService {
             return "****";
         }
         return token.substring(0, 6) + "..." + token.substring(token.length() - 6);
+    }
+
+    private String tokenPrefix(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        return token.substring(0, Math.min(TOKEN_PREFIX_LENGTH, token.length()));
+    }
+
+    private void logRegistration(String installationId, String token, String previousTokenPrefix, String favoriteTeamId, String environment, boolean created) {
+        if (previousTokenPrefix == null) {
+            log.info(
+                    "device registration {} installation_id={} token_prefix={} favorite_team_id={} environment={}",
+                    created ? "created" : "updated",
+                    installationId,
+                    tokenPrefix(token),
+                    favoriteTeamId,
+                    environment
+            );
+            return;
+        }
+        log.info(
+                "device registration {} installation_id={} token_prefix={} previous_token_prefix={} favorite_team_id={} environment={}",
+                created ? "created" : "updated",
+                installationId,
+                tokenPrefix(token),
+                previousTokenPrefix,
+                favoriteTeamId,
+                environment
+        );
     }
 
     public record DeviceRegistrationResult(

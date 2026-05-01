@@ -10,7 +10,9 @@ import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.UUID;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,7 +33,7 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("token-123")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("production"), eq("install-1")))
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
                 .thenReturn(Optional.empty());
 
         var result = service.register("iOS", "production", " token-123 ", "install-1", "lg", true);
@@ -63,18 +65,18 @@ class DeviceRegistrationServiceTest {
     void duplicateInstallationRegistrationUpdatesExistingTokenRow() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         NotificationDevice existing = new NotificationDevice(
-                java.util.UUID.randomUUID(),
+                UUID.randomUUID(),
                 "ios",
                 "sandbox",
                 "old-token",
                 "install-1",
                 "lg",
                 true,
-                java.time.OffsetDateTime.parse("2026-04-09T09:00:00+09:00")
+                OffsetDateTime.parse("2026-04-09T09:00:00+09:00")
         );
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("new-token")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "new-token", "install-1", "kia", false);
@@ -86,5 +88,81 @@ class DeviceRegistrationServiceTest {
         assertThat(device.getInstallationId()).isEqualTo("install-1");
         assertThat(device.getFavoriteTeamId()).isEqualTo("kia");
         assertThat(device.isNotificationsEnabled()).isFalse();
+        assertThat(device.getLastSeenAt()).isEqualTo(OffsetDateTime.now(CLOCK));
+    }
+
+    @Test
+    void registeringSameInstallationWithNewTokenUpdatesDeviceToken() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = device("ios", "production", "800facf43e22-old", "install-1", "ssg", true);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("80e2a3c36237-new")))
+                .thenReturn(Optional.empty());
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.of(existing));
+
+        service.register("ios", "production", "80e2a3c36237-new", "install-1", "ssg", true);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getDeviceToken()).isEqualTo("80e2a3c36237-new");
+    }
+
+    @Test
+    void registeringSameInstallationWithNewFavoriteTeamUpdatesFavoriteTeamId() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.of(existing));
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.of(existing));
+
+        service.register("ios", "sandbox", "token-123", "install-1", "kia", true);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getFavoriteTeamId()).isEqualTo("kia");
+    }
+
+    @Test
+    void registeringSameTokenRefreshesLastSeenAt() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = device("ios", "sandbox", "token-123", null, "ssg", true);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.of(existing));
+
+        service.register("ios", "sandbox", "token-123", null, "ssg", true);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getLastSeenAt()).isEqualTo(OffsetDateTime.now(CLOCK));
+    }
+
+    @Test
+    void disabledNotificationsUpdateNotificationsEnabledFalse() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.of(existing));
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.of(existing));
+
+        service.register("ios", "sandbox", "token-123", "install-1", "ssg", false);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().isNotificationsEnabled()).isFalse();
+    }
+
+    private NotificationDevice device(String platform, String environment, String token, String installationId, String favoriteTeamId, boolean notificationsEnabled) {
+        return new NotificationDevice(
+                UUID.randomUUID(),
+                platform,
+                environment,
+                token,
+                installationId,
+                favoriteTeamId,
+                notificationsEnabled,
+                OffsetDateTime.parse("2026-04-09T09:00:00+09:00")
+        );
     }
 }
