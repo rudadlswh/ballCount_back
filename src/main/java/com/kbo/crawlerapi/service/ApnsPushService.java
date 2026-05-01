@@ -20,6 +20,7 @@ import java.security.Signature;
 import java.security.interfaces.ECPrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import org.slf4j.Logger;
@@ -42,10 +43,14 @@ public class ApnsPushService {
     public static final String APNS_PRIVATE_KEY_UNREADABLE = "apns_private_key_unreadable";
     public static final String APNS_INVALID_PROVIDER_TOKEN = "apns_invalid_provider_token";
     public static final String APNS_BAD_DEVICE_TOKEN = "apns_bad_device_token";
+    public static final String APNS_TOO_MANY_PROVIDER_TOKEN_UPDATES = "apns_too_many_provider_token_updates";
+    private static final Duration PROVIDER_TOKEN_REFRESH_AFTER = Duration.ofMinutes(50);
+    private static final Duration PROVIDER_TOKEN_MAX_AGE = Duration.ofMinutes(60);
 
     private final ApnsProperties properties;
     private final Clock applicationClock;
     private final HttpClient httpClient;
+    private ProviderToken cachedProviderToken;
 
     @Autowired
     public ApnsPushService(ApnsProperties properties, Clock applicationClock) {
@@ -98,7 +103,7 @@ public class ApnsPushService {
         }
 
         try {
-            String token = jwt();
+            String token = providerToken();
             HttpRequest request = buildRequest(event, device, token);
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
@@ -208,6 +213,8 @@ public class ApnsPushService {
                 .header("content-type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
+    }
+
     private String normalizeEnvironment(String environment) {
         if (environment == null || environment.isBlank()) {
             return "sandbox";
@@ -237,13 +244,52 @@ public class ApnsPushService {
         if (reason != null && reason.contains("BadDeviceToken")) {
             return APNS_BAD_DEVICE_TOKEN;
         }
+        if (reason != null && reason.contains("TooManyProviderTokenUpdates")) {
+            return APNS_TOO_MANY_PROVIDER_TOKEN_UPDATES;
+        }
         return reason;
     }
 
-    private String jwt() throws Exception {
+    private synchronized String providerToken() throws Exception {
+        Instant now = Instant.now(applicationClock);
+        ProviderToken cached = cachedProviderToken;
+        if (cached != null) {
+            long tokenAgeSeconds = Duration.between(cached.issuedAt(), now).toSeconds();
+            if (now.isBefore(cached.expiresAt()) && now.isBefore(cached.refreshAfter())) {
+                log.info(
+                        "[APNs] provider token cache providerTokenCacheHit=true tokenAgeSeconds={} tokenRefreshReason=cache_valid",
+                        tokenAgeSeconds
+                );
+                return cached.token();
+            }
+            String refreshReason = now.isBefore(cached.expiresAt()) ? "refresh_window_elapsed" : "expired";
+            log.info(
+                    "[APNs] provider token cache providerTokenCacheHit=false tokenAgeSeconds={} tokenRefreshReason={}",
+                    tokenAgeSeconds,
+                    refreshReason
+            );
+        } else {
+            log.info("[APNs] provider token cache providerTokenCacheHit=false tokenAgeSeconds=null tokenRefreshReason=no_cached_token");
+        }
+
+        ProviderToken refreshed = createProviderToken(now);
+        cachedProviderToken = refreshed;
+        return refreshed.token();
+    }
+
+    private ProviderToken createProviderToken(Instant issuedAt) throws Exception {
+        String token = jwt(issuedAt);
+        return new ProviderToken(
+                token,
+                issuedAt,
+                issuedAt.plus(PROVIDER_TOKEN_REFRESH_AFTER),
+                issuedAt.plus(PROVIDER_TOKEN_MAX_AGE)
+        );
+    }
+
+    private String jwt(Instant issuedAt) throws Exception {
         String header = "{\"alg\":\"ES256\",\"kid\":\"%s\"}".formatted(properties.getKeyId());
-        long issuedAt = Instant.now(applicationClock).getEpochSecond();
-        String claims = "{\"iss\":\"%s\",\"iat\":%d}".formatted(properties.getTeamId(), issuedAt);
+        String claims = "{\"iss\":\"%s\",\"iat\":%d}".formatted(properties.getTeamId(), issuedAt.getEpochSecond());
         String signingInput = base64Url(header.getBytes(StandardCharsets.UTF_8)) + "." + base64Url(claims.getBytes(StandardCharsets.UTF_8));
         byte[] signature = sign(signingInput.getBytes(StandardCharsets.UTF_8));
         return signingInput + "." + base64Url(signature);
@@ -391,6 +437,14 @@ public class ApnsPushService {
         private static PrivateKeyLoadResult failed(String reason, boolean readSuccess) {
             return new PrivateKeyLoadResult(false, reason, readSuccess);
         }
+    }
+
+    private record ProviderToken(
+            String token,
+            Instant issuedAt,
+            Instant refreshAfter,
+            Instant expiresAt
+    ) {
     }
 
     private static final class PrivateKeyLoadException extends RuntimeException {
