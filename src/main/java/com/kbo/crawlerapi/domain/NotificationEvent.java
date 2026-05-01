@@ -103,6 +103,10 @@ public class NotificationEvent {
         return sentAt;
     }
 
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
     public void markDelivery(String deliveryStatus, OffsetDateTime sentAt, String errorMessage) {
         this.deliveryStatus = deliveryStatus;
         this.sentAt = sentAt;
