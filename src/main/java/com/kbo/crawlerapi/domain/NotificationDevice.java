@@ -91,11 +91,20 @@ public class NotificationDevice {
         return notificationsEnabled;
     }
 
+    public OffsetDateTime getLastSeenAt() {
+        return lastSeenAt;
+    }
+
     public void update(String environment, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
         update(environment, this.deviceToken, installationId, favoriteTeamId, notificationsEnabled, seenAt);
     }
 
     public void update(String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
+        update(this.platform, environment, deviceToken, installationId, favoriteTeamId, notificationsEnabled, seenAt);
+    }
+
+    public void update(String platform, String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
+        this.platform = platform;
         this.environment = environment;
         this.deviceToken = deviceToken;
         this.installationId = installationId;
