@@ -344,6 +344,11 @@ public class GameDetailImportService {
                 lineScoreResult.homeTotals().balls(),
                 lineScoreResult.awayTotals().balls(),
                 combinedRawHash,
+                null,
+                null,
+                null,
+                null,
+                null,
                 parsedDetail.sourceUpdatedAt(),
                 fetchedAt
         );
