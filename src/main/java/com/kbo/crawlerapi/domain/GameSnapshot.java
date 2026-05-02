@@ -88,6 +88,61 @@ public class GameSnapshot {
     @Column(name = "fetched_at", nullable = false)
     private OffsetDateTime fetchedAt;
 
+    public String getLastCompletedInning() {
+        return lastCompletedInning;
+    }
+
+    public void setLastCompletedInning(String lastCompletedInning) {
+        this.lastCompletedInning = lastCompletedInning;
+    }
+
+    @Column(name = "last_completed_inning")
+    private String lastCompletedInning;
+
+    public String getLastCompletedBatterName() {
+        return lastCompletedBatterName;
+    }
+
+    public void setLastCompletedBatterName(String lastCompletedBatterName) {
+        this.lastCompletedBatterName = lastCompletedBatterName;
+    }
+
+    @Column(name = "last_completed_batter_name")
+    private String lastCompletedBatterName;
+
+    public String getLastCompletedPitcherName() {
+        return lastCompletedPitcherName;
+    }
+
+    public void setLastCompletedPitcherName(String lastCompletedPitcherName) {
+        this.lastCompletedPitcherName = lastCompletedPitcherName;
+    }
+
+    @Column(name = "last_completed_pitcher_name")
+    private String lastCompletedPitcherName;
+
+    public String getLastCompletedPlayResult() {
+        return lastCompletedPlayResult;
+    }
+
+    public void setLastCompletedPlayResult(String lastCompletedPlayResult) {
+        this.lastCompletedPlayResult = lastCompletedPlayResult;
+    }
+
+    @Column(name = "last_completed_play_result")
+    private String lastCompletedPlayResult;
+
+    public String getLastCompletedPlayKey() {
+        return lastCompletedPlayKey;
+    }
+
+    public void setLastCompletedPlayKey(String lastCompletedPlayKey) {
+        this.lastCompletedPlayKey = lastCompletedPlayKey;
+    }
+
+    @Column(name = "last_completed_play_key")
+    private String lastCompletedPlayKey;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -118,6 +173,11 @@ public class GameSnapshot {
             Integer homeBalls,
             Integer awayBalls,
             String rawHash,
+            String lastCompletedInning,
+            String lastCompletedBatterName,
+            String lastCompletedPitcherName,
+            String lastCompletedPlayResult,
+            String lastCompletedPlayKey,
             OffsetDateTime sourceUpdatedAt,
             OffsetDateTime fetchedAt
     ) {
@@ -145,6 +205,11 @@ public class GameSnapshot {
         this.rawHash = rawHash;
         this.sourceUpdatedAt = sourceUpdatedAt;
         this.fetchedAt = fetchedAt;
+        this.lastCompletedInning = lastCompletedInning;
+        this.lastCompletedBatterName = lastCompletedBatterName;
+        this.lastCompletedPitcherName = lastCompletedPitcherName;
+        this.lastCompletedPlayResult = lastCompletedPlayResult;
+        this.lastCompletedPlayKey = lastCompletedPlayKey;       
     }
 
     public Integer getInning() {

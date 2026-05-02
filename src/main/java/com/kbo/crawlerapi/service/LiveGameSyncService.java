@@ -202,7 +202,7 @@ public class LiveGameSyncService {
         if (after.status() == GameStatus.LIVE
                 && baseCount(after) > baseCount(before)
                 && nullSafe(after.outs()) <= nullSafe(before.outs())) {
-            drafts.add(onBaseDraft(game, after));
+            drafts.add(onBaseDraft(game, before, after));
         }
         return drafts;
     }
@@ -241,43 +241,61 @@ public class LiveGameSyncService {
                 Math.max(0, nullSafe(after.awayScore()) - nullSafe(before.awayScore()))
                         + Math.max(0, nullSafe(after.homeScore()) - nullSafe(before.homeScore()))
         );
+
+        String batterName = before.currentBatterName();
+        String pitcherName = before.currentPitcherName();
         String result = liveEventResult(game, "득점");
-        String title = "%s %d : %d %s".formatted(game.getAwayTeam().getShortName(), game.getAwayScore(), game.getHomeScore(), game.getHomeTeam().getShortName());
+
+        String title = "%s %d : %d %s".formatted(
+                game.getAwayTeam().getShortName(),
+                game.getAwayScore(),
+                game.getHomeScore(),
+                game.getHomeTeam().getShortName()
+        );
+
         return liveDraft(
                 game,
                 "SCORE_CHANGED",
-                "game:%s:score:%d-%d:inning:%s:batter:%s:pitcher:%s".formatted(
+                "game:%s:score:%d-%d:inning:%s:batter:%s:pitcher:%s:result:%s".formatted(
                         game.getId(),
                         game.getAwayScore(),
                         game.getHomeScore(),
                         inning,
-                        safeKey(after.currentBatterName()),
-                        safeKey(after.currentPitcherName())
+                        safeKey(batterName),
+                        safeKey(pitcherName),
+                        safeKey(result)
                 ),
                 title,
-                liveEventBody(after, result, runCount),
-                after,
+                liveEventBody(batterName, pitcherName, result, runCount),
+                batterName,
+                pitcherName,
                 result,
                 runCount
         );
     }
 
-    private NotificationEventDraft onBaseDraft(Game game, GameState after) {
+    private NotificationEventDraft onBaseDraft(Game game, GameState before, GameState after) {
         String inning = game.getInningState() == null ? "경기" : game.getInningState();
+
+        String batterName = before.currentBatterName();
+        String pitcherName = before.currentPitcherName();
         String result = liveEventResult(game, "출루");
+
         return liveDraft(
                 game,
                 "ON_BASE",
-                "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s".formatted(
+                "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s:result:%s".formatted(
                         game.getId(),
                         inning,
                         baseKey(after),
-                        safeKey(after.currentBatterName()),
-                        safeKey(after.currentPitcherName())
+                        safeKey(batterName),
+                        safeKey(pitcherName),
+                        safeKey(result)
                 ),
                 "출루",
-                liveEventBody(after, result, null),
-                after,
+                liveEventBody(batterName, pitcherName, result, null),
+                batterName,
+                pitcherName,
                 result,
                 null
         );
@@ -315,13 +333,14 @@ public class LiveGameSyncService {
             String eventKey,
             String title,
             String body,
-            GameState state,
+            String batterName,
+            String pitcherName,
             String result,
             Integer runCount
     ) {
         NotificationEventDraft draft = draft(game, eventType, eventKey, title, body);
-        draft.payload().put("batterName", state.currentBatterName());
-        draft.payload().put("pitcherName", state.currentPitcherName());
+        draft.payload().put("batterName", batterName);
+        draft.payload().put("pitcherName", pitcherName);
         draft.payload().put("result", result);
         draft.payload().put("runCount", runCount);
         return draft;
@@ -334,10 +353,20 @@ public class LiveGameSyncService {
         return gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId()).orElse(null);
     }
 
-    private String liveEventBody(GameState state, String result, Integer runCount) {
-        String playText = state.currentBatterName() == null || state.currentPitcherName() == null
-                ? result + "."
-                : "%s 이 %s 을 상대로 %s.".formatted(state.currentBatterName(), state.currentPitcherName(), result);
+    private String liveEventBody(String batterName, String pitcherName, String result, Integer runCount) {
+        String playText;
+
+        if (batterName != null && !batterName.isBlank()
+                && pitcherName != null && !pitcherName.isBlank()) {
+            playText = "%s, %s 상대 %s".formatted(batterName.trim(), pitcherName.trim(), result);
+        } else if (batterName != null && !batterName.isBlank()) {
+            playText = "%s %s".formatted(batterName.trim(), result);
+        } else if (runCount == null) {
+            playText = "출루 상황 발생";
+        } else {
+            playText = "득점 상황 발생";
+        }
+
         return runCount == null ? playText : playText + "\n" + runCount + "득점";
     }
 
