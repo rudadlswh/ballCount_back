@@ -61,8 +61,8 @@ class LiveGameSyncServiceTest {
 
     @Test
     void liveScoreChangeCreatesScoringNotificationDraft() {
-        Game before = fixtureGame(GameStatus.SCHEDULED, 0, 0);
-        Game after = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game after = fixtureGame(GameStatus.LIVE, 2, 0);
         GameSnapshot snapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
@@ -83,7 +83,102 @@ class LiveGameSyncServiceTest {
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("SCORE_CHANGED");
         assertThat(notificationEventService.drafts.get(0).body())
-                .isEqualTo("김타자 이 박투수 을 상대로 득점.\n1득점");
+                .isEqualTo("득점 상황 발생\n1득점");
+    }
+
+    @Test
+    void scheduledToLiveTransitionCreatesGameStartDraftOnce() {
+        Game before = fixtureGame(GameStatus.SCHEDULED, 0, 0);
+        Game after = fixtureGame(GameStatus.LIVE, 0, 0);
+        GameSnapshot snapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(snapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_GAME_START);
+        assertThat(notificationEventService.drafts.get(0).eventKey()).isEqualTo("game:%s:game-start".formatted(after.getId()));
+    }
+
+    @Test
+    void repeatedLiveStateDoesNotCreateGameStartDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 0, 0);
+        Game after = fixtureGame(GameStatus.LIVE, 0, 0);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void liveToFinalTransitionCreatesGameEndDraftOnce() {
+        Game before = fixtureGame(GameStatus.LIVE, 3, 2);
+        Game after = fixtureGame(GameStatus.FINAL, 4, 2);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+        when(lineScoreRepository.countByGame_Id(eq(after.getId()))).thenReturn(1L);
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_GAME_END);
+        assertThat(notificationEventService.drafts.get(0).payload())
+                .containsEntry("winningTeamId", "kia")
+                .containsEntry("losingTeamId", "lg");
+    }
+
+    @Test
+    void repeatedFinalStateDoesNotCreateGameEndDraft() {
+        Game before = fixtureGame(GameStatus.FINAL, 4, 2);
+        Game after = fixtureGame(GameStatus.FINAL, 4, 2);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
+        when(lineScoreRepository.countByGame_Id(eq(after.getId()))).thenReturn(1L);
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
     }
 
     @Test
@@ -109,7 +204,7 @@ class LiveGameSyncServiceTest {
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
         assertThat(notificationEventService.drafts.get(0).body())
-                .isEqualTo("홍길동 이 박투수 을 상대로 출루.");
+                .isEqualTo("이전타자, 박투수 상대 출루");
     }
 
     @Test
@@ -134,7 +229,7 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("출루.");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("출루 상황 발생");
     }
 
     @Test
@@ -157,6 +252,129 @@ class LiveGameSyncServiceTest {
 
         assertThat(result.eventCreatedCount()).isZero();
         assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void inningHalfTransitionCreatesInningChangeDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Top 1");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Bottom 1");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 1, 1, "top", "1회 초");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 1, 1, "bottom", "1회 말");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        NotificationEventDraft draft = notificationEventService.drafts.get(0);
+        assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_INNING_CHANGED);
+        assertThat(draft.eventKey()).isEqualTo("game:%s:inning-change:1:bottom".formatted(after.getId()));
+        assertThat(draft.payload())
+                .containsEntry("inning", 1)
+                .containsEntry("inningHalf", "bottom")
+                .containsEntry("inningLabel", "1회 말");
+    }
+
+    @Test
+    void sameInningHalfRepeatedDoesNotCreateInningChangeDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Bottom 1");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Bottom 1");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 1, 1, "bottom", "1회 말");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 1, 1, "bottom", "1회 말");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void tieToHomeLeadCreatesLeadChangeDraftWithHomeEventTeamId() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 1);
+        Game after = fixtureGame(GameStatus.LIVE, 1, 2);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_LEAD_CHANGED, NotificationEventService.EVENT_SCORE_CHANGED);
+        assertThat(notificationEventService.drafts.get(0).payload())
+                .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "lg")
+                .containsEntry("previousAwayScore", 1)
+                .containsEntry("previousHomeScore", 1);
+    }
+
+    @Test
+    void awayLeadToHomeLeadCreatesLeadChangeDraftWithHomeEventTeamId() {
+        Game before = fixtureGame(GameStatus.LIVE, 3, 1);
+        Game after = fixtureGame(GameStatus.LIVE, 3, 4);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts.get(0).eventType()).isEqualTo(NotificationEventService.EVENT_LEAD_CHANGED);
+        assertThat(notificationEventService.drafts.get(0).payload())
+                .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "lg");
+    }
+
+    @Test
+    void leadToTieDoesNotCreateLeadChangeDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 3, 1);
+        Game after = fixtureGame(GameStatus.LIVE, 3, 3);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .doesNotContain(NotificationEventService.EVENT_LEAD_CHANGED);
     }
 
     @Test
@@ -244,12 +462,29 @@ class LiveGameSyncServiceTest {
             Integer balls,
             Integer strikes
     ) {
+        return snapshot(game, batter, pitcher, outs, runnerOnFirst, runnerOnSecond, runnerOnThird, balls, strikes, 3, "top", "Top 3");
+    }
+
+    private GameSnapshot snapshot(
+            Game game,
+            String batter,
+            String pitcher,
+            Integer outs,
+            boolean runnerOnFirst,
+            boolean runnerOnSecond,
+            boolean runnerOnThird,
+            Integer balls,
+            Integer strikes,
+            Integer inning,
+            String inningHalf,
+            String inningLabel
+    ) {
         return new GameSnapshot(
                 UUID.randomUUID(),
                 game,
-                3,
-                "top",
-                "Top 3",
+                inning,
+                inningHalf,
+                inningLabel,
                 balls,
                 strikes,
                 outs,

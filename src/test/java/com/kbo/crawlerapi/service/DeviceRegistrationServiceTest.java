@@ -51,6 +51,58 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
+    void registersDetailedNotificationSettingsWhenProvided() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.empty());
+
+        service.register(
+                "ios",
+                "sandbox",
+                "token-123",
+                "install-1",
+                "lg",
+                true,
+                new DeviceRegistrationService.DeviceNotificationSettings(false, true, false, true, true, true, true, true)
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        NotificationDevice device = deviceCaptor.getValue();
+        assertThat(device.isGameStartEnabled()).isFalse();
+        assertThat(device.isScoreChangeEnabled()).isTrue();
+        assertThat(device.isLeadChangeEnabled()).isFalse();
+        assertThat(device.isGameEndEnabled()).isTrue();
+        assertThat(device.isOnBaseEnabled()).isTrue();
+        assertThat(device.isInningChangeEnabled()).isTrue();
+        assertThat(device.isFavoriteTeamOnlyEnabled()).isTrue();
+        assertThat(device.isMuteWhenLosingEnabled()).isTrue();
+    }
+
+    @Test
+    void missingDetailedNotificationSettingsUseServerDefaults() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+
+        service.register("ios", "sandbox", "token-123", null, "lg", true);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        NotificationDevice device = deviceCaptor.getValue();
+        assertThat(device.isGameStartEnabled()).isTrue();
+        assertThat(device.isScoreChangeEnabled()).isTrue();
+        assertThat(device.isLeadChangeEnabled()).isTrue();
+        assertThat(device.isGameEndEnabled()).isTrue();
+        assertThat(device.isOnBaseEnabled()).isFalse();
+        assertThat(device.isInningChangeEnabled()).isFalse();
+        assertThat(device.isFavoriteTeamOnlyEnabled()).isFalse();
+        assertThat(device.isMuteWhenLosingEnabled()).isFalse();
+    }
+
+    @Test
     void developmentEnvironmentAliasesToSandbox() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
@@ -151,6 +203,38 @@ class DeviceRegistrationServiceTest {
         ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
         verify(notificationDeviceRepository).save(deviceCaptor.capture());
         assertThat(deviceCaptor.getValue().isNotificationsEnabled()).isFalse();
+    }
+
+    @Test
+    void updateRequestModifiesDetailedNotificationSettings() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.of(existing));
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.of(existing));
+
+        service.register(
+                "ios",
+                "sandbox",
+                "token-123",
+                "install-1",
+                "ssg",
+                true,
+                new DeviceRegistrationService.DeviceNotificationSettings(true, false, false, true, true, false, true, false)
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        NotificationDevice device = deviceCaptor.getValue();
+        assertThat(device.isGameStartEnabled()).isTrue();
+        assertThat(device.isScoreChangeEnabled()).isFalse();
+        assertThat(device.isLeadChangeEnabled()).isFalse();
+        assertThat(device.isGameEndEnabled()).isTrue();
+        assertThat(device.isOnBaseEnabled()).isTrue();
+        assertThat(device.isInningChangeEnabled()).isFalse();
+        assertThat(device.isFavoriteTeamOnlyEnabled()).isTrue();
+        assertThat(device.isMuteWhenLosingEnabled()).isFalse();
     }
 
     private NotificationDevice device(String platform, String environment, String token, String installationId, String favoriteTeamId, boolean notificationsEnabled) {
