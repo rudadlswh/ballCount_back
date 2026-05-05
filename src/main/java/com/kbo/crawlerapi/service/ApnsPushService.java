@@ -36,6 +36,7 @@ public class ApnsPushService {
     public static final String APNS_CONFIG_MISSING = "apns_config_missing";
     public static final String APNS_PRIVATE_KEY_INVALID = "apns_private_key_invalid";
     public static final String DEVICE_NOTIFICATIONS_DISABLED = "device_notifications_disabled";
+    public static final String DEVICE_NOTIFICATION_SETTINGS_DISABLED = "device_notification_settings_disabled";
     public static final String ENVIRONMENT_MISMATCH = "environment_mismatch";
     public static final String UNSUPPORTED_PLATFORM = "unsupported_platform";
     public static final String NO_RELEVANT_DEVICES = "no_relevant_devices";

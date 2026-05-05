@@ -23,6 +23,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class NotificationEventService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationEventService.class);
+    public static final String EVENT_GAME_START = "GAME_START";
+    public static final String EVENT_GAME_STARTED = EVENT_GAME_START;
+    public static final String EVENT_SCORE_CHANGED = "SCORE_CHANGED";
+    public static final String EVENT_LEAD_CHANGED = "LEAD_CHANGED";
+    public static final String EVENT_GAME_END = "GAME_END";
+    public static final String EVENT_GAME_FINAL = EVENT_GAME_END;
+    public static final String EVENT_ON_BASE = "ON_BASE";
+    public static final String EVENT_INNING_CHANGED = "INNING_CHANGED";
+    public static final String PAYLOAD_EVENT_TEAM_ID = "eventTeamId";
 
     private final NotificationEventRepository notificationEventRepository;
     private final NotificationDeviceRepository notificationDeviceRepository;
@@ -92,7 +101,7 @@ public class NotificationEventService {
 
         relevantTeamDevices.forEach(device -> logDeviceDiagnostics(event, device, game));
 
-        List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices);
+        List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices, draft, game);
         String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices);
         if (deviceSkipReason != null) {
             event.markDelivery("skipped", OffsetDateTime.now(applicationClock), deviceSkipReason);
@@ -149,11 +158,14 @@ public class NotificationEventService {
                 && (favoriteTeamId.equals(game.getHomeTeam().getTeamCode()) || favoriteTeamId.equals(game.getAwayTeam().getTeamCode()));
     }
 
-    private List<NotificationDevice> deliverableDevices(List<NotificationDevice> devices) {
+    private List<NotificationDevice> deliverableDevices(List<NotificationDevice> devices, NotificationEventDraft draft, Game game) {
         return devices.stream()
                 .filter(device -> "ios".equalsIgnoreCase(device.getPlatform()))
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> apnsPushService.environmentMatches(device.getEnvironment()))
+                .filter(device -> eventSettingEnabled(device, draft.eventType()))
+                .filter(device -> favoriteTeamOnlyAllows(device, draft))
+                .filter(device -> muteWhenLosingAllows(device, draft.eventType(), game))
                 .toList();
     }
 
@@ -181,7 +193,61 @@ public class NotificationEventService {
         if (!anyEnvironmentMatch) {
             return ApnsPushService.ENVIRONMENT_MISMATCH;
         }
-        return null;
+        return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
+    }
+
+    private boolean eventSettingEnabled(NotificationDevice device, String eventType) {
+        return switch (eventType) {
+            case EVENT_GAME_START -> device.isGameStartEnabled();
+            case EVENT_SCORE_CHANGED -> device.isScoreChangeEnabled();
+            case EVENT_LEAD_CHANGED -> device.isLeadChangeEnabled();
+            case EVENT_GAME_END -> device.isGameEndEnabled();
+            case EVENT_ON_BASE -> device.isOnBaseEnabled();
+            case EVENT_INNING_CHANGED -> device.isInningChangeEnabled();
+            default -> false;
+        };
+    }
+
+    private boolean favoriteTeamOnlyAllows(NotificationDevice device, NotificationEventDraft draft) {
+        if (!device.isFavoriteTeamOnlyEnabled() || !isOpponentScopedEvent(draft.eventType())) {
+            return true;
+        }
+        String eventTeamId = payloadText(draft, PAYLOAD_EVENT_TEAM_ID);
+        return eventTeamId == null || eventTeamId.equals(device.getFavoriteTeamId());
+    }
+
+    private boolean muteWhenLosingAllows(NotificationDevice device, String eventType, Game game) {
+        if (!device.isMuteWhenLosingEnabled() || !isRealtimeTeamEvent(eventType)) {
+            return true;
+        }
+        String favoriteTeamId = device.getFavoriteTeamId();
+        if (favoriteTeamId == null || game.getHomeScore() == null || game.getAwayScore() == null) {
+            return false;
+        }
+        if (favoriteTeamId.equals(game.getHomeTeam().getTeamCode())) {
+            return game.getHomeScore() > game.getAwayScore();
+        }
+        if (favoriteTeamId.equals(game.getAwayTeam().getTeamCode())) {
+            return game.getAwayScore() > game.getHomeScore();
+        }
+        return false;
+    }
+
+    private boolean isOpponentScopedEvent(String eventType) {
+        return EVENT_SCORE_CHANGED.equals(eventType) || EVENT_ON_BASE.equals(eventType) || EVENT_LEAD_CHANGED.equals(eventType);
+    }
+
+    private boolean isRealtimeTeamEvent(String eventType) {
+        return EVENT_SCORE_CHANGED.equals(eventType) || EVENT_ON_BASE.equals(eventType) || EVENT_LEAD_CHANGED.equals(eventType);
+    }
+
+    private String payloadText(NotificationEventDraft draft, String key) {
+        Object value = draft.payload().get(key);
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 
     private void logDeviceDiagnostics(NotificationEvent event, NotificationDevice device, Game game) {
@@ -199,7 +265,10 @@ public class NotificationEventService {
     }
 
     private boolean isDeliverableEventType(String eventType) {
-        return "SCORE_CHANGED".equals(eventType) || "ON_BASE".equals(eventType);
+        return switch (eventType) {
+            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
+            default -> false;
+        };
     }
 
     private String toJson(Map<String, Object> payload) {

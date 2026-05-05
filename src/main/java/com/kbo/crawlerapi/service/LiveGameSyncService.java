@@ -193,6 +193,19 @@ public class LiveGameSyncService {
 
     private List<NotificationEventDraft> detectChanges(GameState before, GameState after, Game game) {
         List<NotificationEventDraft> drafts = new ArrayList<>();
+        if (!isLiveLike(before.status()) && isLiveLike(after.status())) {
+            drafts.add(startedDraft(game));
+        }
+        if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL) {
+            drafts.add(finalDraft(game));
+        }
+        if (isLiveLike(before.status()) && isLiveLike(after.status()) && inningChanged(before, after)) {
+            drafts.add(inningChangeDraft(game, after));
+        }
+        String newLeadingTeamId = newLeadingTeamId(game, before, after);
+        if (newLeadingTeamId != null) {
+            drafts.add(leadChangeDraft(game, before, after, newLeadingTeamId));
+        }
         if (after.status() == GameStatus.LIVE
                 && after.awayScore() != null
                 && after.homeScore() != null
@@ -231,7 +244,7 @@ public class LiveGameSyncService {
 
     private NotificationEventDraft startedDraft(Game game) {
         String title = "%s vs %s 경기 시작".formatted(game.getAwayTeam().getShortName(), game.getHomeTeam().getShortName());
-        return draft(game, "GAME_STARTED", "game:%s:started".formatted(game.getId()), title, "경기가 시작되었습니다.");
+        return draft(game, NotificationEventService.EVENT_GAME_START, "game:%s:game-start".formatted(game.getId()), title, "경기가 시작되었습니다.");
     }
 
     private NotificationEventDraft scoreDraft(Game game, GameState before, GameState after) {
@@ -255,7 +268,7 @@ public class LiveGameSyncService {
 
         return liveDraft(
                 game,
-                "SCORE_CHANGED",
+                NotificationEventService.EVENT_SCORE_CHANGED,
                 "game:%s:score:%d-%d:inning:%s:batter:%s:pitcher:%s:result:%s".formatted(
                         game.getId(),
                         game.getAwayScore(),
@@ -270,7 +283,8 @@ public class LiveGameSyncService {
                 batterName,
                 pitcherName,
                 result,
-                runCount
+                runCount,
+                scoringTeamId(game, before, after)
         );
     }
 
@@ -283,7 +297,7 @@ public class LiveGameSyncService {
 
         return liveDraft(
                 game,
-                "ON_BASE",
+                NotificationEventService.EVENT_ON_BASE,
                 "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s:result:%s".formatted(
                         game.getId(),
                         inning,
@@ -297,19 +311,56 @@ public class LiveGameSyncService {
                 batterName,
                 pitcherName,
                 result,
-                null
+                null,
+                battingTeamId(game)
         );
     }
 
     private NotificationEventDraft finalDraft(Game game) {
         String title = "%s %d : %d %s 경기 종료".formatted(game.getAwayTeam().getShortName(), game.getAwayScore(), game.getHomeScore(), game.getHomeTeam().getShortName());
-        return draft(
+        NotificationEventDraft draft = draft(
                 game,
-                "GAME_FINAL",
-                "game:%s:final:%d-%d".formatted(game.getId(), game.getAwayScore(), game.getHomeScore()),
+                NotificationEventService.EVENT_GAME_END,
+                "game:%s:game-end".formatted(game.getId()),
                 title,
                 "최종 스코어가 확정되었습니다."
         );
+        String winningTeamId = winningTeamId(game);
+        if (winningTeamId != null) {
+            draft.payload().put("winningTeamId", winningTeamId);
+            draft.payload().put("losingTeamId", losingTeamId(game));
+        }
+        return draft;
+    }
+
+    private NotificationEventDraft inningChangeDraft(Game game, GameState after) {
+        String label = inningDisplayLabel(after);
+        NotificationEventDraft draft = draft(
+                game,
+                NotificationEventService.EVENT_INNING_CHANGED,
+                "game:%s:inning-change:%s:%s".formatted(game.getId(), after.inning(), safeKey(after.inningHalf())),
+                label,
+                "%s로 전환되었습니다.".formatted(label)
+        );
+        draft.payload().put("inning", after.inning());
+        draft.payload().put("inningHalf", after.inningHalf());
+        draft.payload().put("inningLabel", label);
+        return draft;
+    }
+
+    private NotificationEventDraft leadChangeDraft(Game game, GameState before, GameState after, String newLeadingTeamId) {
+        String leadingTeamName = teamShortName(game, newLeadingTeamId);
+        NotificationEventDraft draft = draft(
+                game,
+                NotificationEventService.EVENT_LEAD_CHANGED,
+                "game:%s:lead-change:%s:%d-%d".formatted(game.getId(), newLeadingTeamId, nullSafe(after.awayScore()), nullSafe(after.homeScore())),
+                "리드 변경",
+                "%s가 리드를 잡았습니다.".formatted(leadingTeamName)
+        );
+        draft.payload().put("previousAwayScore", before.awayScore());
+        draft.payload().put("previousHomeScore", before.homeScore());
+        draft.payload().put(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, newLeadingTeamId);
+        return draft;
     }
 
     private NotificationEventDraft draft(Game game, String eventType, String eventKey, String title, String body) {
@@ -318,9 +369,12 @@ public class LiveGameSyncService {
         payload.put("publicGameId", game.getPublicGameId());
         payload.put("eventType", eventType);
         payload.put("homeTeamId", game.getHomeTeam().getTeamCode());
+        payload.put("homeTeamName", game.getHomeTeam().getName());
         payload.put("awayTeamId", game.getAwayTeam().getTeamCode());
+        payload.put("awayTeamName", game.getAwayTeam().getName());
         payload.put("homeScore", game.getHomeScore());
         payload.put("awayScore", game.getAwayScore());
+        payload.put("scheduledAt", game.getScheduledAt() == null ? null : game.getScheduledAt().toString());
         payload.put("status", game.getStatus().getApiValue());
         payload.put("gameDate", game.getGameDate().toString());
         payload.put("deepLink", "kboscore://games/" + game.getPublicGameId());
@@ -336,14 +390,136 @@ public class LiveGameSyncService {
             String batterName,
             String pitcherName,
             String result,
-            Integer runCount
+            Integer runCount,
+            String eventTeamId
     ) {
         NotificationEventDraft draft = draft(game, eventType, eventKey, title, body);
         draft.payload().put("batterName", batterName);
         draft.payload().put("pitcherName", pitcherName);
         draft.payload().put("result", result);
         draft.payload().put("runCount", runCount);
+        draft.payload().put(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, eventTeamId);
         return draft;
+    }
+
+    private String scoringTeamId(Game game, GameState before, GameState after) {
+        int awayDelta = Math.max(0, nullSafe(after.awayScore()) - nullSafe(before.awayScore()));
+        int homeDelta = Math.max(0, nullSafe(after.homeScore()) - nullSafe(before.homeScore()));
+        if (awayDelta > 0 && homeDelta == 0) {
+            return game.getAwayTeam().getTeamCode();
+        }
+        if (homeDelta > 0 && awayDelta == 0) {
+            return game.getHomeTeam().getTeamCode();
+        }
+        return null;
+    }
+
+    private String battingTeamId(Game game) {
+        String inningState = game.getInningState();
+        if (inningState == null || inningState.isBlank()) {
+            return null;
+        }
+        String normalized = inningState.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.startsWith("top") || normalized.contains("초")) {
+            return game.getAwayTeam().getTeamCode();
+        }
+        if (normalized.startsWith("bot") || normalized.startsWith("bottom") || normalized.contains("말")) {
+            return game.getHomeTeam().getTeamCode();
+        }
+        return null;
+    }
+
+    private boolean isLiveLike(GameStatus status) {
+        return status == GameStatus.LIVE || status == GameStatus.SUSPENDED;
+    }
+
+    private boolean inningChanged(GameState before, GameState after) {
+        return before.inning() != null
+                && before.inningHalf() != null
+                && after.inning() != null
+                && after.inningHalf() != null
+                && (!java.util.Objects.equals(before.inning(), after.inning())
+                || !java.util.Objects.equals(normalizeHalf(before.inningHalf()), normalizeHalf(after.inningHalf())));
+    }
+
+    private String newLeadingTeamId(Game game, GameState before, GameState after) {
+        if (!isLiveLike(after.status()) || before.awayScore() == null || before.homeScore() == null || after.awayScore() == null || after.homeScore() == null) {
+            return null;
+        }
+        String previousLeader = leadingTeamId(game, before.awayScore(), before.homeScore());
+        String currentLeader = leadingTeamId(game, after.awayScore(), after.homeScore());
+        if (currentLeader == null || currentLeader.equals(previousLeader)) {
+            return null;
+        }
+        return currentLeader;
+    }
+
+    private String leadingTeamId(Game game, Integer awayScore, Integer homeScore) {
+        int away = nullSafe(awayScore);
+        int home = nullSafe(homeScore);
+        if (away > home) {
+            return game.getAwayTeam().getTeamCode();
+        }
+        if (home > away) {
+            return game.getHomeTeam().getTeamCode();
+        }
+        return null;
+    }
+
+    private String winningTeamId(Game game) {
+        return game.getAwayScore() == null || game.getHomeScore() == null
+                ? null
+                : leadingTeamId(game, game.getAwayScore(), game.getHomeScore());
+    }
+
+    private String losingTeamId(Game game) {
+        String winner = winningTeamId(game);
+        if (winner == null) {
+            return null;
+        }
+        if (winner.equals(game.getAwayTeam().getTeamCode())) {
+            return game.getHomeTeam().getTeamCode();
+        }
+        return game.getAwayTeam().getTeamCode();
+    }
+
+    private String teamShortName(Game game, String teamId) {
+        if (game.getAwayTeam().getTeamCode().equals(teamId)) {
+            return game.getAwayTeam().getShortName();
+        }
+        if (game.getHomeTeam().getTeamCode().equals(teamId)) {
+            return game.getHomeTeam().getShortName();
+        }
+        return teamId;
+    }
+
+    private String inningDisplayLabel(GameState state) {
+        if (state.inningLabel() != null && !state.inningLabel().isBlank()) {
+            return state.inningLabel();
+        }
+        if (state.inning() == null) {
+            return "이닝 교체";
+        }
+        String half = switch (normalizeHalf(state.inningHalf())) {
+            case "top" -> "초";
+            case "bottom" -> "말";
+            default -> "";
+        };
+        return "%d회 %s".formatted(state.inning(), half).trim();
+    }
+
+    private String normalizeHalf(String half) {
+        if (half == null || half.isBlank()) {
+            return null;
+        }
+        String normalized = half.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.startsWith("top") || normalized.equals("초")) {
+            return "top";
+        }
+        if (normalized.startsWith("bot") || normalized.startsWith("bottom") || normalized.equals("말")) {
+            return "bottom";
+        }
+        return normalized;
     }
 
     private GameSnapshot latestSnapshot(Game game) {
@@ -424,6 +600,9 @@ public class LiveGameSyncService {
             String homeStartingPitcherName,
             String awayStartingPitcherName,
             String lineupHash,
+            Integer inning,
+            String inningHalf,
+            String inningLabel,
             Integer outs,
             boolean runnerOnFirst,
             boolean runnerOnSecond,
@@ -441,6 +620,9 @@ public class LiveGameSyncService {
                     game.getHomeStartingPitcherName(),
                     game.getAwayStartingPitcherName(),
                     game.getLineupData() == null ? null : String.valueOf(game.getLineupData().hashCode()),
+                    snapshot == null ? null : snapshot.getInning(),
+                    clean(snapshot == null ? null : snapshot.getInningHalf()),
+                    clean(snapshot == null ? null : snapshot.getInningLabel()),
                     snapshot == null ? null : snapshot.getOuts(),
                     snapshot != null && snapshot.isRunnerOnFirst(),
                     snapshot != null && snapshot.isRunnerOnSecond(),

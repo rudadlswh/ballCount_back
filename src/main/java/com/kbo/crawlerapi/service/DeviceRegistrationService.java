@@ -33,11 +33,25 @@ public class DeviceRegistrationService {
 
     @Transactional
     public DeviceRegistrationResult register(String platform, String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled) {
+        return register(platform, environment, deviceToken, installationId, favoriteTeamId, notificationsEnabled, DeviceNotificationSettings.defaults());
+    }
+
+    @Transactional
+    public DeviceRegistrationResult register(
+            String platform,
+            String environment,
+            String deviceToken,
+            String installationId,
+            String favoriteTeamId,
+            boolean notificationsEnabled,
+            DeviceNotificationSettings settings
+    ) {
         String normalizedPlatform = normalizePlatform(platform);
         String normalizedEnvironment = normalizeEnvironment(environment);
         String normalizedToken = requireDeviceToken(deviceToken);
         String normalizedInstallationId = blankToNull(installationId);
         String normalizedFavoriteTeamId = blankToNull(favoriteTeamId);
+        DeviceNotificationSettings normalizedSettings = settings == null ? DeviceNotificationSettings.defaults() : settings;
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
         Optional<NotificationDevice> tokenMatchedDevice = notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(
@@ -52,7 +66,24 @@ public class DeviceRegistrationService {
         boolean created = installationMatchedDevice.isEmpty() && tokenMatchedDevice.isEmpty();
         NotificationDevice device = installationMatchedDevice
                 .or(() -> tokenMatchedDevice)
-                .orElseGet(() -> new NotificationDevice(UUID.randomUUID(), normalizedPlatform, normalizedEnvironment, normalizedToken, installationId, favoriteTeamId, notificationsEnabled, now));
+                .orElseGet(() -> new NotificationDevice(
+                        UUID.randomUUID(),
+                        normalizedPlatform,
+                        normalizedEnvironment,
+                        normalizedToken,
+                        normalizedInstallationId,
+                        normalizedFavoriteTeamId,
+                        notificationsEnabled,
+                        normalizedSettings.gameStartEnabled(),
+                        normalizedSettings.scoreChangeEnabled(),
+                        normalizedSettings.leadChangeEnabled(),
+                        normalizedSettings.gameEndEnabled(),
+                        normalizedSettings.onBaseEnabled(),
+                        normalizedSettings.inningChangeEnabled(),
+                        normalizedSettings.favoriteTeamOnlyEnabled(),
+                        normalizedSettings.muteWhenLosingEnabled(),
+                        now
+                ));
         tokenMatchedDevice
                 .filter(tokenDevice -> !tokenDevice.getId().equals(device.getId()))
                 .ifPresent(tokenDevice -> {
@@ -62,7 +93,23 @@ public class DeviceRegistrationService {
 
         String previousTokenPrefix = tokenPrefix(device.getDeviceToken());
         boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
-        device.update(normalizedPlatform, normalizedEnvironment, normalizedToken, normalizedInstallationId, normalizedFavoriteTeamId, notificationsEnabled, now);
+        device.update(
+                normalizedPlatform,
+                normalizedEnvironment,
+                normalizedToken,
+                normalizedInstallationId,
+                normalizedFavoriteTeamId,
+                notificationsEnabled,
+                normalizedSettings.gameStartEnabled(),
+                normalizedSettings.scoreChangeEnabled(),
+                normalizedSettings.leadChangeEnabled(),
+                normalizedSettings.gameEndEnabled(),
+                normalizedSettings.onBaseEnabled(),
+                normalizedSettings.inningChangeEnabled(),
+                normalizedSettings.favoriteTeamOnlyEnabled(),
+                normalizedSettings.muteWhenLosingEnabled(),
+                now
+        );
         notificationDeviceRepository.save(device);
         logRegistration(normalizedInstallationId, normalizedToken, tokenChanged ? previousTokenPrefix : null, normalizedFavoriteTeamId, normalizedEnvironment, created);
         return new DeviceRegistrationResult(device.getId(), normalizedPlatform, normalizedEnvironment, maskToken(normalizedToken), device.isNotificationsEnabled());
@@ -164,5 +211,29 @@ public class DeviceRegistrationService {
             String maskedDeviceToken,
             boolean notificationsEnabled
     ) {
+    }
+
+    public record DeviceNotificationSettings(
+            boolean gameStartEnabled,
+            boolean scoreChangeEnabled,
+            boolean leadChangeEnabled,
+            boolean gameEndEnabled,
+            boolean onBaseEnabled,
+            boolean inningChangeEnabled,
+            boolean favoriteTeamOnlyEnabled,
+            boolean muteWhenLosingEnabled
+    ) {
+        public static DeviceNotificationSettings defaults() {
+            return new DeviceNotificationSettings(
+                    true,
+                    true,
+                    true,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false
+            );
+        }
     }
 }

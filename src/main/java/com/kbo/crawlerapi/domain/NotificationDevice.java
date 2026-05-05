@@ -34,6 +34,30 @@ public class NotificationDevice {
     @Column(name = "notifications_enabled", nullable = false)
     private boolean notificationsEnabled;
 
+    @Column(name = "game_start_enabled", nullable = false)
+    private boolean gameStartEnabled = true;
+
+    @Column(name = "score_change_enabled", nullable = false)
+    private boolean scoreChangeEnabled = true;
+
+    @Column(name = "lead_change_enabled", nullable = false)
+    private boolean leadChangeEnabled = true;
+
+    @Column(name = "game_end_enabled", nullable = false)
+    private boolean gameEndEnabled = true;
+
+    @Column(name = "on_base_enabled", nullable = false)
+    private boolean onBaseEnabled = false;
+
+    @Column(name = "inning_change_enabled", nullable = false)
+    private boolean inningChangeEnabled = false;
+
+    @Column(name = "favorite_team_only_enabled", nullable = false)
+    private boolean favoriteTeamOnlyEnabled = false;
+
+    @Column(name = "mute_when_losing_enabled", nullable = false)
+    private boolean muteWhenLosingEnabled = false;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -53,6 +77,44 @@ public class NotificationDevice {
     }
 
     public NotificationDevice(UUID id, String platform, String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime lastSeenAt) {
+        this(
+                id,
+                platform,
+                environment,
+                deviceToken,
+                installationId,
+                favoriteTeamId,
+                notificationsEnabled,
+                true,
+                true,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+                lastSeenAt
+        );
+    }
+
+    public NotificationDevice(
+            UUID id,
+            String platform,
+            String environment,
+            String deviceToken,
+            String installationId,
+            String favoriteTeamId,
+            boolean notificationsEnabled,
+            boolean gameStartEnabled,
+            boolean scoreChangeEnabled,
+            boolean leadChangeEnabled,
+            boolean gameEndEnabled,
+            boolean onBaseEnabled,
+            boolean inningChangeEnabled,
+            boolean favoriteTeamOnlyEnabled,
+            boolean muteWhenLosingEnabled,
+            OffsetDateTime lastSeenAt
+    ) {
         this.id = id;
         this.platform = platform;
         this.environment = environment;
@@ -60,6 +122,14 @@ public class NotificationDevice {
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
         this.notificationsEnabled = notificationsEnabled;
+        this.gameStartEnabled = gameStartEnabled;
+        this.scoreChangeEnabled = scoreChangeEnabled;
+        this.leadChangeEnabled = leadChangeEnabled;
+        this.gameEndEnabled = gameEndEnabled;
+        this.onBaseEnabled = onBaseEnabled;
+        this.inningChangeEnabled = inningChangeEnabled;
+        this.favoriteTeamOnlyEnabled = favoriteTeamOnlyEnabled;
+        this.muteWhenLosingEnabled = muteWhenLosingEnabled;
         this.lastSeenAt = lastSeenAt;
     }
 
@@ -91,6 +161,38 @@ public class NotificationDevice {
         return notificationsEnabled;
     }
 
+    public boolean isGameStartEnabled() {
+        return gameStartEnabled;
+    }
+
+    public boolean isScoreChangeEnabled() {
+        return scoreChangeEnabled;
+    }
+
+    public boolean isLeadChangeEnabled() {
+        return leadChangeEnabled;
+    }
+
+    public boolean isGameEndEnabled() {
+        return gameEndEnabled;
+    }
+
+    public boolean isOnBaseEnabled() {
+        return onBaseEnabled;
+    }
+
+    public boolean isInningChangeEnabled() {
+        return inningChangeEnabled;
+    }
+
+    public boolean isFavoriteTeamOnlyEnabled() {
+        return favoriteTeamOnlyEnabled;
+    }
+
+    public boolean isMuteWhenLosingEnabled() {
+        return muteWhenLosingEnabled;
+    }
+
     public OffsetDateTime getLastSeenAt() {
         return lastSeenAt;
     }
@@ -104,12 +206,56 @@ public class NotificationDevice {
     }
 
     public void update(String platform, String environment, String deviceToken, String installationId, String favoriteTeamId, boolean notificationsEnabled, OffsetDateTime seenAt) {
+        update(
+                platform,
+                environment,
+                deviceToken,
+                installationId,
+                favoriteTeamId,
+                notificationsEnabled,
+                true,
+                true,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+                seenAt
+        );
+    }
+
+    public void update(
+            String platform,
+            String environment,
+            String deviceToken,
+            String installationId,
+            String favoriteTeamId,
+            boolean notificationsEnabled,
+            boolean gameStartEnabled,
+            boolean scoreChangeEnabled,
+            boolean leadChangeEnabled,
+            boolean gameEndEnabled,
+            boolean onBaseEnabled,
+            boolean inningChangeEnabled,
+            boolean favoriteTeamOnlyEnabled,
+            boolean muteWhenLosingEnabled,
+            OffsetDateTime seenAt
+    ) {
         this.platform = platform;
         this.environment = environment;
         this.deviceToken = deviceToken;
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
         this.notificationsEnabled = notificationsEnabled;
+        this.gameStartEnabled = gameStartEnabled;
+        this.scoreChangeEnabled = scoreChangeEnabled;
+        this.leadChangeEnabled = leadChangeEnabled;
+        this.gameEndEnabled = gameEndEnabled;
+        this.onBaseEnabled = onBaseEnabled;
+        this.inningChangeEnabled = inningChangeEnabled;
+        this.favoriteTeamOnlyEnabled = favoriteTeamOnlyEnabled;
+        this.muteWhenLosingEnabled = muteWhenLosingEnabled;
         this.lastSeenAt = seenAt;
     }
 

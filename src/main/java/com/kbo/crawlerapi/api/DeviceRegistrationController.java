@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.api;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.kbo.crawlerapi.service.DeviceRegistrationService;
+import com.kbo.crawlerapi.service.DeviceRegistrationService.DeviceNotificationSettings;
 import com.kbo.crawlerapi.service.DeviceRegistrationService.DeviceRegistrationResult;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,7 +26,8 @@ public class DeviceRegistrationController {
                     request.deviceToken(),
                     request.installationId(),
                     request.favoriteTeamId(),
-                    request.notificationsEnabled() == null || request.notificationsEnabled()
+                    request.notificationsEnabled() == null || request.notificationsEnabled(),
+                    request.notificationSettings()
             );
         } catch (IllegalArgumentException exception) {
             throw new InvalidParameterException(exception.getMessage());
@@ -49,8 +51,32 @@ public class DeviceRegistrationController {
             @JsonAlias("favoriteTeamID")
             String favoriteTeamId,
             @JsonAlias("notificationsAuthorized")
-            Boolean notificationsEnabled
+            Boolean notificationsEnabled,
+            Boolean gameStartEnabled,
+            Boolean scoreChangeEnabled,
+            Boolean leadChangeEnabled,
+            Boolean gameEndEnabled,
+            Boolean onBaseEnabled,
+            Boolean inningChangeEnabled,
+            Boolean favoriteTeamOnlyEnabled,
+            Boolean muteWhenLosingEnabled
     ) {
+        public DeviceNotificationSettings notificationSettings() {
+            return new DeviceNotificationSettings(
+                    defaultValue(gameStartEnabled, true),
+                    defaultValue(scoreChangeEnabled, true),
+                    defaultValue(leadChangeEnabled, true),
+                    defaultValue(gameEndEnabled, true),
+                    defaultValue(onBaseEnabled, false),
+                    defaultValue(inningChangeEnabled, false),
+                    defaultValue(favoriteTeamOnlyEnabled, false),
+                    defaultValue(muteWhenLosingEnabled, false)
+            );
+        }
+
+        private static boolean defaultValue(Boolean value, boolean defaultValue) {
+            return value == null ? defaultValue : value;
+        }
     }
 
     public record DeviceUnregisterRequest(
