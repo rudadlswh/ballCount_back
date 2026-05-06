@@ -659,7 +659,7 @@ class LiveGameSyncServiceTest {
         private final List<String> importedGameIds = new ArrayList<>();
 
         private StubGameDetailImportService() {
-            super(null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null);
         }
 
         @Override

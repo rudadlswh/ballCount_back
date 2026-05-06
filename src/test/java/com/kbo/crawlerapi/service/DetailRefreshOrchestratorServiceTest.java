@@ -174,7 +174,7 @@ class DetailRefreshOrchestratorServiceTest {
     private static final class StubGameDetailImportService extends GameDetailImportService {
 
         private StubGameDetailImportService() {
-            super(null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null);
         }
     }
 }
