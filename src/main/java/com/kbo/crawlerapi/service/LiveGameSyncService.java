@@ -41,6 +41,7 @@ public class LiveGameSyncService {
     private final LineScoreRepository lineScoreRepository;
     private final GameDetailImportService gameDetailImportService;
     private final NotificationEventService notificationEventService;
+    private final TeamRankService teamRankService;
     private final LiveSyncProperties properties;
     private final Clock applicationClock;
     private final Map<UUID, Instant> nextRefreshAtByGameId = new ConcurrentHashMap<>();
@@ -51,6 +52,7 @@ public class LiveGameSyncService {
             LineScoreRepository lineScoreRepository,
             GameDetailImportService gameDetailImportService,
             NotificationEventService notificationEventService,
+            TeamRankService teamRankService,
             LiveSyncProperties properties,
             Clock applicationClock
     ) {
@@ -59,6 +61,7 @@ public class LiveGameSyncService {
         this.lineScoreRepository = lineScoreRepository;
         this.gameDetailImportService = gameDetailImportService;
         this.notificationEventService = notificationEventService;
+        this.teamRankService = teamRankService;
         this.properties = properties;
         this.applicationClock = applicationClock;
     }
@@ -97,6 +100,9 @@ public class LiveGameSyncService {
                 after.markLiveChecked(OffsetDateTime.now(applicationClock));
                 boolean finalConfirmed = confirmFinalIfComplete(after);
                 gameRepository.save(after);
+                if (becameFinalOrFinalConfirmed(before, after, finalConfirmed)) {
+                    teamRankService.refreshSeasonRankingsSafely(after.getGameDate().getYear());
+                }
 
                 List<NotificationEventDraft> drafts = detectChanges(before, GameState.from(after, latestSnapshot(after)), after);
                 if (!drafts.isEmpty()) {
@@ -142,16 +148,34 @@ public class LiveGameSyncService {
 
     private boolean isCandidate(Game game, boolean force) {
         if (game.getProviderGameId() == null || game.getProviderGameId().isBlank()) {
+            log.debug("[LiveGameSync] skipped candidate game={} reason=missing-provider-game-id", game.getPublicGameId());
             return false;
         }
         if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
+            log.debug("[LiveGameSync] skipped candidate game={} reason=final-confirmed", game.getPublicGameId());
             return false;
         }
         if (!force && !isActiveKstWindow() && !isNearScheduledStart(game)) {
+            log.debug(
+                    "[LiveGameSync] skipped candidate game={} reason=outside-active-window-and-pregame-eligibility scheduledAt={} now={}",
+                    game.getPublicGameId(),
+                    game.getScheduledAt(),
+                    Instant.now(applicationClock)
+            );
             return false;
         }
         Instant nextRefreshAt = nextRefreshAtByGameId.get(game.getId());
-        return force || nextRefreshAt == null || !Instant.now(applicationClock).isBefore(nextRefreshAt);
+        Instant now = Instant.now(applicationClock);
+        boolean refreshDue = force || nextRefreshAt == null || !now.isBefore(nextRefreshAt);
+        if (!refreshDue) {
+            log.debug(
+                    "[LiveGameSync] skipped candidate game={} reason=ttl-not-due now={} nextRefreshAt={}",
+                    game.getPublicGameId(),
+                    now,
+                    nextRefreshAt
+            );
+        }
+        return refreshDue;
     }
 
     private boolean isActiveKstWindow() {
@@ -165,7 +189,19 @@ public class LiveGameSyncService {
         }
         Instant scheduled = game.getScheduledAt().toInstant();
         Instant now = Instant.now(applicationClock);
-        return !now.isBefore(scheduled.minus(Duration.ofHours(3))) && !now.isAfter(scheduled.plus(Duration.ofHours(6)));
+        Instant eligibleFrom = scheduled.minus(properties.getPregameEligibilityWindow());
+        long minutesUntilStart = Duration.between(now, scheduled).toMinutes();
+        boolean eligible = !now.isBefore(eligibleFrom) && !now.isAfter(scheduled.plus(Duration.ofHours(6)));
+        log.debug(
+                "[LiveGameSync] scheduled eligibility game={} eligible={} scheduledAt={} now={} minutesUntilStart={} eligibleFrom={}",
+                game.getPublicGameId(),
+                eligible,
+                scheduled,
+                now,
+                minutesUntilStart,
+                eligibleFrom
+        );
+        return eligible;
     }
 
     private Duration ttlFor(Game game) {
@@ -189,6 +225,10 @@ public class LiveGameSyncService {
             return false;
         }
         return game.confirmFinal(OffsetDateTime.now(applicationClock));
+    }
+
+    private boolean becameFinalOrFinalConfirmed(GameState before, Game after, boolean finalConfirmed) {
+        return finalConfirmed || (before.status() != GameStatus.FINAL && after.getStatus() == GameStatus.FINAL);
     }
 
     private List<NotificationEventDraft> detectChanges(GameState before, GameState after, Game game) {

@@ -8,6 +8,7 @@ public class LiveSyncProperties {
 
     private boolean enabled = false;
     private Duration schedulerInterval = Duration.ofSeconds(10);
+    private Duration pregameEligibilityWindow = Duration.ofHours(4);
     private Duration pregameTtl = Duration.ofMinutes(3);
     private Duration liveTtl = Duration.ofSeconds(30);
     private Duration finalConfirmationTtl = Duration.ofMinutes(2);
@@ -26,6 +27,14 @@ public class LiveSyncProperties {
 
     public void setSchedulerInterval(Duration schedulerInterval) {
         this.schedulerInterval = schedulerInterval;
+    }
+
+    public Duration getPregameEligibilityWindow() {
+        return pregameEligibilityWindow;
+    }
+
+    public void setPregameEligibilityWindow(Duration pregameEligibilityWindow) {
+        this.pregameEligibilityWindow = pregameEligibilityWindow;
     }
 
     public Duration getPregameTtl() {
