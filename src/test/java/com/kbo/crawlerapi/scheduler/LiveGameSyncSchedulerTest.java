@@ -95,8 +95,23 @@ class LiveGameSyncSchedulerTest {
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
                 properties(true),
-                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
                 clockAt("2026-04-30T12:01:00+09:00")
+        );
+
+        scheduler.runTick();
+
+        assertThat(service.invocationCount.get()).isZero();
+    }
+
+    @Test
+    void fourHoursAndOneMinuteBeforeScheduledStartDoesNotCallSyncToday() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        LiveGameSyncScheduler scheduler = scheduler(
+                service,
+                properties(true),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:01:00+09:00"))),
+                clockAt("2026-04-30T12:00:00+09:00")
         );
 
         scheduler.runTick();
@@ -110,7 +125,7 @@ class LiveGameSyncSchedulerTest {
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
                 properties(true),
-                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
                 clockAt("2026-04-30T12:00:03+09:00")
         );
 
@@ -125,8 +140,23 @@ class LiveGameSyncSchedulerTest {
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
                 properties(true),
-                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:30:00+09:00"))),
                 clockAt("2026-04-30T12:30:03+09:00")
+        );
+
+        scheduler.runTick();
+
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void threeHoursAndFiftyNineMinutesBeforeScheduledStartCallsSyncTodayWhenHalfHourSlotIsDue() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        LiveGameSyncScheduler scheduler = scheduler(
+                service,
+                properties(true),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:59:00+09:00"))),
+                clockAt("2026-04-30T13:00:00+09:00")
         );
 
         scheduler.runTick();
@@ -140,7 +170,7 @@ class LiveGameSyncSchedulerTest {
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
                 properties(true),
-                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
                 clockAt("2026-04-30T12:00:03+09:00")
         );
 
@@ -272,7 +302,7 @@ class LiveGameSyncSchedulerTest {
         protected final AtomicInteger invocationCount = new AtomicInteger();
 
         private RecordingLiveGameSyncService() {
-            super(null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null);
         }
 
         @Override

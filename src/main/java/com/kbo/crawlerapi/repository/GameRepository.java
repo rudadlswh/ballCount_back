@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameStatus;
 
 public interface GameRepository extends JpaRepository<Game, UUID> {
 
@@ -18,6 +19,13 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
 
     @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
     List<Game> findByGameDateBetweenOrderByGameDateAscScheduledAtAscPublicGameIdAsc(LocalDate startDate, LocalDate endDate);
+
+    @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
+    List<Game> findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+            LocalDate startDate,
+            LocalDate endDate,
+            GameStatus status
+    );
 
     @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
     Optional<Game> findByPublicGameId(String publicGameId);
