@@ -56,6 +56,7 @@ public class GameDetailImportService {
     private final KboGameDetailParser kboGameDetailParser;
     private final KboLineScoreParser kboLineScoreParser;
     private final CrawlJobTrackingService crawlJobTrackingService;
+    private final BaseRunnerNameResolver baseRunnerNameResolver;
     private final ObjectMapper objectMapper;
 
     public GameDetailImportService(
@@ -65,7 +66,8 @@ public class GameDetailImportService {
             KboGameDetailClient kboGameDetailClient,
             KboGameDetailParser kboGameDetailParser,
             KboLineScoreParser kboLineScoreParser,
-            CrawlJobTrackingService crawlJobTrackingService
+            CrawlJobTrackingService crawlJobTrackingService,
+            BaseRunnerNameResolver baseRunnerNameResolver
     ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
@@ -74,6 +76,7 @@ public class GameDetailImportService {
         this.kboGameDetailParser = kboGameDetailParser;
         this.kboLineScoreParser = kboLineScoreParser;
         this.crawlJobTrackingService = crawlJobTrackingService;
+        this.baseRunnerNameResolver = baseRunnerNameResolver;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -309,8 +312,12 @@ public class GameDetailImportService {
         }
 
         var latestSnapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId());
+        BaseRunnerNameResolver.ResolvedBaseRunners resolvedBaseRunners = baseRunnerNameResolver.resolve(
+                latestSnapshot.orElse(null),
+                parsedDetail
+        );
         if (latestSnapshot.map(GameSnapshot::getRawHash).filter(combinedRawHash::equals).isPresent()
-                && latestSnapshot.map(snapshot -> snapshotCurrentPlayersMatch(snapshot, parsedDetail)).orElse(false)) {
+                && latestSnapshot.map(snapshot -> snapshotCurrentPlayersMatch(snapshot, parsedDetail, resolvedBaseRunners)).orElse(false)) {
             log.debug(
                     "snapshot persistence skipped unchanged game_id={} raw_hash={} current_pitcher_name={} current_batter_name={}",
                     game.getId(),
@@ -333,6 +340,12 @@ public class GameDetailImportService {
                 parsedDetail.runnerOnFirst(),
                 parsedDetail.runnerOnSecond(),
                 parsedDetail.runnerOnThird(),
+                resolvedBaseRunners.firstBaseRunnerName(),
+                resolvedBaseRunners.secondBaseRunnerName(),
+                resolvedBaseRunners.thirdBaseRunnerName(),
+                resolvedBaseRunners.firstBaseRunnerId(),
+                resolvedBaseRunners.secondBaseRunnerId(),
+                resolvedBaseRunners.thirdBaseRunnerId(),
                 parsedDetail.currentPitcherName(),
                 parsedDetail.currentBatterName(),
                 parsedDetail.homeScore(),
@@ -373,6 +386,12 @@ public class GameDetailImportService {
                 parsedDetail.currentPitcherName(),
                 parsedDetail.currentBatterName()
         );
+        log.info(
+                "[LiveSnapshot] baseRunnerNames first={} second={} third={}",
+                displayName(resolvedBaseRunners.firstBaseRunnerName()),
+                displayName(resolvedBaseRunners.secondBaseRunnerName()),
+                displayName(resolvedBaseRunners.thirdBaseRunnerName())
+        );
         return true;
     }
 
@@ -384,6 +403,9 @@ public class GameDetailImportService {
                 || parsedDetail.runnerOnFirst()
                 || parsedDetail.runnerOnSecond()
                 || parsedDetail.runnerOnThird()
+                || clean(parsedDetail.firstBaseRunnerName()) != null
+                || clean(parsedDetail.secondBaseRunnerName()) != null
+                || clean(parsedDetail.thirdBaseRunnerName()) != null
                 || clean(parsedDetail.currentPitcherName()) != null
                 || clean(parsedDetail.currentBatterName()) != null;
     }
@@ -392,9 +414,21 @@ public class GameDetailImportService {
         return status == GameStatus.LIVE || status == GameStatus.SUSPENDED;
     }
 
-    private boolean snapshotCurrentPlayersMatch(GameSnapshot snapshot, ParsedGameDetail parsedDetail) {
+    private boolean snapshotCurrentPlayersMatch(
+            GameSnapshot snapshot,
+            ParsedGameDetail parsedDetail,
+            BaseRunnerNameResolver.ResolvedBaseRunners resolvedBaseRunners
+    ) {
         return Objects.equals(clean(snapshot.getCurrentPitcherName()), clean(parsedDetail.currentPitcherName()))
-                && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()));
+                && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()))
+                && Objects.equals(clean(snapshot.getFirstBaseRunnerName()), clean(resolvedBaseRunners.firstBaseRunnerName()))
+                && Objects.equals(clean(snapshot.getSecondBaseRunnerName()), clean(resolvedBaseRunners.secondBaseRunnerName()))
+                && Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolvedBaseRunners.thirdBaseRunnerName()));
+    }
+
+    private String displayName(String value) {
+        String cleaned = clean(value);
+        return cleaned == null ? "<nil>" : cleaned;
     }
 
     private void logCurrentPlayerDtoState(Game game, ParsedGameDetail parsedDetail) {

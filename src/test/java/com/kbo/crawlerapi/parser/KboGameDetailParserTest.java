@@ -51,6 +51,104 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void parsesOccupiedFirstBaseRunnerNameAndId() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260401HTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 3,
+                      "GAME_TB_SC": "T",
+                      "B1_BAT_ORDER_NO": 2,
+                      "B1_RUNNER_NM": "홍길동",
+                      "B1_RUNNER_ID": "runner-1",
+                      "B2_BAT_ORDER_NO": 0,
+                      "B3_BAT_ORDER_NO": 0
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).runnerOnFirst()).isTrue();
+        assertThat(result.get(0).firstBaseRunnerName()).isEqualTo("홍길동");
+        assertThat(result.get(0).firstBaseRunnerId()).isEqualTo("runner-1");
+        assertThat(result.get(0).secondBaseRunnerName()).isNull();
+        assertThat(result.get(0).thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void parsesMultipleOccupiedBaseRunnerNames() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260401HTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 5,
+                      "GAME_TB_SC": "B",
+                      "B1_BAT_ORDER_NO": 1,
+                      "B1_P_NM": "1루주자",
+                      "B2_BAT_ORDER_NO": 4,
+                      "B2_PLAYER_NM": "2루주자",
+                      "B3_BAT_ORDER_NO": 8,
+                      "B3_NAME": "3루주자"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).runnerOnFirst()).isTrue();
+        assertThat(result.get(0).runnerOnSecond()).isTrue();
+        assertThat(result.get(0).runnerOnThird()).isTrue();
+        assertThat(result.get(0).firstBaseRunnerName()).isEqualTo("1루주자");
+        assertThat(result.get(0).secondBaseRunnerName()).isEqualTo("2루주자");
+        assertThat(result.get(0).thirdBaseRunnerName()).isEqualTo("3루주자");
+    }
+
+    @Test
+    void leavesRunnerNamesNilForEmptyBasesOrMissingOfficialFields() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260401HTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 6,
+                      "GAME_TB_SC": "T",
+                      "B1_BAT_ORDER_NO": 0,
+                      "B2_BAT_ORDER_NO": 0,
+                      "B3_BAT_ORDER_NO": 0
+                    },
+                    {
+                      "G_ID": "20260401HTLG1",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 6,
+                      "GAME_TB_SC": "T",
+                      "B1_BAT_ORDER_NO": 3
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).runnerOnFirst()).isFalse();
+        assertThat(result.get(0).firstBaseRunnerName()).isNull();
+        assertThat(result.get(0).secondBaseRunnerName()).isNull();
+        assertThat(result.get(0).thirdBaseRunnerName()).isNull();
+        assertThat(result.get(1).runnerOnFirst()).isTrue();
+        assertThat(result.get(1).firstBaseRunnerName()).isNull();
+    }
+
+    @Test
     void keepsScheduledScoresNullable() {
         String payload = """
                 {
