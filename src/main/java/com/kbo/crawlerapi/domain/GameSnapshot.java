@@ -49,6 +49,24 @@ public class GameSnapshot {
     @Column(name = "runner_on_third", nullable = false)
     private boolean runnerOnThird;
 
+    @Column(name = "first_base_runner_name", length = 100)
+    private String firstBaseRunnerName;
+
+    @Column(name = "second_base_runner_name", length = 100)
+    private String secondBaseRunnerName;
+
+    @Column(name = "third_base_runner_name", length = 100)
+    private String thirdBaseRunnerName;
+
+    @Column(name = "first_base_runner_id", length = 100)
+    private String firstBaseRunnerId;
+
+    @Column(name = "second_base_runner_id", length = 100)
+    private String secondBaseRunnerId;
+
+    @Column(name = "third_base_runner_id", length = 100)
+    private String thirdBaseRunnerId;
+
     @Column(name = "current_pitcher_name", length = 100)
     private String currentPitcherName;
 
@@ -188,6 +206,12 @@ public class GameSnapshot {
                 runnerOnFirst,
                 runnerOnSecond,
                 runnerOnThird,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 currentPitcherName,
                 currentBatterName,
                 homeScore,
@@ -240,6 +264,82 @@ public class GameSnapshot {
             OffsetDateTime sourceUpdatedAt,
             OffsetDateTime fetchedAt
     ) {
+        this(
+                id,
+                game,
+                inning,
+                inningHalf,
+                inningLabel,
+                balls,
+                strikes,
+                outs,
+                runnerOnFirst,
+                runnerOnSecond,
+                runnerOnThird,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                currentPitcherName,
+                currentBatterName,
+                homeScore,
+                awayScore,
+                homeHits,
+                awayHits,
+                homeErrors,
+                awayErrors,
+                homeBalls,
+                awayBalls,
+                rawHash,
+                lastCompletedInning,
+                lastCompletedBatterName,
+                lastCompletedPitcherName,
+                lastCompletedPlayResult,
+                lastCompletedPlayKey,
+                sourceUpdatedAt,
+                fetchedAt
+        );
+    }
+
+    public GameSnapshot(
+            UUID id,
+            Game game,
+            Integer inning,
+            String inningHalf,
+            String inningLabel,
+            Integer balls,
+            Integer strikes,
+            Integer outs,
+            boolean runnerOnFirst,
+            boolean runnerOnSecond,
+            boolean runnerOnThird,
+            String firstBaseRunnerName,
+            String secondBaseRunnerName,
+            String thirdBaseRunnerName,
+            String firstBaseRunnerId,
+            String secondBaseRunnerId,
+            String thirdBaseRunnerId,
+            String currentPitcherName,
+            String currentBatterName,
+            Integer homeScore,
+            Integer awayScore,
+            Integer homeHits,
+            Integer awayHits,
+            Integer homeErrors,
+            Integer awayErrors,
+            Integer homeBalls,
+            Integer awayBalls,
+            String rawHash,
+            String lastCompletedInning,
+            String lastCompletedBatterName,
+            String lastCompletedPitcherName,
+            String lastCompletedPlayResult,
+            String lastCompletedPlayKey,
+            OffsetDateTime sourceUpdatedAt,
+            OffsetDateTime fetchedAt
+    ) {
         this.id = id;
         this.game = game;
         this.inning = inning;
@@ -251,6 +351,12 @@ public class GameSnapshot {
         this.runnerOnFirst = runnerOnFirst;
         this.runnerOnSecond = runnerOnSecond;
         this.runnerOnThird = runnerOnThird;
+        this.firstBaseRunnerName = firstBaseRunnerName;
+        this.secondBaseRunnerName = secondBaseRunnerName;
+        this.thirdBaseRunnerName = thirdBaseRunnerName;
+        this.firstBaseRunnerId = firstBaseRunnerId;
+        this.secondBaseRunnerId = secondBaseRunnerId;
+        this.thirdBaseRunnerId = thirdBaseRunnerId;
         this.currentPitcherName = currentPitcherName;
         this.currentBatterName = currentBatterName;
         this.homeScore = homeScore;
@@ -305,6 +411,30 @@ public class GameSnapshot {
 
     public boolean isRunnerOnThird() {
         return runnerOnThird;
+    }
+
+    public String getFirstBaseRunnerName() {
+        return firstBaseRunnerName;
+    }
+
+    public String getSecondBaseRunnerName() {
+        return secondBaseRunnerName;
+    }
+
+    public String getThirdBaseRunnerName() {
+        return thirdBaseRunnerName;
+    }
+
+    public String getFirstBaseRunnerId() {
+        return firstBaseRunnerId;
+    }
+
+    public String getSecondBaseRunnerId() {
+        return secondBaseRunnerId;
+    }
+
+    public String getThirdBaseRunnerId() {
+        return thirdBaseRunnerId;
     }
 
     public String getCurrentPitcherName() {
