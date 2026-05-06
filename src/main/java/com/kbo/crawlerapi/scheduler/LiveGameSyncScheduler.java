@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
@@ -95,12 +96,35 @@ public class LiveGameSyncScheduler {
             }
 
             Instant now = applicationClock.instant();
-            if (now.isBefore(earliestNonTerminalStart.get())) {
+            Instant scheduledAt = earliestNonTerminalStart.get();
+            Instant eligibleFrom = scheduledAt.minus(properties.getPregameEligibilityWindow());
+            long minutesUntilStart = Duration.between(now, scheduledAt).toMinutes();
+            if (now.isBefore(eligibleFrom)) {
+                log.debug(
+                        "[LiveGameSync] skipped before pre-game eligibility scheduledAt={} now={} minutesUntilStart={} eligibleFrom={}",
+                        scheduledAt,
+                        now,
+                        minutesUntilStart,
+                        eligibleFrom
+                );
+                return;
+            }
+            if (now.isBefore(scheduledAt)) {
+                log.debug(
+                        "[LiveGameSync] pre-game eligible scheduledAt={} now={} minutesUntilStart={} eligibleFrom={}",
+                        scheduledAt,
+                        now,
+                        minutesUntilStart,
+                        eligibleFrom
+                );
                 runPreGameHalfHourCheckIfDue();
                 return;
             }
 
-            log.info("[LiveGameSync] running scheduled-start sync");
+            log.info("[LiveGameSync] running scheduled-start sync scheduledAt={} now={} minutesUntilStart={}",
+                    scheduledAt,
+                    now,
+                    minutesUntilStart);
             liveGameSyncService.syncToday();
         } finally {
             running.set(false);
