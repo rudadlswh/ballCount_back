@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.parser;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.GameCancelReason;
@@ -325,5 +326,153 @@ class KboGameDetailParserTest {
         assertThat(result.get(0).status().getApiValue()).isEqualTo("final");
         assertThat(result.get(0).awayScore()).isEqualTo(4);
         assertThat(result.get(0).homeScore()).isEqualTo(5);
+    }
+
+    @Test
+    void mapsFirstBaseRunnerBattingOrderToAwayLineupInTopHalf() {
+        var detail = parseRunnerState("T", 2, 0, 0);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("원정2번");
+        assertThat(enriched.secondBaseRunnerName()).isNull();
+        assertThat(enriched.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void mapsSecondBaseRunnerBattingOrderToAwayLineupInTopHalf() {
+        var detail = parseRunnerState("T", 0, 3, 0);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isNull();
+        assertThat(enriched.secondBaseRunnerName()).isEqualTo("원정3번");
+        assertThat(enriched.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void mapsThirdBaseRunnerBattingOrderToAwayLineupInTopHalf() {
+        var detail = parseRunnerState("T", 0, 0, 4);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isNull();
+        assertThat(enriched.secondBaseRunnerName()).isNull();
+        assertThat(enriched.thirdBaseRunnerName()).isEqualTo("원정4번");
+    }
+
+    @Test
+    void mapsFirstAndThirdBaseRunnerBattingOrdersToAwayLineupInTopHalf() {
+        var detail = parseRunnerState("T", 2, 0, 4);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("원정2번");
+        assertThat(enriched.secondBaseRunnerName()).isNull();
+        assertThat(enriched.thirdBaseRunnerName()).isEqualTo("원정4번");
+    }
+
+    @Test
+    void mapsFirstAndSecondBaseRunnerBattingOrdersToHomeLineupInBottomHalf() {
+        var detail = parseRunnerState("B", 5, 6, 0);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("홈5번");
+        assertThat(enriched.secondBaseRunnerName()).isEqualTo("홈6번");
+        assertThat(enriched.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void mapsLoadedBaseRunnerBattingOrdersToHomeLineupInBottomHalf() {
+        var detail = parseRunnerState("B", 5, 6, 7);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("홈5번");
+        assertThat(enriched.secondBaseRunnerName()).isEqualTo("홈6번");
+        assertThat(enriched.thirdBaseRunnerName()).isEqualTo("홈7번");
+    }
+
+    @Test
+    void directOfficialRunnerNameWinsOverLineupMappedName() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260401HTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 3,
+                      "GAME_TB_SC": "T",
+                      "B1_BAT_ORDER_NO": 2,
+                      "B1_RUNNER_NM": "공식1루주자",
+                      "B2_BAT_ORDER_NO": 0,
+                      "B3_BAT_ORDER_NO": 0
+                    }
+                  ]
+                }
+                """;
+        var detail = parser.parseGameList(payload).get(0);
+
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("공식1루주자");
+    }
+
+    @Test
+    void parsesEquivalentBaseBattingOrderFieldNames() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260401HTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 3,
+                      "GAME_TB_SC": "T",
+                      "B1BATORDERNO": 2,
+                      "BASE2_BAT_ORDER_NO": 3,
+                      "BASE3BATORDERNO": 4
+                    }
+                  ]
+                }
+                """;
+        var detail = parser.parseGameList(payload).get(0);
+
+        assertThat(detail.runnerOnFirst()).isTrue();
+        assertThat(detail.runnerOnSecond()).isTrue();
+        assertThat(detail.runnerOnThird()).isTrue();
+        assertThat(detail.firstBaseBattingOrder()).isEqualTo(2);
+        assertThat(detail.secondBaseBattingOrder()).isEqualTo(3);
+        assertThat(detail.thirdBaseBattingOrder()).isEqualTo(4);
+    }
+
+    private KboGameDetailParser.ParsedGameDetail parseRunnerState(String officialHalf, int firstOrder, int secondOrder, int thirdOrder) {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260401HTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 3,
+                      "GAME_TB_SC": "%s",
+                      "B1_BAT_ORDER_NO": %d,
+                      "B2_BAT_ORDER_NO": %d,
+                      "B3_BAT_ORDER_NO": %d
+                    }
+                  ]
+                }
+                """.formatted(officialHalf, firstOrder, secondOrder, thirdOrder);
+        return parser.parseGameList(payload).get(0);
+    }
+
+    private KboGameDetailParser.ParsedLineupData lineupData() {
+        return new KboGameDetailParser.ParsedLineupData(
+                List.of(
+                        new KboGameDetailParser.ParsedLineupPlayer("1", "CF", "원정1번"),
+                        new KboGameDetailParser.ParsedLineupPlayer("2", "SS", "원정2번"),
+                        new KboGameDetailParser.ParsedLineupPlayer("3", "RF", "원정3번"),
+                        new KboGameDetailParser.ParsedLineupPlayer("4", "1B", "원정4번")
+                ),
+                List.of(
+                        new KboGameDetailParser.ParsedLineupPlayer("5", "DH", "홈5번"),
+                        new KboGameDetailParser.ParsedLineupPlayer("6", "LF", "홈6번"),
+                        new KboGameDetailParser.ParsedLineupPlayer("7", "2B", "홈7번")
+                ),
+                "lineup-hash"
+        );
     }
 }

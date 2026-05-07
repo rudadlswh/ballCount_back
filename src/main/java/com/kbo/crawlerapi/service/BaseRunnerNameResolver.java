@@ -106,7 +106,7 @@ class BaseRunnerNameResolver {
 
         if (current.runnerOnFirst() && clean(current.firstBaseRunnerName()) == null && !previous.isRunnerOnFirst()) {
             String onBaseBatter = onBaseBatter(previous, current);
-            if (onBaseBatter != null) {
+            if (onBaseBatter != null && otherOccupiedBasesNamed(current, second, third)) {
                 resolvedFirst = new Runner(onBaseBatter, null);
                 reason = appendReason(reason, "onBaseBatterToFirst");
             }
@@ -139,6 +139,11 @@ class BaseRunnerNameResolver {
             return null;
         }
         return clean(previous.getCurrentBatterName());
+    }
+
+    private boolean otherOccupiedBasesNamed(ParsedGameDetail current, Runner second, Runner third) {
+        return (!current.runnerOnSecond() || second.name() != null)
+                && (!current.runnerOnThird() || third.name() != null);
     }
 
     private Advancement simpleAdvancement(GameSnapshot previous, ParsedGameDetail current) {

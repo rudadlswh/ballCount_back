@@ -72,6 +72,18 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
+    void doesNotInferOnlyNewFirstBaseRunnerWhenOtherOccupiedBaseIsUnnamed() {
+        GameSnapshot previous = snapshot("최지훈", 0, false, false, true, null, null, null);
+        ParsedGameDetail current = parsed(0, true, false, true, null, null, null);
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isNull();
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
     void officialRunnerNamesWinOverInference() {
         GameSnapshot previous = snapshot("전민재", 0, false, false, false, null, null, null);
         ParsedGameDetail current = parsed(0, true, false, false, "공식주자", null, null);
@@ -79,6 +91,18 @@ class BaseRunnerNameResolverTest {
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
         assertThat(result.firstBaseRunnerName()).isEqualTo("공식주자");
+    }
+
+    @Test
+    void inningChangeClearsRunnerNamesWhenBasesAreEmpty() {
+        GameSnapshot previous = snapshot("이전타자", 2, true, true, true, "1루주자", "2루주자", "3루주자");
+        ParsedGameDetail current = parsed(0, false, false, false, null, null, null);
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isNull();
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
     }
 
     private GameSnapshot snapshot(

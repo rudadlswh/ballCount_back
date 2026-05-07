@@ -359,6 +359,75 @@ class GameDetailImportServiceTest {
     }
 
     @Test
+    void mapsOfficialBaseRunnerBattingOrdersThroughLineupBeforePersistingSnapshot() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailClient.boxScoreBody = "{\"arrHitter\":[]}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                6,
+                "top",
+                "Top 6",
+                1,
+                2,
+                1,
+                true,
+                false,
+                true,
+                2,
+                0,
+                4,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                true,
+                null,
+                null,
+                "detail-hash-with-runner-orders"
+        ));
+        kboGameDetailParser.lineupData = new KboGameDetailParser.ParsedLineupData(
+                List.of(
+                        new KboGameDetailParser.ParsedLineupPlayer("2", "SS", "원정2번"),
+                        new KboGameDetailParser.ParsedLineupPlayer("4", "1B", "원정4번")
+                ),
+                List.of(new KboGameDetailParser.ParsedLineupPlayer("2", "SS", "홈2번")),
+                "lineup-hash"
+        );
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(snapshotCaptor.getValue().getFirstBaseRunnerName()).isEqualTo("원정2번");
+        assertThat(snapshotCaptor.getValue().getSecondBaseRunnerName()).isNull();
+        assertThat(snapshotCaptor.getValue().getThirdBaseRunnerName()).isEqualTo("원정4번");
+    }
+
+    @Test
     void infersFirstBaseRunnerNameFromPreviousBatterWhenOfficialRunnerNameMissing() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
@@ -770,6 +839,7 @@ class GameDetailImportServiceTest {
 
         private String detailBody;
         private String lineScoreBody;
+        private String boxScoreBody;
         private String lastRequestedScoreboardProviderGameId;
 
         @Override
@@ -782,11 +852,17 @@ class GameDetailImportServiceTest {
             lastRequestedScoreboardProviderGameId = providerGameId;
             return lineScoreBody;
         }
+
+        @Override
+        public String fetchBoxScore(String providerGameId, int seasonId) {
+            return boxScoreBody;
+        }
     }
 
     private static final class StubKboGameDetailParser extends KboGameDetailParser {
 
         private List<KboGameDetailParser.ParsedGameDetail> parsedGames = List.of();
+        private KboGameDetailParser.ParsedLineupData lineupData = KboGameDetailParser.ParsedLineupData.empty(null);
 
         private StubKboGameDetailParser() {
             super(new ObjectMapper());
@@ -795,6 +871,11 @@ class GameDetailImportServiceTest {
         @Override
         public List<KboGameDetailParser.ParsedGameDetail> parseGameList(String responseBody) {
             return parsedGames;
+        }
+
+        @Override
+        public KboGameDetailParser.ParsedLineupData parseLineupData(String responseBody) {
+            return lineupData;
         }
     }
 
