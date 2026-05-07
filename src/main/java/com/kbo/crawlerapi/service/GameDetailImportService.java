@@ -119,6 +119,7 @@ public class GameDetailImportService {
             );
             lineScoreResult = kboLineScoreParser.parse(lineScoreResponseBody);
             lineupData = fetchLineupDataIfAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
+            parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
             throw exception;
