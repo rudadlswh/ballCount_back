@@ -94,6 +94,29 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
+    void occupiedFirstAndThirdWithOnlyFirstKnownDoesNotCopyNameToThird() {
+        ParsedGameDetail current = parsed(0, true, false, true, "송찬의", null, null);
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(null, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("송찬의");
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void sameBaseCarryForwardDoesNotPopulateDifferentOccupiedBase() {
+        GameSnapshot previous = snapshot("다음타자", 0, true, false, false, "전민재", null, null);
+        ParsedGameDetail current = parsed(0, false, false, true, null, null, null);
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isNull();
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
     void inningChangeClearsRunnerNamesWhenBasesAreEmpty() {
         GameSnapshot previous = snapshot("이전타자", 2, true, true, true, "1루주자", "2루주자", "3루주자");
         ParsedGameDetail current = parsed(0, false, false, false, null, null, null);

@@ -179,10 +179,11 @@ public class KboScheduleParser {
 
     private GameStatus resolveStatus(String note, String relayHtml, Integer awayScore, Integer homeScore) {
         String relayText = Jsoup.parse(relayHtml).text().trim();
-        if (note.contains("연기")) {
+        if (note.contains("연기") || note.contains("순연")) {
             return GameStatus.POSTPONED;
         }
-        if (note.contains("취소")) {
+        String normalizedNote = note.toLowerCase(java.util.Locale.ROOT);
+        if (note.contains("취소") || note.contains("노게임") || normalizedNote.contains("cancel") || normalizedNote.contains("no game") || normalizedNote.contains("nogame")) {
             return GameStatus.CANCELLED;
         }
         if (relayText.contains("프리뷰")) {
