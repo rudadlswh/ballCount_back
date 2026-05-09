@@ -37,6 +37,18 @@ public class LiveGameSyncService {
     private static final Logger log = LoggerFactory.getLogger(LiveGameSyncService.class);
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter CANCELLED_GAME_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
+    private static final Map<String, String> TEAM_DISPLAY_NAMES = Map.ofEntries(
+            Map.entry("hanwha", "한화"),
+            Map.entry("lotte", "롯데"),
+            Map.entry("lg", "LG"),
+            Map.entry("kt", "kt"),
+            Map.entry("ssg", "SSG"),
+            Map.entry("kia", "KIA"),
+            Map.entry("nc", "NC"),
+            Map.entry("doosan", "두산"),
+            Map.entry("samsung", "삼성"),
+            Map.entry("kiwoom", "키움")
+    );
 
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
@@ -281,19 +293,19 @@ public class LiveGameSyncService {
     private NotificationEventDraft pitchersDraft(Game game) {
         String away = game.getAwayStartingPitcherName();
         String home = game.getHomeStartingPitcherName();
-        String title = "%s vs %s 선발투수 공개".formatted(game.getAwayTeam().getShortName(), game.getHomeTeam().getShortName());
+        String title = "%s vs %s 선발투수 공개".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
         String body = "%s vs %s".formatted(away == null ? "미정" : away, home == null ? "미정" : home);
         return draft(game, "STARTING_PITCHERS", "game:%s:pitchers:%s:%s".formatted(game.getId(), away, home), title, body);
     }
 
     private NotificationEventDraft lineupDraft(Game game) {
-        String title = "%s 라인업 공개".formatted(game.getHomeTeam().getShortName());
+        String title = "%s 라인업 공개".formatted(teamShortName(game, game.getHomeTeam().getTeamCode()));
         String body = "오늘 경기 선발 라인업이 공개되었습니다.";
         return draft(game, "LINEUP_AVAILABLE", "game:%s:lineup:%s".formatted(game.getId(), sha256(game.getLineupData())), title, body);
     }
 
     private NotificationEventDraft startedDraft(Game game) {
-        String title = "%s vs %s 경기 시작".formatted(game.getAwayTeam().getShortName(), game.getHomeTeam().getShortName());
+        String title = "%s vs %s 경기 시작".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
         return draft(game, NotificationEventService.EVENT_GAME_START, "game:%s:game-start".formatted(game.getId()), title, "경기가 시작되었습니다.");
     }
 
@@ -308,12 +320,13 @@ public class LiveGameSyncService {
         String batterName = before.currentBatterName();
         String pitcherName = before.currentPitcherName();
         String result = liveEventResult(game, "득점");
+        String eventTeamId = scoringTeamId(game, before, after);
 
         String title = "%s %d : %d %s".formatted(
-                game.getAwayTeam().getShortName(),
+                teamShortName(game, game.getAwayTeam().getTeamCode()),
                 game.getAwayScore(),
                 game.getHomeScore(),
-                game.getHomeTeam().getShortName()
+                teamShortName(game, game.getHomeTeam().getTeamCode())
         );
 
         return liveDraft(
@@ -329,12 +342,12 @@ public class LiveGameSyncService {
                         safeKey(result)
                 ),
                 title,
-                liveEventBody(batterName, pitcherName, result, runCount),
+                scoringBody(game, eventTeamId, runCount),
                 batterName,
                 pitcherName,
                 result,
                 runCount,
-                scoringTeamId(game, before, after)
+                eventTeamId
         );
     }
 
@@ -344,8 +357,9 @@ public class LiveGameSyncService {
         String batterName = before.currentBatterName();
         String pitcherName = before.currentPitcherName();
         String result = liveEventResult(game, "출루");
+        String eventTeamId = battingTeamId(game);
 
-        return liveDraft(
+        NotificationEventDraft draft = liveDraft(
                 game,
                 NotificationEventService.EVENT_ON_BASE,
                 "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s:result:%s".formatted(
@@ -362,12 +376,32 @@ public class LiveGameSyncService {
                 pitcherName,
                 result,
                 null,
-                battingTeamId(game)
+                eventTeamId
         );
+        log.debug(
+                "[LiveGameSync] ON_BASE diagnostics gameId={} eventKey={} previous inning={}/{} batter={} pitcher={} bases={} current inning={}/{} batter={} pitcher={} bases={} eventBatter={} eventPitcher={} eventResult={} eventTeamId={}",
+                game.getPublicGameId(),
+                draft.eventKey(),
+                before.inning(),
+                before.inningHalf(),
+                before.currentBatterName(),
+                before.currentPitcherName(),
+                baseKey(before),
+                after.inning(),
+                after.inningHalf(),
+                after.currentBatterName(),
+                after.currentPitcherName(),
+                baseKey(after),
+                batterName,
+                pitcherName,
+                result,
+                eventTeamId
+        );
+        return draft;
     }
 
     private NotificationEventDraft finalDraft(Game game) {
-        String title = "%s %d : %d %s 경기 종료".formatted(game.getAwayTeam().getShortName(), game.getAwayScore(), game.getHomeScore(), game.getHomeTeam().getShortName());
+        String title = "%s %d : %d %s 경기 종료".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), game.getAwayScore(), game.getHomeScore(), teamShortName(game, game.getHomeTeam().getTeamCode()));
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_GAME_END,
@@ -500,7 +534,7 @@ public class LiveGameSyncService {
     }
 
     private String cancellationBody(Game game, GameStatus cancelledStatus) {
-        String matchup = "%s vs %s".formatted(game.getAwayTeam().getShortName(), game.getHomeTeam().getShortName());
+        String matchup = "%s vs %s".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
         String result = switch (cancelledStatus) {
             case POSTPONED -> "순연되었습니다.";
             case SUSPENDED -> "중단되었습니다.";
@@ -547,12 +581,16 @@ public class LiveGameSyncService {
 
     private String onBaseBody(Game game, String batterName, String result) {
         String teamName = teamShortName(game, battingTeamId(game));
-        String method = result == null || result.isBlank() || "출루".equals(result.trim()) ? null : result.trim();
         if (batterName != null && !batterName.isBlank()) {
-            String playerText = "%s: %s 출루".formatted(teamName, batterName.trim());
-            return method == null ? playerText : "%s (%s)".formatted(playerText, method);
+            return "%s: %s 출루".formatted(teamName, batterName.trim());
         }
-        return method == null ? "%s: 출루".formatted(teamName) : "%s: 출루 (%s)".formatted(teamName, method);
+        return "%s 출루".formatted(teamName);
+    }
+
+    private String scoringBody(Game game, String eventTeamId, Integer runCount) {
+        String teamName = teamShortName(game, eventTeamId);
+        int runs = Math.max(1, nullSafe(runCount));
+        return runs == 1 ? "%s 득점".formatted(teamName) : "%s %d득점".formatted(teamName, runs);
     }
 
     private String leadingTeamId(Game game, Integer awayScore, Integer homeScore) {
@@ -588,18 +626,27 @@ public class LiveGameSyncService {
         if (teamId == null || teamId.isBlank()) {
             return "KBO";
         }
-        if (game.getAwayTeam().getTeamCode().equals(teamId)) {
-            return game.getAwayTeam().getShortName();
+        String normalized = teamId.trim().toLowerCase(java.util.Locale.ROOT);
+        if (game.getAwayTeam().getTeamCode().equalsIgnoreCase(teamId)) {
+            return displayTeamName(game.getAwayTeam().getTeamCode(), game.getAwayTeam().getShortName());
         }
-        if (game.getHomeTeam().getTeamCode().equals(teamId)) {
-            return game.getHomeTeam().getShortName();
+        if (game.getHomeTeam().getTeamCode().equalsIgnoreCase(teamId)) {
+            return displayTeamName(game.getHomeTeam().getTeamCode(), game.getHomeTeam().getShortName());
         }
-        return teamId;
+        return TEAM_DISPLAY_NAMES.getOrDefault(normalized, teamId.trim());
+    }
+
+    private String displayTeamName(String teamCode, String fallback) {
+        String normalized = teamCode == null ? null : teamCode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized != null && TEAM_DISPLAY_NAMES.containsKey(normalized)) {
+            return TEAM_DISPLAY_NAMES.get(normalized);
+        }
+        return fallback == null || fallback.isBlank() ? "KBO" : fallback.trim();
     }
 
     private String inningDisplayLabel(GameState state) {
         if (state.inningLabel() != null && !state.inningLabel().isBlank()) {
-            return state.inningLabel();
+            return localizedInningLabel(state.inningLabel());
         }
         if (state.inning() == null) {
             return "이닝 교체";
@@ -610,6 +657,27 @@ public class LiveGameSyncService {
             default -> "";
         };
         return "%d회 %s".formatted(state.inning(), half).trim();
+    }
+
+    private String localizedInningLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return label;
+        }
+        String trimmed = label.trim();
+        java.util.regex.Matcher english = java.util.regex.Pattern
+                .compile("(?i)^(top|bottom|bot)\\s*(\\d+)$")
+                .matcher(trimmed);
+        if (english.matches()) {
+            String half = normalizeHalf(english.group(1));
+            return "%s회 %s".formatted(english.group(2), "top".equals(half) ? "초" : "말");
+        }
+        java.util.regex.Matcher korean = java.util.regex.Pattern
+                .compile("^(\\d+)회\\s*([초말])$")
+                .matcher(trimmed);
+        if (korean.matches()) {
+            return "%s회 %s".formatted(korean.group(1), korean.group(2));
+        }
+        return trimmed;
     }
 
     private String normalizeHalf(String half) {

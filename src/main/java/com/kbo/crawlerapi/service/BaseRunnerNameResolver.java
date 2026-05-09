@@ -39,7 +39,7 @@ class BaseRunnerNameResolver {
 
         boolean carried = hasCarriedForward(previous, current, first, second, third);
         if (carried) {
-            log.info(
+            log.debug(
                     "[BaseRunners] carriedForward first={} second={} third={}",
                     displayName(first.name()),
                     displayName(second.name()),
@@ -49,10 +49,10 @@ class BaseRunnerNameResolver {
 
         Inference inference = infer(previous, current, first, second, third);
         if (inference.ambiguous()) {
-            log.info("[BaseRunners] inference skipped reason=ambiguous");
+            log.debug("[BaseRunners] inference skipped reason=ambiguous");
         }
         if (inference.reason() != null) {
-            log.info(
+            log.debug(
                     "[BaseRunners] inferred first={} second={} third={} reason={}",
                     displayName(inference.first().name()),
                     displayName(inference.second().name()),
@@ -67,8 +67,28 @@ class BaseRunnerNameResolver {
                 inference.third().name(),
                 inference.first().id(),
                 inference.second().id(),
-                inference.third().id()
+                inference.third().id(),
+                resolutionSource(current, carried, inference)
         );
+    }
+
+    private String resolutionSource(ParsedGameDetail current, boolean carried, Inference inference) {
+        java.util.List<String> sources = new java.util.ArrayList<>();
+        if (clean(current.firstBaseRunnerName()) != null
+                || clean(current.secondBaseRunnerName()) != null
+                || clean(current.thirdBaseRunnerName()) != null) {
+            sources.add("official");
+        }
+        if (carried) {
+            sources.add("carryForward");
+        }
+        if (inference.reason() != null) {
+            sources.add(inference.reason());
+        }
+        if (inference.ambiguous()) {
+            sources.add("ambiguous");
+        }
+        return sources.isEmpty() ? "none" : String.join("+", sources);
     }
 
     private Runner resolveBase(
@@ -227,7 +247,8 @@ class BaseRunnerNameResolver {
             String thirdBaseRunnerName,
             String firstBaseRunnerId,
             String secondBaseRunnerId,
-            String thirdBaseRunnerId
+            String thirdBaseRunnerId,
+            String source
     ) {
     }
 

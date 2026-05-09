@@ -375,7 +375,7 @@ public class GameDetailImportService {
                 snapshot.getCurrentBatterName()
         );
         log.info(
-                "live snapshot game_id={} inning_label={} balls={} strikes={} outs={} runners={}/{}/{} current_pitcher_name={} current_batter_name={}",
+                "[LiveSnapshot] game_id={} inning_label={} balls={} strikes={} outs={} occupancy={}/{}/{} baseRunnerNames first={} second={} third={} source={} current_pitcher_name={} current_batter_name={}",
                 game.getId(),
                 parsedDetail.inningLabel(),
                 parsedDetail.balls(),
@@ -384,14 +384,12 @@ public class GameDetailImportService {
                 parsedDetail.runnerOnFirst(),
                 parsedDetail.runnerOnSecond(),
                 parsedDetail.runnerOnThird(),
-                parsedDetail.currentPitcherName(),
-                parsedDetail.currentBatterName()
-        );
-        log.info(
-                "[LiveSnapshot] baseRunnerNames first={} second={} third={}",
                 displayName(resolvedBaseRunners.firstBaseRunnerName()),
                 displayName(resolvedBaseRunners.secondBaseRunnerName()),
-                displayName(resolvedBaseRunners.thirdBaseRunnerName())
+                displayName(resolvedBaseRunners.thirdBaseRunnerName()),
+                resolvedBaseRunners.source(),
+                parsedDetail.currentPitcherName(),
+                parsedDetail.currentBatterName()
         );
         return true;
     }

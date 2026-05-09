@@ -111,7 +111,7 @@ public class KboGameDetailParser {
                 String firstBaseRunnerId = runnerId(row, "B1");
                 String secondBaseRunnerId = runnerId(row, "B2");
                 String thirdBaseRunnerId = runnerId(row, "B3");
-                log.info(
+                log.debug(
                         "[BaseRunners] snapshot runners first={} second={} third={}",
                         displayName(firstBaseRunnerName),
                         displayName(secondBaseRunnerName),
@@ -210,7 +210,7 @@ public class KboGameDetailParser {
             return detail;
         }
 
-        log.info(
+        log.debug(
                 "[BaseRunners] source=officialLineup mapped first={} second={} third={}",
                 displayName(first),
                 displayName(second),

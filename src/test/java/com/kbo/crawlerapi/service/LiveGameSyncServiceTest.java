@@ -153,8 +153,10 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("SCORE_CHANGED");
+        assertThat(notificationEventService.drafts.get(0).title())
+                .isEqualTo("KIA 2 : 0 LG");
         assertThat(notificationEventService.drafts.get(0).body())
-                .isEqualTo("득점 상황 발생\n1득점");
+                .isEqualTo("KIA 득점");
     }
 
     @Test
@@ -417,7 +419,7 @@ class LiveGameSyncServiceTest {
 
         service.sync(before.getGameDate(), false);
 
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA: 윤동희 출루 (볼넷)");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA: 윤동희 출루");
     }
 
     @Test
@@ -442,7 +444,7 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA: 출루");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA 출루");
     }
 
     @Test
@@ -493,6 +495,30 @@ class LiveGameSyncServiceTest {
                 .containsEntry("inning", 1)
                 .containsEntry("inningHalf", "bottom")
                 .containsEntry("inningLabel", "1회 말");
+    }
+
+    @Test
+    void inningHalfTransitionLocalizesRawEnglishInningLabel() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Top 1");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Bottom 1");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 1, 1, "top", "Top 1");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 1, 1, "bottom", "Bottom 1");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        NotificationEventDraft draft = notificationEventService.drafts.get(0);
+        assertThat(draft.title()).isEqualTo("1회 말");
+        assertThat(draft.body()).isEqualTo("1회 말로 전환되었습니다.");
+        assertThat(draft.payload()).containsEntry("inningLabel", "1회 말");
     }
 
     @Test
