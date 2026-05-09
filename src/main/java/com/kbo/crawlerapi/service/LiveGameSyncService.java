@@ -19,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -35,6 +36,7 @@ public class LiveGameSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveGameSyncService.class);
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    private static final DateTimeFormatter CANCELLED_GAME_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
@@ -236,15 +238,18 @@ public class LiveGameSyncService {
         if (!isLiveLike(before.status()) && isLiveLike(after.status())) {
             drafts.add(startedDraft(game));
         }
+        if (isCancellationTransition(before.status(), after.status())) {
+            drafts.add(cancelledDraft(game, after.status()));
+        }
         if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL) {
             drafts.add(finalDraft(game));
         }
         if (isLiveLike(before.status()) && isLiveLike(after.status()) && inningChanged(before, after)) {
             drafts.add(inningChangeDraft(game, after));
         }
-        String newLeadingTeamId = newLeadingTeamId(game, before, after);
-        if (newLeadingTeamId != null) {
-            drafts.add(leadChangeDraft(game, before, after, newLeadingTeamId));
+        String leadChangeEventTeamId = leadChangeEventTeamId(game, before, after);
+        if (leadChangeEventTeamId != null) {
+            drafts.add(leadChangeDraft(game, before, after, leadChangeEventTeamId));
         }
         if (after.status() == GameStatus.LIVE
                 && after.awayScore() != null
@@ -260,12 +265,17 @@ public class LiveGameSyncService {
         return drafts;
     }
 
-    private NotificationEventDraft canceledDraft(Game game) {
-        String title = "%s vs %s 경기 취소".formatted(game.getAwayTeam().getShortName(), game.getHomeTeam().getShortName());
-        String body = game.getCancelReason() == GameCancelReason.RAIN
-                ? "오늘 %s 경기가 우천 취소되었습니다.".formatted(game.getStadium() == null ? "예정" : game.getStadium())
-                : "오늘 경기가 취소 또는 연기되었습니다.";
-        return draft(game, "GAME_CANCELED", "game:%s:canceled:%s".formatted(game.getId(), game.getGameDate()), title, body);
+    private NotificationEventDraft cancelledDraft(Game game, GameStatus cancelledStatus) {
+        NotificationEventDraft draft = draft(
+                game,
+                NotificationEventService.EVENT_GAME_CANCELLED,
+                "game:%s:game-cancelled".formatted(game.getId()),
+                "경기 취소",
+                cancellationBody(game, cancelledStatus)
+        );
+        draft.payload().put("cancelReason", game.getCancelReason() == null ? null : game.getCancelReason().getApiValue());
+        draft.payload().put("rawCancelText", game.getRawCancelText());
+        return draft;
     }
 
     private NotificationEventDraft pitchersDraft(Game game) {
@@ -347,7 +357,7 @@ public class LiveGameSyncService {
                         safeKey(result)
                 ),
                 "출루",
-                liveEventBody(batterName, pitcherName, result, null),
+                onBaseBody(game, batterName, result),
                 batterName,
                 pitcherName,
                 result,
@@ -388,18 +398,24 @@ public class LiveGameSyncService {
         return draft;
     }
 
-    private NotificationEventDraft leadChangeDraft(Game game, GameState before, GameState after, String newLeadingTeamId) {
-        String leadingTeamName = teamShortName(game, newLeadingTeamId);
+    private NotificationEventDraft leadChangeDraft(Game game, GameState before, GameState after, String eventTeamId) {
+        String leadingTeamName = teamShortName(game, eventTeamId);
+        boolean tied = nullSafe(after.awayScore()) == nullSafe(after.homeScore());
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_LEAD_CHANGED,
-                "game:%s:lead-change:%s:%d-%d".formatted(game.getId(), newLeadingTeamId, nullSafe(after.awayScore()), nullSafe(after.homeScore())),
+                "game:%s:lead-change:%s:%d-%d".formatted(game.getId(), eventTeamId, nullSafe(after.awayScore()), nullSafe(after.homeScore())),
                 "리드 변경",
-                "%s가 리드를 잡았습니다.".formatted(leadingTeamName)
+                tied
+                        ? "%s가 동점을 만들었습니다.".formatted(leadingTeamName)
+                        : "%s가 리드를 잡았습니다.".formatted(leadingTeamName)
         );
         draft.payload().put("previousAwayScore", before.awayScore());
         draft.payload().put("previousHomeScore", before.homeScore());
-        draft.payload().put(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, newLeadingTeamId);
+        draft.payload().put(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, eventTeamId);
+        if (tied) {
+            draft.payload().put("leadChangeReason", "TIED_GAME");
+        }
         return draft;
     }
 
@@ -473,6 +489,38 @@ public class LiveGameSyncService {
         return status == GameStatus.LIVE || status == GameStatus.SUSPENDED;
     }
 
+    private boolean isCancellationTransition(GameStatus before, GameStatus after) {
+        return before != after
+                && isCancellationTarget(after)
+                && (before == GameStatus.SCHEDULED || before == GameStatus.UNKNOWN || isLiveLike(before));
+    }
+
+    private boolean isCancellationTarget(GameStatus status) {
+        return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED || status == GameStatus.SUSPENDED;
+    }
+
+    private String cancellationBody(Game game, GameStatus cancelledStatus) {
+        String matchup = "%s vs %s".formatted(game.getAwayTeam().getShortName(), game.getHomeTeam().getShortName());
+        String result = switch (cancelledStatus) {
+            case POSTPONED -> "순연되었습니다.";
+            case SUSPENDED -> "중단되었습니다.";
+            default -> game.getCancelReason() == GameCancelReason.RAIN ? "우천취소되었습니다." : "취소되었습니다.";
+        };
+        String context = cancellationContext(game);
+        return "%s 경기가 %s%s".formatted(matchup, result, context);
+    }
+
+    private String cancellationContext(Game game) {
+        List<String> parts = new ArrayList<>();
+        if (game.getStadium() != null && !game.getStadium().isBlank()) {
+            parts.add(game.getStadium());
+        }
+        if (game.getScheduledAt() != null) {
+            parts.add(game.getScheduledAt().withOffsetSameInstant(java.time.ZoneOffset.ofHours(9)).format(CANCELLED_GAME_TIME_FORMATTER));
+        }
+        return parts.isEmpty() ? "" : " (" + String.join(", ", parts) + ")";
+    }
+
     private boolean inningChanged(GameState before, GameState after) {
         return before.inning() != null
                 && before.inningHalf() != null
@@ -482,16 +530,29 @@ public class LiveGameSyncService {
                 || !java.util.Objects.equals(normalizeHalf(before.inningHalf()), normalizeHalf(after.inningHalf())));
     }
 
-    private String newLeadingTeamId(Game game, GameState before, GameState after) {
+    private String leadChangeEventTeamId(Game game, GameState before, GameState after) {
         if (!isLiveLike(after.status()) || before.awayScore() == null || before.homeScore() == null || after.awayScore() == null || after.homeScore() == null) {
             return null;
         }
         String previousLeader = leadingTeamId(game, before.awayScore(), before.homeScore());
         String currentLeader = leadingTeamId(game, after.awayScore(), after.homeScore());
-        if (currentLeader == null || currentLeader.equals(previousLeader)) {
-            return null;
+        if (currentLeader != null && !currentLeader.equals(previousLeader)) {
+            return currentLeader;
         }
-        return currentLeader;
+        if (previousLeader != null && currentLeader == null) {
+            return scoringTeamId(game, before, after);
+        }
+        return null;
+    }
+
+    private String onBaseBody(Game game, String batterName, String result) {
+        String teamName = teamShortName(game, battingTeamId(game));
+        String method = result == null || result.isBlank() || "출루".equals(result.trim()) ? null : result.trim();
+        if (batterName != null && !batterName.isBlank()) {
+            String playerText = "%s: %s 출루".formatted(teamName, batterName.trim());
+            return method == null ? playerText : "%s (%s)".formatted(playerText, method);
+        }
+        return method == null ? "%s: 출루".formatted(teamName) : "%s: 출루 (%s)".formatted(teamName, method);
     }
 
     private String leadingTeamId(Game game, Integer awayScore, Integer homeScore) {
@@ -524,6 +585,9 @@ public class LiveGameSyncService {
     }
 
     private String teamShortName(Game game, String teamId) {
+        if (teamId == null || teamId.isBlank()) {
+            return "KBO";
+        }
         if (game.getAwayTeam().getTeamCode().equals(teamId)) {
             return game.getAwayTeam().getShortName();
         }
@@ -591,7 +655,20 @@ public class LiveGameSyncService {
                 game.getStatusReason() == null ? "" : game.getStatusReason(),
                 game.getInningState() == null ? "" : game.getInningState()
         );
-        for (String method : List.of("고의사구", "사구", "볼넷", "홈런", "적시타", "안타", "2루타", "3루타", "희생플라이", "실책")) {
+        for (String method : List.of(
+                "몸에 맞는 공",
+                "낫아웃 출루",
+                "야수선택",
+                "고의사구",
+                "사구",
+                "볼넷",
+                "홈런",
+                "2루타",
+                "3루타",
+                "적시타",
+                "안타",
+                "실책"
+        )) {
             if (text.contains(method)) {
                 return method;
             }

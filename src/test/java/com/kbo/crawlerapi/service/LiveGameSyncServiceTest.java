@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.config.LiveSyncProperties;
 import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
@@ -231,6 +232,76 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void scheduledToCancelledTransitionCreatesGameCancelledDraftOnce() {
+        Game before = fixtureGame(GameStatus.SCHEDULED, null, null);
+        Game after = cancelledFixtureGame(GameStatus.CANCELLED, GameCancelReason.RAIN, "우천취소");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts).hasSize(1);
+        NotificationEventDraft draft = notificationEventService.drafts.get(0);
+        assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_GAME_CANCELLED);
+        assertThat(draft.eventKey()).isEqualTo("game:%s:game-cancelled".formatted(after.getId()));
+        assertThat(draft.title()).isEqualTo("경기 취소");
+        assertThat(draft.body()).isEqualTo("KIA vs LG 경기가 우천취소되었습니다. (잠실, 18:30)");
+        assertThat(draft.payload())
+                .containsEntry("cancelReason", "rain")
+                .containsEntry("rawCancelText", "우천취소");
+    }
+
+    @Test
+    void repeatedCancelledStateDoesNotCreateGameCancelledDraft() {
+        Game before = cancelledFixtureGame(GameStatus.CANCELLED, GameCancelReason.RAIN, "우천취소");
+        Game after = cancelledFixtureGame(GameStatus.CANCELLED, GameCancelReason.RAIN, "우천취소");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void scheduledToPostponedTransitionCreatesGameCancelledDraftWithPostponedBody() {
+        Game before = fixtureGame(GameStatus.SCHEDULED, null, null);
+        Game after = cancelledFixtureGame(GameStatus.POSTPONED, null, "순연");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_GAME_CANCELLED);
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA vs LG 경기가 순연되었습니다. (잠실, 18:30)");
+    }
+
+    @Test
     void liveToFinalTransitionTriggersTeamRankRefresh() {
         Game before = fixtureGame(GameStatus.LIVE, 3, 2);
         Game after = fixtureGame(GameStatus.FINAL, 4, 2);
@@ -304,8 +375,8 @@ class LiveGameSyncServiceTest {
 
     @Test
     void batterReachingBaseCreatesOnBaseDraftWithoutScoreChange() {
-        Game before = fixtureGame(GameStatus.LIVE, 1, 0);
-        Game after = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
         GameSnapshot beforeSnapshot = snapshot(before, "이전타자", "박투수", 1, false, false, false);
         GameSnapshot afterSnapshot = snapshot(after, "홍길동", "박투수", 1, true, false, false);
 
@@ -325,13 +396,34 @@ class LiveGameSyncServiceTest {
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
         assertThat(notificationEventService.drafts.get(0).body())
-                .isEqualTo("이전타자, 박투수 상대 출루");
+                .isEqualTo("KIA: 이전타자 출루");
+    }
+
+    @Test
+    void onBaseDraftIncludesReachMethodWhenAvailable() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3 볼넷");
+        GameSnapshot beforeSnapshot = snapshot(before, "윤동희", "박투수", 1, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "다음타자", "박투수", 1, true, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA: 윤동희 출루 (볼넷)");
     }
 
     @Test
     void onBaseDraftUsesFallbackTextWhenPlayerDetailsAreUnavailable() {
-        Game before = fixtureGame(GameStatus.LIVE, 1, 0);
-        Game after = fixtureGame(GameStatus.LIVE, 1, 0);
+        Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
         GameSnapshot beforeSnapshot = snapshot(before, null, null, 1, false, false, false);
         GameSnapshot afterSnapshot = snapshot(after, null, null, 1, true, false, false);
 
@@ -350,7 +442,7 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("출루 상황 발생");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA: 출루");
     }
 
     @Test
@@ -476,7 +568,7 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
-    void leadToTieDoesNotCreateLeadChangeDraft() {
+    void leadToTieCreatesLeadChangeDraftForScoringTeam() {
         Game before = fixtureGame(GameStatus.LIVE, 3, 1);
         Game after = fixtureGame(GameStatus.LIVE, 3, 3);
         GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
@@ -495,7 +587,11 @@ class LiveGameSyncServiceTest {
 
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
-                .doesNotContain(NotificationEventService.EVENT_LEAD_CHANGED);
+                .containsExactly(NotificationEventService.EVENT_LEAD_CHANGED, NotificationEventService.EVENT_SCORE_CHANGED);
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("LG가 동점을 만들었습니다.");
+        assertThat(notificationEventService.drafts.get(0).payload())
+                .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "lg")
+                .containsEntry("leadChangeReason", "TIED_GAME");
     }
 
     @Test
@@ -562,6 +658,34 @@ class LiveGameSyncServiceTest {
             String inningState,
             OffsetDateTime scheduledAt
     ) {
+        return fixtureGame(status, awayScore, homeScore, inningState, scheduledAt, false, false, null, null);
+    }
+
+    private Game cancelledFixtureGame(GameStatus status, GameCancelReason cancelReason, String rawCancelText) {
+        return fixtureGame(
+                status,
+                null,
+                null,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                status == GameStatus.CANCELLED,
+                status == GameStatus.POSTPONED,
+                cancelReason,
+                rawCancelText
+        );
+    }
+
+    private Game fixtureGame(
+            GameStatus status,
+            Integer awayScore,
+            Integer homeScore,
+            String inningState,
+            OffsetDateTime scheduledAt,
+            boolean isCancelled,
+            boolean isPostponed,
+            GameCancelReason cancelReason,
+            String rawCancelText
+    ) {
         Team homeTeam = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
         Team awayTeam = new Team(UUID.randomUUID(), "kia", "KIA 타이거즈", "KIA", "KIA Tigers", null);
         return new Game(
@@ -578,10 +702,10 @@ class LiveGameSyncServiceTest {
                 homeScore,
                 awayScore,
                 inningState,
-                false,
-                false,
-                null,
-                null,
+                isCancelled,
+                isPostponed,
+                cancelReason,
+                rawCancelText,
                 null
         );
     }

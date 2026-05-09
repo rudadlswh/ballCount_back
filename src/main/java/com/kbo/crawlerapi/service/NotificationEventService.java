@@ -29,6 +29,7 @@ public class NotificationEventService {
     public static final String EVENT_LEAD_CHANGED = "LEAD_CHANGED";
     public static final String EVENT_GAME_END = "GAME_END";
     public static final String EVENT_GAME_FINAL = EVENT_GAME_END;
+    public static final String EVENT_GAME_CANCELLED = "GAME_CANCELLED";
     public static final String EVENT_ON_BASE = "ON_BASE";
     public static final String EVENT_INNING_CHANGED = "INNING_CHANGED";
     public static final String PAYLOAD_EVENT_TEAM_ID = "eventTeamId";
@@ -202,6 +203,7 @@ public class NotificationEventService {
             case EVENT_SCORE_CHANGED -> device.isScoreChangeEnabled();
             case EVENT_LEAD_CHANGED -> device.isLeadChangeEnabled();
             case EVENT_GAME_END -> device.isGameEndEnabled();
+            case EVENT_GAME_CANCELLED -> device.isGameEndEnabled();
             case EVENT_ON_BASE -> device.isOnBaseEnabled();
             case EVENT_INNING_CHANGED -> device.isInningChangeEnabled();
             default -> false;
@@ -225,20 +227,25 @@ public class NotificationEventService {
             return false;
         }
         if (favoriteTeamId.equals(game.getHomeTeam().getTeamCode())) {
-            return game.getHomeScore() > game.getAwayScore();
+            return game.getHomeScore() >= game.getAwayScore();
         }
         if (favoriteTeamId.equals(game.getAwayTeam().getTeamCode())) {
-            return game.getAwayScore() > game.getHomeScore();
+            return game.getAwayScore() >= game.getHomeScore();
         }
         return false;
     }
 
     private boolean isOpponentScopedEvent(String eventType) {
-        return EVENT_SCORE_CHANGED.equals(eventType) || EVENT_ON_BASE.equals(eventType) || EVENT_LEAD_CHANGED.equals(eventType);
+        return EVENT_SCORE_CHANGED.equals(eventType)
+                || EVENT_ON_BASE.equals(eventType)
+                || EVENT_LEAD_CHANGED.equals(eventType);
     }
 
     private boolean isRealtimeTeamEvent(String eventType) {
-        return EVENT_SCORE_CHANGED.equals(eventType) || EVENT_ON_BASE.equals(eventType) || EVENT_LEAD_CHANGED.equals(eventType);
+        return EVENT_SCORE_CHANGED.equals(eventType)
+                || EVENT_ON_BASE.equals(eventType)
+                || EVENT_LEAD_CHANGED.equals(eventType)
+                || EVENT_INNING_CHANGED.equals(eventType);
     }
 
     private String payloadText(NotificationEventDraft draft, String key) {
@@ -266,7 +273,7 @@ public class NotificationEventService {
 
     private boolean isDeliverableEventType(String eventType) {
         return switch (eventType) {
-            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
+            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_GAME_CANCELLED, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
             default -> false;
         };
     }
