@@ -95,6 +95,8 @@ public class KboGameDetailParser {
                         ? ("%s %d".formatted("top".equals(inningHalf) ? "Top" : "Bottom", inning))
                         : null;
                 String rawCancelText = text(row, "CANCEL_SC_NM");
+                GameCancelReason cancelReason = resolveCancelReason(status, rawCancelText);
+                logCancellationStatusIfNeeded(row, providerGameId, status, cancelReason, rawCancelText);
                 String awayStartingPitcherName = text(row, "T_PIT_P_NM");
                 String homeStartingPitcherName = text(row, "B_PIT_P_NM");
                 String currentPitcherName = currentPitcherName(row, inningHalf);
@@ -123,7 +125,7 @@ public class KboGameDetailParser {
                         status,
                         status == GameStatus.CANCELLED,
                         status == GameStatus.POSTPONED,
-                        resolveCancelReason(status, rawCancelText),
+                        cancelReason,
                         status == GameStatus.CANCELLED ? rawCancelText : null,
                         awayScore,
                         homeScore,
@@ -353,13 +355,16 @@ public class KboGameDetailParser {
 
     private GameStatus resolveStatus(JsonNode row) {
         String cancelName = text(row, "CANCEL_SC_NM");
-        if (cancelName != null) {
-            if (cancelName.contains("연기")) {
-                return GameStatus.POSTPONED;
-            }
-            if (cancelName.contains("취소")) {
-                return GameStatus.CANCELLED;
-            }
+        String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");
+        String statusText = String.join(" ", clean(cancelName), clean(rawStatusName)).trim();
+        if (isPostponedText(statusText)) {
+            return GameStatus.POSTPONED;
+        }
+        if (isCancelledText(statusText)) {
+            return GameStatus.CANCELLED;
+        }
+        if (isSuspendedText(statusText)) {
+            return GameStatus.SUSPENDED;
         }
 
         String gameState = text(row, "GAME_STATE_SC");
@@ -379,6 +384,49 @@ public class KboGameDetailParser {
             return GameStatus.SCHEDULED;
         }
         return GameStatus.UNKNOWN;
+    }
+
+    private void logCancellationStatusIfNeeded(
+            JsonNode row,
+            String providerGameId,
+            GameStatus normalizedStatus,
+            GameCancelReason cancelReason,
+            String rawCancelText
+    ) {
+        if (normalizedStatus != GameStatus.CANCELLED
+                && normalizedStatus != GameStatus.POSTPONED
+                && normalizedStatus != GameStatus.SUSPENDED) {
+            return;
+        }
+        log.info(
+                "[GameStatus] cancellation detected providerGameId={} gameDate={} rawStatusCode={} rawStatusName={} normalizedStatus={} cancelReason={}",
+                providerGameId,
+                firstText(row, "G_DT", "GAME_DATE", "GAME_DT"),
+                text(row, "GAME_STATE_SC"),
+                firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM", "CANCEL_SC_NM"),
+                normalizedStatus.getApiValue(),
+                cancelReason == null ? clean(rawCancelText) : cancelReason.getApiValue()
+        );
+    }
+
+    private boolean isPostponedText(String value) {
+        return value != null && (value.contains("연기") || value.contains("순연") || value.toLowerCase(java.util.Locale.ROOT).contains("postpon"));
+    }
+
+    private boolean isCancelledText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        return value.contains("취소") || value.contains("노게임") || lower.contains("cancel") || lower.contains("no game") || lower.contains("nogame");
+    }
+
+    private boolean isSuspendedText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        return value.contains("서스펜") || value.contains("중단") || lower.contains("suspend");
     }
 
     private void logRunnerRelatedKeysIfNeeded(
