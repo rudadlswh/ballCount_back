@@ -17,8 +17,11 @@ import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import com.kbo.crawlerapi.api.dto.GameBatterRecordDto;
+import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
+import com.kbo.crawlerapi.api.dto.GamePitcherRecordDto;
 import com.kbo.crawlerapi.api.dto.GameTotalsDto;
 import com.kbo.crawlerapi.api.dto.GameStateDto;
 import com.kbo.crawlerapi.api.dto.GameSummaryDto;
@@ -113,6 +116,23 @@ class GameReadControllerWebMvcTest {
     }
 
     @Test
+    void getGameBoxscoreReturnsNormalizedPayload() throws Exception {
+        mockMvc.perform(get("/api/v1/games/20260510-SSG-KIA/boxscore"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gameId").value("20260510-SSG-KIA"))
+                .andExpect(jsonPath("$.awayBatters.length()").value(1))
+                .andExpect(jsonPath("$.awayBatters[0].sourceOrder").value(0))
+                .andExpect(jsonPath("$.awayBatters[0].playerName").value("안상현"))
+                .andExpect(jsonPath("$.awayBatters[0].homeRuns").isEmpty())
+                .andExpect(jsonPath("$.homeBatters[0].playerName").value("박찬호"))
+                .andExpect(jsonPath("$.awayPitchers[0].playerName").value("최민준"))
+                .andExpect(jsonPath("$.awayPitchers[0].walksOrHitByPitch").value(3))
+                .andExpect(jsonPath("$.homePitchers[0].inningsPitched").value("6 1/3"))
+                .andExpect(jsonPath("$.homePitchers[0].era").value("3.19"))
+                .andExpect(jsonPath("$.isStale").value(false));
+    }
+
+    @Test
     void getGamesByMonthRejectsInvalidMonth() throws Exception {
         mockMvc.perform(get("/api/v1/games/month").param("year", "2026").param("month", "13"))
                 .andExpect(status().isBadRequest())
@@ -122,7 +142,7 @@ class GameReadControllerWebMvcTest {
     private static final class StubGameReadService extends GameReadService {
 
         private StubGameReadService() {
-            super(null, null, null, null);
+            super(null, null, null, null, null);
         }
 
         @Override
@@ -227,6 +247,87 @@ class GameReadControllerWebMvcTest {
                             new GameTotalsDto.TeamTotalsDto(7, 8, 0, 10)
                     ),
                     OffsetDateTime.of(2026, 4, 9, 20, 12, 0, 0, ZoneOffset.ofHours(9)),
+                    false
+            );
+        }
+
+        @Override
+        public GameBoxscoreResponse getGameBoxscore(String gameId) {
+            return new GameBoxscoreResponse(
+                    gameId,
+                    List.of(new GameBatterRecordDto(
+                            0,
+                            1,
+                            "유",
+                            "안상현",
+                            3,
+                            1,
+                            0,
+                            0,
+                            null,
+                            null,
+                            null,
+                            null,
+                            "0.300"
+                    )),
+                    List.of(new GameBatterRecordDto(
+                            0,
+                            1,
+                            "중",
+                            "박찬호",
+                            4,
+                            1,
+                            2,
+                            1,
+                            null,
+                            null,
+                            null,
+                            null,
+                            "0.300"
+                    )),
+                    List.of(new GamePitcherRecordDto(
+                            0,
+                            1,
+                            "최민준",
+                            "선발",
+                            "패",
+                            0,
+                            1,
+                            0,
+                            "2",
+                            12,
+                            46,
+                            8,
+                            3,
+                            1,
+                            3,
+                            0,
+                            3,
+                            2,
+                            "3.23"
+                    )),
+                    List.of(new GamePitcherRecordDto(
+                            0,
+                            1,
+                            "잭로그",
+                            "선발",
+                            "승",
+                            1,
+                            0,
+                            0,
+                            "6 1/3",
+                            24,
+                            88,
+                            22,
+                            5,
+                            0,
+                            1,
+                            6,
+                            1,
+                            1,
+                            "3.19"
+                    )),
+                    OffsetDateTime.of(2026, 5, 10, 17, 4, 0, 0, ZoneOffset.ofHours(9)),
                     false
             );
         }

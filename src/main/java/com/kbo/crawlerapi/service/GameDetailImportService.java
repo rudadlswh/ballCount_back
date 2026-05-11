@@ -8,6 +8,8 @@ import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.LineScore;
+import com.kbo.crawlerapi.parser.KboBoxscoreParser;
+import com.kbo.crawlerapi.parser.KboBoxscoreParser.ParsedBoxscore;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedGameDetail;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
@@ -55,6 +57,8 @@ public class GameDetailImportService {
     private final KboGameDetailClient kboGameDetailClient;
     private final KboGameDetailParser kboGameDetailParser;
     private final KboLineScoreParser kboLineScoreParser;
+    private final KboBoxscoreParser kboBoxscoreParser;
+    private final GameBoxscoreRecordService gameBoxscoreRecordService;
     private final CrawlJobTrackingService crawlJobTrackingService;
     private final BaseRunnerNameResolver baseRunnerNameResolver;
     private final ObjectMapper objectMapper;
@@ -66,6 +70,8 @@ public class GameDetailImportService {
             KboGameDetailClient kboGameDetailClient,
             KboGameDetailParser kboGameDetailParser,
             KboLineScoreParser kboLineScoreParser,
+            KboBoxscoreParser kboBoxscoreParser,
+            GameBoxscoreRecordService gameBoxscoreRecordService,
             CrawlJobTrackingService crawlJobTrackingService,
             BaseRunnerNameResolver baseRunnerNameResolver
     ) {
@@ -75,6 +81,8 @@ public class GameDetailImportService {
         this.kboGameDetailClient = kboGameDetailClient;
         this.kboGameDetailParser = kboGameDetailParser;
         this.kboLineScoreParser = kboLineScoreParser;
+        this.kboBoxscoreParser = kboBoxscoreParser;
+        this.gameBoxscoreRecordService = gameBoxscoreRecordService;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.baseRunnerNameResolver = baseRunnerNameResolver;
         this.objectMapper = new ObjectMapper();
@@ -90,6 +98,7 @@ public class GameDetailImportService {
         ParsedGameDetail parsedDetail;
         ParsedLineScoreResult lineScoreResult;
         ParsedLineupData lineupData;
+        BoxscoreFetchResult boxscoreFetchResult;
 
         try {
             game = gameRepository.findByPublicGameId(publicGameId)
@@ -118,7 +127,8 @@ public class GameDetailImportService {
                     game.getGameDate().getYear()
             );
             lineScoreResult = kboLineScoreParser.parse(lineScoreResponseBody);
-            lineupData = fetchLineupDataIfAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
+            boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
+            lineupData = boxscoreFetchResult.lineupData();
             parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
@@ -146,6 +156,7 @@ public class GameDetailImportService {
                     parsedDetail.statusReason(),
                     parsedDetail.sourceUpdatedAt()
             );
+            saveBoxscoreRecordsIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, boxscoreFetchResult.responseBody());
             crawlJobTrackingService.markGameDetailSucceeded(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size());
 
             return new GameDetailImportResult(
@@ -170,14 +181,64 @@ public class GameDetailImportService {
         }
     }
 
-    private ParsedLineupData fetchLineupDataIfAvailable(String providerGameId, int seasonId, ParsedGameDetail parsedDetail) {
+    private BoxscoreFetchResult fetchBoxscoreIfLineupAvailable(String providerGameId, int seasonId, ParsedGameDetail parsedDetail) {
         if (!parsedDetail.lineupAvailable()) {
-            return ParsedLineupData.empty(null);
+            return BoxscoreFetchResult.empty();
         }
         try {
-            return kboGameDetailParser.parseLineupData(kboGameDetailClient.fetchBoxScore(providerGameId, seasonId));
+            String responseBody = kboGameDetailClient.fetchBoxScore(providerGameId, seasonId);
+            return new BoxscoreFetchResult(responseBody, kboGameDetailParser.parseLineupData(responseBody));
         } catch (RuntimeException exception) {
-            return ParsedLineupData.empty(null);
+            return BoxscoreFetchResult.empty();
+        }
+    }
+
+    private void saveBoxscoreRecordsIfAvailable(
+            Game game,
+            String providerGameId,
+            ParsedGameDetail parsedDetail,
+            String boxscoreResponseBody
+    ) {
+        if (parsedDetail.status() != GameStatus.FINAL) {
+            log.debug(
+                    "[GameBoxscoreImport] skipped reason=nonFinal gameId={} providerGameId={} status={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    parsedDetail.status()
+            );
+            return;
+        }
+        if (boxscoreResponseBody == null || boxscoreResponseBody.isBlank()) {
+            log.info("[GameBoxscoreImport] skipped reason=noBoxscore gameId={} providerGameId={}", game.getPublicGameId(), providerGameId);
+            return;
+        }
+
+        try {
+            ParsedBoxscore parsedBoxscore = kboBoxscoreParser.parse(boxscoreResponseBody);
+            int batterCount = parsedBoxscore.awayBatters().size() + parsedBoxscore.homeBatters().size();
+            int pitcherCount = parsedBoxscore.awayPitchers().size() + parsedBoxscore.homePitchers().size();
+            if (batterCount == 0 && pitcherCount == 0) {
+                log.info("[GameBoxscoreImport] skipped reason=emptyRecords gameId={} providerGameId={}", game.getPublicGameId(), providerGameId);
+                return;
+            }
+
+            GameBoxscoreRecordService.GameBoxscoreRecordSaveResult result =
+                    gameBoxscoreRecordService.saveBoxscoreRecords(game, parsedBoxscore);
+            log.info(
+                    "[GameBoxscoreImport] gameId={} providerGameId={} batters={} pitchers={} saved={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    result.batterRecordCount(),
+                    result.pitcherRecordCount(),
+                    result.saved()
+            );
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[GameBoxscoreImport] skipped reason=error gameId={} providerGameId={} error={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    exception.getMessage()
+            );
         }
     }
 
@@ -313,10 +374,12 @@ public class GameDetailImportService {
         }
 
         var latestSnapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId());
+        GameSnapshot previousSnapshot = latestSnapshot.orElse(null);
         BaseRunnerNameResolver.ResolvedBaseRunners resolvedBaseRunners = baseRunnerNameResolver.resolve(
-                latestSnapshot.orElse(null),
+                previousSnapshot,
                 parsedDetail
         );
+        logBaseRunnerResolution(game, previousSnapshot, parsedDetail, resolvedBaseRunners);
         if (latestSnapshot.map(GameSnapshot::getRawHash).filter(combinedRawHash::equals).isPresent()
                 && latestSnapshot.map(snapshot -> snapshotCurrentPlayersMatch(snapshot, parsedDetail, resolvedBaseRunners)).orElse(false)) {
             log.debug(
@@ -428,6 +491,39 @@ public class GameDetailImportService {
     private String displayName(String value) {
         String cleaned = clean(value);
         return cleaned == null ? "<nil>" : cleaned;
+    }
+
+    private void logBaseRunnerResolution(
+            Game game,
+            GameSnapshot previous,
+            ParsedGameDetail current,
+            BaseRunnerNameResolver.ResolvedBaseRunners resolved
+    ) {
+        log.debug(
+                "[BaseRunners] resolution game_id={} previous inning={}/{} current inning={}/{} previous occupancy={} current occupancy={} previous names first={} second={} third={} resolved names first={} second={} third={} source={}",
+                game.getPublicGameId(),
+                previous == null ? null : previous.getInning(),
+                previous == null ? null : previous.getInningHalf(),
+                current.inning(),
+                current.inningHalf(),
+                previous == null ? "---" : baseKey(previous),
+                baseKey(current),
+                displayName(previous == null ? null : previous.getFirstBaseRunnerName()),
+                displayName(previous == null ? null : previous.getSecondBaseRunnerName()),
+                displayName(previous == null ? null : previous.getThirdBaseRunnerName()),
+                displayName(resolved.firstBaseRunnerName()),
+                displayName(resolved.secondBaseRunnerName()),
+                displayName(resolved.thirdBaseRunnerName()),
+                resolved.source()
+        );
+    }
+
+    private String baseKey(GameSnapshot snapshot) {
+        return "%s%s%s".formatted(snapshot.isRunnerOnFirst() ? "1" : "-", snapshot.isRunnerOnSecond() ? "2" : "-", snapshot.isRunnerOnThird() ? "3" : "-");
+    }
+
+    private String baseKey(ParsedGameDetail detail) {
+        return "%s%s%s".formatted(detail.runnerOnFirst() ? "1" : "-", detail.runnerOnSecond() ? "2" : "-", detail.runnerOnThird() ? "3" : "-");
     }
 
     private void logCurrentPlayerDtoState(Game game, ParsedGameDetail parsedDetail) {
@@ -552,5 +648,14 @@ public class GameDetailImportService {
             String providerGameId,
             ParsedGameDetail parsedDetail
     ) {
+    }
+
+    private record BoxscoreFetchResult(
+            String responseBody,
+            ParsedLineupData lineupData
+    ) {
+        private static BoxscoreFetchResult empty() {
+            return new BoxscoreFetchResult(null, ParsedLineupData.empty(null));
+        }
     }
 }
