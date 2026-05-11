@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
 import com.kbo.crawlerapi.api.dto.GamesByDateResponse;
@@ -29,6 +30,9 @@ import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.LineScore;
 import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.BatterRecordReadRow;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.PitcherRecordReadRow;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
@@ -50,11 +54,20 @@ class GameReadServiceTest {
     @Mock
     private LineScoreRepository lineScoreRepository;
 
+    @Mock
+    private GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository;
+
     private GameReadService gameReadService;
 
     @BeforeEach
     void setUp() {
-        gameReadService = new GameReadService(gameRepository, gameSnapshotRepository, lineScoreRepository, FIXED_CLOCK);
+        gameReadService = new GameReadService(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                gameBoxscoreRecordReadRepository,
+                FIXED_CLOCK
+        );
     }
 
     @Test
@@ -321,6 +334,117 @@ class GameReadServiceTest {
         assertThat(response.totals().away().hits()).isEqualTo(7);
         assertThat(response.totals().home().runs()).isEqualTo(7);
         assertThat(response.totals().home().balls()).isEqualTo(10);
+    }
+
+    @Test
+    void getGameBoxscoreGroupsAwayAndHomeRecordsSortedBySourceOrder() {
+        Team away = new Team(
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                "ssg",
+                "SSG Landers",
+                "SSG",
+                "SSG Landers",
+                null
+        );
+        Team home = new Team(
+                UUID.fromString("22222222-2222-2222-2222-222222222222"),
+                "kia",
+                "KIA Tigers",
+                "KIA",
+                "KIA Tigers",
+                null
+        );
+        Game game = new Game(
+                UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                "20260510-SSG-KIA",
+                "kbo",
+                "20260510SKHT0",
+                LocalDate.of(2026, 5, 10),
+                OffsetDateTime.of(2026, 5, 10, 14, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "광주",
+                GameStatus.FINAL,
+                home,
+                away,
+                3,
+                1,
+                null,
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+
+        when(gameRepository.findByPublicGameId(eq("20260510-SSG-KIA"))).thenReturn(java.util.Optional.of(game));
+        when(gameBoxscoreRecordReadRepository.findBatterRecords(eq(game.getId()))).thenReturn(List.of(
+                new BatterRecordReadRow(home.getId(), 1, 2, "중", "박찬호", 4, 1, 2, 1, null, null, null, null, "0.300",
+                        OffsetDateTime.of(2026, 5, 10, 17, 2, 0, 0, ZoneOffset.UTC)),
+                new BatterRecordReadRow(away.getId(), 2, 3, "좌", "최정", 3, 0, 1, 0, null, null, null, null, "0.280",
+                        OffsetDateTime.of(2026, 5, 10, 17, 1, 0, 0, ZoneOffset.UTC)),
+                new BatterRecordReadRow(away.getId(), 0, 1, "유", "안상현", 3, 1, 0, 0, null, null, null, null, "0.300",
+                        OffsetDateTime.of(2026, 5, 10, 17, 3, 0, 0, ZoneOffset.UTC))
+        ));
+        when(gameBoxscoreRecordReadRepository.findPitcherRecords(eq(game.getId()))).thenReturn(List.of(
+                new PitcherRecordReadRow(home.getId(), 0, 1, "잭로그", "선발", "승", 1, 0, 0, "6 1/3", 24, 88, 22, 5, 0, 1, 6, 1, 1, "3.19",
+                        OffsetDateTime.of(2026, 5, 10, 17, 4, 0, 0, ZoneOffset.UTC)),
+                new PitcherRecordReadRow(away.getId(), 0, 1, "최민준", "선발", "패", 0, 1, 0, "2", 12, 46, 8, 3, 1, 3, 0, 3, 2, "3.23",
+                        OffsetDateTime.of(2026, 5, 10, 17, 2, 0, 0, ZoneOffset.UTC))
+        ));
+
+        GameBoxscoreResponse response = gameReadService.getGameBoxscore("20260510-SSG-KIA");
+
+        assertThat(response.gameId()).isEqualTo("20260510-SSG-KIA");
+        assertThat(response.awayBatters()).extracting("playerName").containsExactly("안상현", "최정");
+        assertThat(response.homeBatters()).extracting("playerName").containsExactly("박찬호");
+        assertThat(response.awayBatters().get(0).sourceOrder()).isZero();
+        assertThat(response.awayBatters().get(0).homeRuns()).isNull();
+        assertThat(response.awayBatters().get(0).walks()).isNull();
+        assertThat(response.awayBatters().get(0).strikeouts()).isNull();
+        assertThat(response.awayPitchers()).extracting("playerName").containsExactly("최민준");
+        assertThat(response.homePitchers()).extracting("playerName").containsExactly("잭로그");
+        assertThat(response.awayPitchers().get(0).walksOrHitByPitch()).isEqualTo(3);
+        assertThat(response.homePitchers().get(0).inningsPitched()).isEqualTo("6 1/3");
+        assertThat(response.homePitchers().get(0).era()).isEqualTo("3.19");
+        assertThat(response.updatedAt()).isEqualTo(OffsetDateTime.of(2026, 5, 11, 2, 4, 0, 0, ZoneOffset.ofHours(9)));
+        assertThat(response.isStale()).isFalse();
+    }
+
+    @Test
+    void getGameBoxscoreReturnsEmptyArraysWhenRecordsAreMissing() {
+        Team away = new Team(UUID.randomUUID(), "lg", "LG Twins", "LG", "LG Twins", null);
+        Team home = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
+        Game game = new Game(
+                UUID.randomUUID(),
+                "20260510-LG-DOO",
+                "kbo",
+                "20260510LGOB0",
+                LocalDate.of(2026, 5, 10),
+                OffsetDateTime.of(2026, 5, 10, 14, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                GameStatus.FINAL,
+                home,
+                away,
+                2,
+                1,
+                null,
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+
+        when(gameRepository.findByPublicGameId(eq("20260510-LG-DOO"))).thenReturn(java.util.Optional.of(game));
+        when(gameBoxscoreRecordReadRepository.findBatterRecords(eq(game.getId()))).thenReturn(List.of());
+        when(gameBoxscoreRecordReadRepository.findPitcherRecords(eq(game.getId()))).thenReturn(List.of());
+
+        GameBoxscoreResponse response = gameReadService.getGameBoxscore("20260510-LG-DOO");
+
+        assertThat(response.awayBatters()).isEmpty();
+        assertThat(response.homeBatters()).isEmpty();
+        assertThat(response.awayPitchers()).isEmpty();
+        assertThat(response.homePitchers()).isEmpty();
+        assertThat(response.updatedAt()).isNull();
     }
 
     @Test

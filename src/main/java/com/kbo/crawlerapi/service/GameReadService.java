@@ -9,8 +9,11 @@ import java.util.Comparator;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import com.kbo.crawlerapi.api.ResourceNotFoundException;
+import com.kbo.crawlerapi.api.dto.GameBatterRecordDto;
+import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
+import com.kbo.crawlerapi.api.dto.GamePitcherRecordDto;
 import com.kbo.crawlerapi.api.dto.GameTotalsDto;
 import com.kbo.crawlerapi.api.dto.GameStateDto;
 import com.kbo.crawlerapi.api.dto.GameSummaryDto;
@@ -23,6 +26,9 @@ import com.kbo.crawlerapi.api.dto.TeamSummaryDto;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.LineScore;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.BatterRecordReadRow;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.PitcherRecordReadRow;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
@@ -35,17 +41,20 @@ public class GameReadService {
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
     private final LineScoreRepository lineScoreRepository;
+    private final GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository;
     private final Clock applicationClock;
 
     public GameReadService(
             GameRepository gameRepository,
             GameSnapshotRepository gameSnapshotRepository,
             LineScoreRepository lineScoreRepository,
+            GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository,
             Clock applicationClock
     ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
         this.lineScoreRepository = lineScoreRepository;
+        this.gameBoxscoreRecordReadRepository = gameBoxscoreRecordReadRepository;
         this.applicationClock = applicationClock;
     }
 
@@ -121,6 +130,39 @@ public class GameReadService {
         );
     }
 
+    public GameBoxscoreResponse getGameBoxscore(String gameId) {
+        Game game = gameRepository.findByPublicGameId(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found: " + gameId));
+        List<BatterRecordReadRow> batterRows = gameBoxscoreRecordReadRepository.findBatterRecords(game.getId());
+        List<PitcherRecordReadRow> pitcherRows = gameBoxscoreRecordReadRepository.findPitcherRecords(game.getId());
+
+        return new GameBoxscoreResponse(
+                game.getPublicGameId(),
+                batterRows.stream()
+                        .filter(row -> row.teamId().equals(game.getAwayTeam().getId()))
+                        .sorted(Comparator.comparingInt(BatterRecordReadRow::sourceOrder))
+                        .map(this::toBatterRecord)
+                        .toList(),
+                batterRows.stream()
+                        .filter(row -> row.teamId().equals(game.getHomeTeam().getId()))
+                        .sorted(Comparator.comparingInt(BatterRecordReadRow::sourceOrder))
+                        .map(this::toBatterRecord)
+                        .toList(),
+                pitcherRows.stream()
+                        .filter(row -> row.teamId().equals(game.getAwayTeam().getId()))
+                        .sorted(Comparator.comparingInt(PitcherRecordReadRow::sourceOrder))
+                        .map(this::toPitcherRecord)
+                        .toList(),
+                pitcherRows.stream()
+                        .filter(row -> row.teamId().equals(game.getHomeTeam().getId()))
+                        .sorted(Comparator.comparingInt(PitcherRecordReadRow::sourceOrder))
+                        .map(this::toPitcherRecord)
+                        .toList(),
+                latestBoxscoreUpdatedAt(batterRows, pitcherRows),
+                false
+        );
+    }
+
     private List<GameSummaryDto> toGameSummaries(List<Game> games) {
         return games.stream().map(this::toGameSummary).toList();
     }
@@ -159,6 +201,48 @@ public class GameReadService {
                 game.getAwayScore(),
                 game.getHomeScore(),
                 null
+        );
+    }
+
+    private GameBatterRecordDto toBatterRecord(BatterRecordReadRow row) {
+        return new GameBatterRecordDto(
+                row.sourceOrder(),
+                row.battingOrder(),
+                row.position(),
+                row.playerName(),
+                row.atBats(),
+                row.runs(),
+                row.hits(),
+                row.rbi(),
+                row.homeRuns(),
+                row.walks(),
+                row.strikeouts(),
+                row.stolenBases(),
+                row.battingAverage()
+        );
+    }
+
+    private GamePitcherRecordDto toPitcherRecord(PitcherRecordReadRow row) {
+        return new GamePitcherRecordDto(
+                row.sourceOrder(),
+                row.pitchingOrder(),
+                row.playerName(),
+                row.appearance(),
+                row.decisionResult(),
+                row.wins(),
+                row.losses(),
+                row.saves(),
+                row.inningsPitched(),
+                row.battersFaced(),
+                row.pitchCount(),
+                row.atBats(),
+                row.hits(),
+                row.homeRuns(),
+                row.walksOrHitByPitch(),
+                row.strikeouts(),
+                row.runs(),
+                row.earnedRuns(),
+                row.era()
         );
     }
 
@@ -242,6 +326,20 @@ public class GameReadService {
             latest = latestSnapshot.getFetchedAt();
         }
         return toKst(latest);
+    }
+
+    private OffsetDateTime latestBoxscoreUpdatedAt(
+            List<BatterRecordReadRow> batterRows,
+            List<PitcherRecordReadRow> pitcherRows
+    ) {
+        return java.util.stream.Stream.concat(
+                        batterRows.stream().map(BatterRecordReadRow::updatedAt),
+                        pitcherRows.stream().map(PitcherRecordReadRow::updatedAt)
+                )
+                .filter(updatedAt -> updatedAt != null)
+                .max(Comparator.naturalOrder())
+                .map(this::toKst)
+                .orElse(null);
     }
 
     private OffsetDateTime latestSourceUpdatedAt(Game game, GameSnapshot latestSnapshot) {

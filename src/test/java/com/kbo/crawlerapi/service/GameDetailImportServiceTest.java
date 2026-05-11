@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -31,6 +32,7 @@ import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.LineScore;
 import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.parser.KboBoxscoreParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboLineScoreParser;
 import com.kbo.crawlerapi.repository.GameRepository;
@@ -55,6 +57,10 @@ class GameDetailImportServiceTest {
 
     private StubKboLineScoreParser kboLineScoreParser;
 
+    private StubKboBoxscoreParser kboBoxscoreParser;
+
+    private StubGameBoxscoreRecordService gameBoxscoreRecordService;
+
     private StubCrawlJobTrackingService crawlJobTrackingService;
 
     private GameDetailImportService gameDetailImportService;
@@ -64,6 +70,8 @@ class GameDetailImportServiceTest {
         kboGameDetailClient = new StubKboGameDetailClient();
         kboGameDetailParser = new StubKboGameDetailParser();
         kboLineScoreParser = new StubKboLineScoreParser();
+        kboBoxscoreParser = new StubKboBoxscoreParser();
+        gameBoxscoreRecordService = new StubGameBoxscoreRecordService();
         crawlJobTrackingService = new StubCrawlJobTrackingService();
         gameDetailImportService = new GameDetailImportService(
                 gameRepository,
@@ -72,6 +80,8 @@ class GameDetailImportServiceTest {
                 kboGameDetailClient,
                 kboGameDetailParser,
                 kboLineScoreParser,
+                kboBoxscoreParser,
+                gameBoxscoreRecordService,
                 crawlJobTrackingService,
                 new BaseRunnerNameResolver()
         );
@@ -425,6 +435,182 @@ class GameDetailImportServiceTest {
         assertThat(snapshotCaptor.getValue().getFirstBaseRunnerName()).isEqualTo("원정2번");
         assertThat(snapshotCaptor.getValue().getSecondBaseRunnerName()).isNull();
         assertThat(snapshotCaptor.getValue().getThirdBaseRunnerName()).isEqualTo("원정4번");
+    }
+
+    @Test
+    void importsAndSavesBoxscoreRecordsWhenFinalBoxscoreDataIsAvailable() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailClient.boxScoreBody = "{\"code\":\"100\",\"arrHitter\":[],\"arrPitcher\":[]}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.FINAL,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                9,
+                "top",
+                "Top 9",
+                0,
+                0,
+                3,
+                false,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                true,
+                null,
+                null,
+                "final-detail-hash"
+        ));
+        kboGameDetailParser.lineupData = new KboGameDetailParser.ParsedLineupData(List.of(), List.of(), "lineup-hash");
+        kboLineScoreParser.result = new KboLineScoreParser.ParsedLineScoreResult(
+                List.of(new KboLineScoreParser.ParsedLineScoreInning(1, 0, 3)),
+                new KboLineScoreParser.ParsedTeamTotals(2, 7, 1, 3),
+                new KboLineScoreParser.ParsedTeamTotals(7, 8, 0, 10),
+                "line-hash"
+        );
+        kboBoxscoreParser.result = parsedBoxscore(1, 1, 1, 1);
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(result.lineScoresUpdated()).isTrue();
+        assertThat(kboGameDetailClient.requestedBoxScoreCount).isEqualTo(1);
+        assertThat(kboBoxscoreParser.parsedResponseBody).isEqualTo(kboGameDetailClient.boxScoreBody);
+        assertThat(gameBoxscoreRecordService.savedGame).isSameAs(game);
+        assertThat(gameBoxscoreRecordService.savedBoxscore).isSameAs(kboBoxscoreParser.result);
+        verify(lineScoreRepository).saveAll(any());
+    }
+
+    @Test
+    void skipsBoxscoreSaveSafelyWhenOfficialBoxscoreHasOnlyCodeAndMessage() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailClient.boxScoreBody = "{\"code\":\"200\",\"msg\":\"입력 문자열의 형식이 잘못되었습니다.\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.FINAL,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                9,
+                "top",
+                "Top 9",
+                0,
+                0,
+                3,
+                false,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                true,
+                null,
+                null,
+                "final-detail-hash-empty-boxscore"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+        kboBoxscoreParser.result = KboBoxscoreParser.ParsedBoxscore.empty();
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(result.status()).isEqualTo("final");
+        assertThat(kboBoxscoreParser.parsedResponseBody).isEqualTo(kboGameDetailClient.boxScoreBody);
+        assertThat(gameBoxscoreRecordService.savedGame).isNull();
+        assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
+    }
+
+    @Test
+    void skipsBoxscoreSaveForLiveImportsEvenWhenLineupBoxscoreWasFetched() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailClient.boxScoreBody = "{\"code\":\"100\",\"arrHitter\":[],\"arrPitcher\":[]}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                6,
+                "top",
+                "Top 6",
+                1,
+                2,
+                1,
+                true,
+                false,
+                false,
+                2,
+                0,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                true,
+                null,
+                null,
+                "live-detail-hash-boxscore-fetched"
+        ));
+        kboGameDetailParser.lineupData = new KboGameDetailParser.ParsedLineupData(
+                List.of(new KboGameDetailParser.ParsedLineupPlayer("2", "SS", "원정2번")),
+                List.of(),
+                "lineup-hash"
+        );
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+        kboBoxscoreParser.result = parsedBoxscore(1, 0, 0, 0);
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(result.status()).isEqualTo("live");
+        assertThat(kboGameDetailClient.requestedBoxScoreCount).isEqualTo(1);
+        assertThat(kboBoxscoreParser.parsedResponseBody).isNull();
+        assertThat(gameBoxscoreRecordService.savedGame).isNull();
     }
 
     @Test
@@ -835,12 +1021,77 @@ class GameDetailImportServiceTest {
         }
     }
 
+    private KboBoxscoreParser.ParsedBoxscore parsedBoxscore(
+            int awayBatterCount,
+            int homeBatterCount,
+            int awayPitcherCount,
+            int homePitcherCount
+    ) {
+        return new KboBoxscoreParser.ParsedBoxscore(
+                batterRecords("away", 0, awayBatterCount),
+                batterRecords("home", 1, homeBatterCount),
+                pitcherRecords("away", 0, awayPitcherCount),
+                pitcherRecords("home", 1, homePitcherCount)
+        );
+    }
+
+    private List<KboBoxscoreParser.ParsedBatterRecord> batterRecords(String teamSide, int sourceGroupIndex, int count) {
+        return java.util.stream.IntStream.range(0, count)
+                .mapToObj(index -> new KboBoxscoreParser.ParsedBatterRecord(
+                        teamSide,
+                        sourceGroupIndex,
+                        index + 1,
+                        "유",
+                        "타자" + index,
+                        3,
+                        1,
+                        1,
+                        1,
+                        null,
+                        null,
+                        null,
+                        null,
+                        new BigDecimal("0.333"),
+                        index
+                ))
+                .toList();
+    }
+
+    private List<KboBoxscoreParser.ParsedPitcherRecord> pitcherRecords(String teamSide, int sourceGroupIndex, int count) {
+        return java.util.stream.IntStream.range(0, count)
+                .mapToObj(index -> new KboBoxscoreParser.ParsedPitcherRecord(
+                        teamSide,
+                        sourceGroupIndex,
+                        index + 1,
+                        "투수" + index,
+                        "선발",
+                        null,
+                        1,
+                        0,
+                        0,
+                        "1",
+                        3,
+                        12,
+                        3,
+                        1,
+                        0,
+                        1,
+                        1,
+                        0,
+                        0,
+                        new BigDecimal("1.23"),
+                        index
+                ))
+                .toList();
+    }
+
     private static final class StubKboGameDetailClient extends KboGameDetailClient {
 
         private String detailBody;
         private String lineScoreBody;
         private String boxScoreBody;
         private String lastRequestedScoreboardProviderGameId;
+        private int requestedBoxScoreCount;
 
         @Override
         public String fetchGameList(LocalDate gameDate) {
@@ -855,6 +1106,7 @@ class GameDetailImportServiceTest {
 
         @Override
         public String fetchBoxScore(String providerGameId, int seasonId) {
+            requestedBoxScoreCount++;
             return boxScoreBody;
         }
     }
@@ -890,6 +1142,41 @@ class GameDetailImportServiceTest {
         @Override
         public KboLineScoreParser.ParsedLineScoreResult parse(String responseBody) {
             return result;
+        }
+    }
+
+    private static final class StubKboBoxscoreParser extends KboBoxscoreParser {
+
+        private KboBoxscoreParser.ParsedBoxscore result = KboBoxscoreParser.ParsedBoxscore.empty();
+        private String parsedResponseBody;
+
+        private StubKboBoxscoreParser() {
+            super(new ObjectMapper());
+        }
+
+        @Override
+        public KboBoxscoreParser.ParsedBoxscore parse(String responseBody) {
+            parsedResponseBody = responseBody;
+            return result;
+        }
+    }
+
+    private static final class StubGameBoxscoreRecordService extends GameBoxscoreRecordService {
+
+        private Game savedGame;
+        private KboBoxscoreParser.ParsedBoxscore savedBoxscore;
+
+        private StubGameBoxscoreRecordService() {
+            super(null);
+        }
+
+        @Override
+        public GameBoxscoreRecordSaveResult saveBoxscoreRecords(Game game, KboBoxscoreParser.ParsedBoxscore parsedBoxscore) {
+            savedGame = game;
+            savedBoxscore = parsedBoxscore;
+            int batterCount = parsedBoxscore.awayBatters().size() + parsedBoxscore.homeBatters().size();
+            int pitcherCount = parsedBoxscore.awayPitchers().size() + parsedBoxscore.homePitchers().size();
+            return new GameBoxscoreRecordSaveResult(batterCount, pitcherCount, batterCount, pitcherCount, true);
         }
     }
 

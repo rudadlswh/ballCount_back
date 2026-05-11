@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
 import com.kbo.crawlerapi.api.dto.GamesByDateResponse;
@@ -107,6 +108,31 @@ public class GameReadController {
             @PathVariable String gameId
     ) {
         return gameReadService.getGameLineScore(gameId);
+    }
+
+    @GetMapping("/games/{gameId}/boxscore")
+    @Operation(
+            summary = "Get one game boxscore",
+            description = "Returns normalized batter and pitcher boxscore records for one game. "
+                    + "Games without persisted boxscore rows return 200 with empty record arrays."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Normalized batter and pitcher boxscore records",
+                    content = @Content(schema = @Schema(implementation = GameBoxscoreResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Game not found",
+                    content = @Content(schema = @Schema(implementation = ApiErrorResponse.class))
+            )
+    })
+    public GameBoxscoreResponse getGameBoxscore(
+            @Parameter(description = "Public game identifier exposed by the app-facing API.", example = "20260401-LG-KIA")
+            @PathVariable String gameId
+    ) {
+        return gameReadService.getGameBoxscore(gameId);
     }
 
     @GetMapping("/games/month")
