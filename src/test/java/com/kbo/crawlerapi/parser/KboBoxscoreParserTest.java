@@ -50,15 +50,15 @@ class KboBoxscoreParserTest {
     }
 
     @Test
-    void parsesHitterTable3TotalsAlignedByIndexWithTable1UsingObservedUnlabeledColumns() throws IOException {
+    void parsesHitterTable3TotalsAlignedByIndexAsAtBatsHitsRbiRunsAverage() throws IOException {
         var result = parser.parse(fixture());
 
         ParsedBatterRecord awayFirst = result.awayBatters().get(0);
         assertThat(awayFirst.playerName()).isEqualTo("안상현");
         assertThat(awayFirst.atBats()).isEqualTo(3);
-        assertThat(awayFirst.runs()).isEqualTo(1);
-        assertThat(awayFirst.hits()).isZero();
+        assertThat(awayFirst.hits()).isEqualTo(1);
         assertThat(awayFirst.rbi()).isZero();
+        assertThat(awayFirst.runs()).isZero();
         assertThat(awayFirst.battingAverage()).hasToString("0.300");
 
         ParsedBatterRecord homeThird = result.homeBatters().get(2);
@@ -71,8 +71,64 @@ class KboBoxscoreParserTest {
     }
 
     @Test
-    void leavesUnavailableHitterTotalsNullBecauseFixtureTable3DoesNotExposeThoseColumns() throws IOException {
-        var result = parser.parse(fixture());
+    void parsesParkJaeHyunLikeRawTable3RowAsAtBatsHitsRbiRunsAverage() throws JsonProcessingException {
+        var result = parser.parse(payloadWithHitterRows(List.of(
+                List.of("1", "중", "박재현"),
+                List.of("2", "유", "김선빈")
+        ), List.of(
+                List.of("4", "3", "2", "3", "0.324"),
+                List.of("5", "2", "0", "1", "0.299")
+        )));
+
+        ParsedBatterRecord park = result.awayBatters().get(0);
+        assertThat(park.playerName()).isEqualTo("박재현");
+        assertThat(park.atBats()).isEqualTo(4);
+        assertThat(park.hits()).isEqualTo(3);
+        assertThat(park.rbi()).isEqualTo(2);
+        assertThat(park.runs()).isEqualTo(3);
+        assertThat(park.battingAverage()).hasToString("0.324");
+    }
+
+    @Test
+    void parsesKimSunBinLikeRawTable3RowAsAtBatsHitsRbiRunsAverage() throws JsonProcessingException {
+        var result = parser.parse(payloadWithHitterRows(List.of(
+                List.of("1", "중", "박재현"),
+                List.of("2", "유", "김선빈")
+        ), List.of(
+                List.of("4", "3", "2", "3", "0.324"),
+                List.of("5", "2", "0", "1", "0.299")
+        )));
+
+        ParsedBatterRecord kim = result.awayBatters().get(1);
+        assertThat(kim.playerName()).isEqualTo("김선빈");
+        assertThat(kim.atBats()).isEqualTo(5);
+        assertThat(kim.hits()).isEqualTo(2);
+        assertThat(kim.rbi()).isZero();
+        assertThat(kim.runs()).isEqualTo(1);
+        assertThat(kim.battingAverage()).hasToString("0.299");
+    }
+
+    @Test
+    void derivesHitterHomeRunsWalksAndStrikeoutsFromTable2PlateAppearanceRows() throws JsonProcessingException {
+        var result = parser.parse(payloadWithHitterRows(
+                List.of(List.of("1", "중", "박재현")),
+                List.of(List.of("4", "3", "2", "3", "0.324")),
+                List.of(List.of("우홈,,중비,,우안,,우중홈,4구,", "삼진"))
+        ));
+
+        ParsedBatterRecord batter = result.awayBatters().get(0);
+        assertThat(batter.homeRuns()).isEqualTo(2);
+        assertThat(batter.walks()).isEqualTo(1);
+        assertThat(batter.strikeouts()).isEqualTo(1);
+        assertThat(batter.stolenBases()).isNull();
+    }
+
+    @Test
+    void leavesUnavailableHitterTotalsNullBecauseFixtureDoesNotExposeThoseColumns() throws IOException {
+        var result = parser.parse(payloadWithHitterRows(
+                List.of(List.of("1", "유", "테스트타자")),
+                List.of(List.of("3", "1", "0", "0", "0.300"))
+        ));
 
         ParsedBatterRecord batter = result.awayBatters().get(0);
         assertThat(batter.homeRuns()).isNull();
@@ -186,9 +242,9 @@ class KboBoxscoreParserTest {
         ParsedBatterRecord batter = result.awayBatters().get(0);
         assertThat(batter.battingOrder()).isNull();
         assertThat(batter.atBats()).isNull();
-        assertThat(batter.runs()).isNull();
         assertThat(batter.hits()).isNull();
-        assertThat(batter.rbi()).isEqualTo(1);
+        assertThat(batter.rbi()).isNull();
+        assertThat(batter.runs()).isEqualTo(1);
         assertThat(batter.battingAverage()).isNull();
 
         ParsedPitcherRecord pitcher = result.awayPitchers().get(0);
@@ -204,6 +260,41 @@ class KboBoxscoreParserTest {
 
     private String fixture() throws IOException {
         return Files.readString(Path.of("src/test/resources/fixtures/kbo/boxscore-final.json"));
+    }
+
+    private String payloadWithHitterRows(List<List<String>> lineupRows, List<List<String>> totalRows) throws JsonProcessingException {
+        return payloadWithHitterRows(lineupRows, totalRows, null);
+    }
+
+    private String payloadWithHitterRows(
+            List<List<String>> lineupRows,
+            List<List<String>> totalRows,
+            List<List<String>> detailRows
+    ) throws JsonProcessingException {
+        String lineupTable = table(List.of(), lineupRows);
+        String hitterTotalsTable = table(List.of(), totalRows);
+        String hitterDetailTable = detailRows == null ? null : table(List.of(), detailRows);
+        String pitcherTable = table(
+                List.of("선수명"),
+                List.of()
+        );
+        Map<String, String> hitterGroup = new java.util.LinkedHashMap<>();
+        hitterGroup.put("table1", lineupTable);
+        hitterGroup.put("table3", hitterTotalsTable);
+        if (hitterDetailTable != null) {
+            hitterGroup.put("table2", hitterDetailTable);
+        }
+        return objectMapper.writeValueAsString(Map.of(
+                "code", "100",
+                "arrHitter", List.of(
+                        hitterGroup,
+                        hitterGroup
+                ),
+                "arrPitcher", List.of(
+                        Map.of("table", pitcherTable),
+                        Map.of("table", pitcherTable)
+                )
+        ));
     }
 
     private String table(List<String> headers, List<List<String>> rows) throws JsonProcessingException {

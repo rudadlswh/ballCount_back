@@ -80,13 +80,13 @@ class GameBoxscoreRecordServiceTest {
         assertThat(awayFirst.battingOrder()).isEqualTo(1);
         assertThat(awayFirst.position()).isEqualTo("유");
         assertThat(awayFirst.atBats()).isEqualTo(3);
-        assertThat(awayFirst.runs()).isEqualTo(1);
-        assertThat(awayFirst.hits()).isZero();
+        assertThat(awayFirst.runs()).isZero();
+        assertThat(awayFirst.hits()).isEqualTo(1);
         assertThat(awayFirst.rbi()).isZero();
         assertThat(awayFirst.battingAverage()).isEqualTo("0.300");
-        assertThat(awayFirst.homeRuns()).isNull();
-        assertThat(awayFirst.walks()).isNull();
-        assertThat(awayFirst.strikeouts()).isNull();
+        assertThat(awayFirst.homeRuns()).isZero();
+        assertThat(awayFirst.walks()).isZero();
+        assertThat(awayFirst.strikeouts()).isZero();
         assertThat(awayFirst.stolenBases()).isNull();
 
         BatterRecordWriteRow homeFirst = writeRepository.batterRows.get(new RowKey(game.getId(), homeTeam.getId(), 0));
@@ -148,7 +148,7 @@ class GameBoxscoreRecordServiceTest {
         service.saveBoxscoreRecords(game, parsed);
 
         ParsedBoxscore changed = new ParsedBoxscore(
-                replaceFirstBatter(parsed.awayBatters(), 9, 8),
+                replaceFirstBatter(parsed.awayBatters(), 9, 7, 8, 6, 2, 1, 3),
                 parsed.homeBatters(),
                 replaceFirstPitcher(parsed.awayPitchers(), 99, "9.99"),
                 parsed.homePitchers()
@@ -159,13 +159,27 @@ class GameBoxscoreRecordServiceTest {
         assertThat(writeRepository.pitcherRows).hasSize(10);
         BatterRecordWriteRow awayFirst = writeRepository.batterRows.get(new RowKey(game.getId(), awayTeam.getId(), 0));
         assertThat(awayFirst.atBats()).isEqualTo(9);
+        assertThat(awayFirst.runs()).isEqualTo(7);
         assertThat(awayFirst.hits()).isEqualTo(8);
+        assertThat(awayFirst.rbi()).isEqualTo(6);
+        assertThat(awayFirst.homeRuns()).isEqualTo(2);
+        assertThat(awayFirst.walks()).isEqualTo(1);
+        assertThat(awayFirst.strikeouts()).isEqualTo(3);
         PitcherRecordWriteRow awayStarter = writeRepository.pitcherRows.get(new RowKey(game.getId(), awayTeam.getId(), 0));
         assertThat(awayStarter.pitchCount()).isEqualTo(99);
         assertThat(awayStarter.era()).isEqualTo("9.99");
     }
 
-    private List<ParsedBatterRecord> replaceFirstBatter(List<ParsedBatterRecord> records, Integer atBats, Integer hits) {
+    private List<ParsedBatterRecord> replaceFirstBatter(
+            List<ParsedBatterRecord> records,
+            Integer atBats,
+            Integer runs,
+            Integer hits,
+            Integer rbi,
+            Integer homeRuns,
+            Integer walks,
+            Integer strikeouts
+    ) {
         ParsedBatterRecord first = records.get(0);
         ParsedBatterRecord replacement = new ParsedBatterRecord(
                 first.teamSide(),
@@ -174,12 +188,12 @@ class GameBoxscoreRecordServiceTest {
                 first.position(),
                 first.playerName(),
                 atBats,
-                first.runs(),
+                runs,
                 hits,
-                first.rbi(),
-                first.homeRuns(),
-                first.walks(),
-                first.strikeouts(),
+                rbi,
+                homeRuns,
+                walks,
+                strikeouts,
                 first.stolenBases(),
                 first.battingAverage(),
                 first.sourceOrder()

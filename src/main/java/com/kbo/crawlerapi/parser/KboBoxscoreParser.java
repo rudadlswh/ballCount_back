@@ -40,12 +40,14 @@ public class KboBoxscoreParser {
 
     private List<ParsedBatterRecord> parseBatterGroup(JsonNode group, String teamSide, int sourceGroupIndex) throws IOException {
         JsonNode lineupTable = parseEmbeddedJson(text(group, "table1"));
+        JsonNode detailTable = parseEmbeddedJson(text(group, "table2"));
         JsonNode totalsTable = parseEmbeddedJson(text(group, "table3"));
         if (lineupTable == null) {
             return List.of();
         }
 
         JsonNode lineupRows = lineupTable.path("rows");
+        JsonNode detailRows = detailTable == null ? objectMapper.createArrayNode() : detailTable.path("rows");
         JsonNode totalRows = totalsTable == null ? objectMapper.createArrayNode() : totalsTable.path("rows");
         if (!lineupRows.isArray()) {
             return List.of();
@@ -63,9 +65,10 @@ public class KboBoxscoreParser {
                 continue;
             }
 
+            JsonNode detailCells = detailRows.path(index).path("row");
             JsonNode totalCells = totalRows.path(index).path("row");
-            // Official hitter table3 has no headers in the captured 20260510SKOB0 fixture.
-            // The observed aligned columns are AB, R, H, RBI, AVG. HR/BB/SO/SB are not separate totals.
+            // Official hitter table3 has no headers; raw columns are AB, H, RBI, R, AVG.
+            // The UI displays those values as AB, R, H, RBI, AVG.
             records.add(new ParsedBatterRecord(
                     teamSide,
                     sourceGroupIndex,
@@ -73,12 +76,12 @@ public class KboBoxscoreParser {
                     cellText(lineupCells, 1),
                     playerName,
                     parseInteger(cellText(totalCells, 0)),
+                    parseInteger(cellText(totalCells, 3)),
                     parseInteger(cellText(totalCells, 1)),
                     parseInteger(cellText(totalCells, 2)),
-                    parseInteger(cellText(totalCells, 3)),
-                    null,
-                    null,
-                    null,
+                    countPlateAppearances(detailCells, PlateAppearanceKind.HOME_RUN),
+                    countPlateAppearances(detailCells, PlateAppearanceKind.WALK),
+                    countPlateAppearances(detailCells, PlateAppearanceKind.STRIKEOUT),
                     null,
                     parseDecimal(cellText(totalCells, 4)),
                     index
@@ -211,6 +214,59 @@ public class KboBoxscoreParser {
         } catch (NumberFormatException exception) {
             return null;
         }
+    }
+
+    private Integer countPlateAppearances(JsonNode cells, PlateAppearanceKind kind) {
+        if (!cells.isArray()) {
+            return null;
+        }
+        int count = 0;
+        for (int index = 0; index < cells.size(); index++) {
+            String value = cellText(cells, index);
+            if (value == null) {
+                continue;
+            }
+            for (String token : plateAppearanceTokens(value)) {
+                if (matchesPlateAppearance(token, kind)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private List<String> plateAppearanceTokens(String value) {
+        if (value == null) {
+            return List.of();
+        }
+        String[] tokens = value.split("[,，/\\r\\n]+");
+        List<String> normalized = new ArrayList<>();
+        for (String token : tokens) {
+            String trimmed = gridText(token);
+            if (trimmed != null) {
+                normalized.add(trimmed);
+            }
+        }
+        return normalized;
+    }
+
+    private boolean matchesPlateAppearance(String value, PlateAppearanceKind kind) {
+        String normalized = value.replaceAll("\\s+", "");
+        return switch (kind) {
+            case HOME_RUN -> normalized.contains("홈");
+            case WALK -> normalized.equals("4구")
+                    || normalized.equals("볼넷")
+                    || normalized.equals("고4")
+                    || normalized.equals("고의4구")
+                    || normalized.equals("자동고의4구");
+            case STRIKEOUT -> normalized.contains("삼진") || normalized.contains("낫아웃");
+        };
+    }
+
+    private enum PlateAppearanceKind {
+        HOME_RUN,
+        WALK,
+        STRIKEOUT
     }
 
     public record ParsedBoxscore(
