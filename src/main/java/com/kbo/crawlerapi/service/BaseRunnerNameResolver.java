@@ -2,6 +2,9 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedGameDetail;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -12,32 +15,50 @@ class BaseRunnerNameResolver {
     private static final Logger log = LoggerFactory.getLogger(BaseRunnerNameResolver.class);
 
     ResolvedBaseRunners resolve(GameSnapshot previous, ParsedGameDetail current) {
+        String resetReason = resetReason(previous, current);
+        GameSnapshot reusablePrevious = resetReason == null ? previous : null;
+        if (previous != null && resetReason != null) {
+            log.debug(
+                    "[BaseRunners] carryForward reset gameId={} reason={} previous inning={}/{} outs={} bases={} current inning={}/{} outs={} bases={}",
+                    current.providerGameId(),
+                    resetReason,
+                    previous.getInning(),
+                    previous.getInningHalf(),
+                    previous.getOuts(),
+                    baseKey(previous),
+                    current.inning(),
+                    current.inningHalf(),
+                    current.outs(),
+                    baseKey(current)
+            );
+        }
+
         Runner first = resolveBase(
                 current.runnerOnFirst(),
                 current.firstBaseRunnerName(),
                 current.firstBaseRunnerId(),
-                previous == null ? false : previous.isRunnerOnFirst(),
-                previous == null ? null : previous.getFirstBaseRunnerName(),
-                previous == null ? null : previous.getFirstBaseRunnerId()
+                reusablePrevious == null ? false : reusablePrevious.isRunnerOnFirst(),
+                reusablePrevious == null ? null : reusablePrevious.getFirstBaseRunnerName(),
+                reusablePrevious == null ? null : reusablePrevious.getFirstBaseRunnerId()
         );
         Runner second = resolveBase(
                 current.runnerOnSecond(),
                 current.secondBaseRunnerName(),
                 current.secondBaseRunnerId(),
-                previous == null ? false : previous.isRunnerOnSecond(),
-                previous == null ? null : previous.getSecondBaseRunnerName(),
-                previous == null ? null : previous.getSecondBaseRunnerId()
+                reusablePrevious == null ? false : reusablePrevious.isRunnerOnSecond(),
+                reusablePrevious == null ? null : reusablePrevious.getSecondBaseRunnerName(),
+                reusablePrevious == null ? null : reusablePrevious.getSecondBaseRunnerId()
         );
         Runner third = resolveBase(
                 current.runnerOnThird(),
                 current.thirdBaseRunnerName(),
                 current.thirdBaseRunnerId(),
-                previous == null ? false : previous.isRunnerOnThird(),
-                previous == null ? null : previous.getThirdBaseRunnerName(),
-                previous == null ? null : previous.getThirdBaseRunnerId()
+                reusablePrevious == null ? false : reusablePrevious.isRunnerOnThird(),
+                reusablePrevious == null ? null : reusablePrevious.getThirdBaseRunnerName(),
+                reusablePrevious == null ? null : reusablePrevious.getThirdBaseRunnerId()
         );
 
-        boolean carried = hasCarriedForward(previous, current, first, second, third);
+        boolean carried = hasCarriedForward(reusablePrevious, current, first, second, third);
         if (carried) {
             log.debug(
                     "[BaseRunners] carriedForward first={} second={} third={}",
@@ -47,7 +68,7 @@ class BaseRunnerNameResolver {
             );
         }
 
-        Inference inference = infer(previous, current, first, second, third);
+        Inference inference = infer(reusablePrevious, current, first, second, third);
         if (inference.ambiguous()) {
             log.debug("[BaseRunners] inference skipped reason=ambiguous");
         }
@@ -73,7 +94,7 @@ class BaseRunnerNameResolver {
     }
 
     private String resolutionSource(ParsedGameDetail current, boolean carried, Inference inference) {
-        java.util.List<String> sources = new java.util.ArrayList<>();
+        List<String> sources = new ArrayList<>();
         if (clean(current.firstBaseRunnerName()) != null
                 || clean(current.secondBaseRunnerName()) != null
                 || clean(current.thirdBaseRunnerName()) != null) {
@@ -123,6 +144,23 @@ class BaseRunnerNameResolver {
         Runner resolvedThird = third;
         String reason = null;
         boolean ambiguous = false;
+        boolean handledClearFirstToSecond = false;
+
+        if (clearFirstToSecondWithBatterToFirst(previous, current)) {
+            handledClearFirstToSecond = true;
+            if (clean(current.firstBaseRunnerName()) == null && clean(current.firstBaseRunnerId()) == null) {
+                resolvedFirst = Runner.empty();
+                String onBaseBatter = onBaseBatter(previous, current);
+                if (onBaseBatter != null) {
+                    resolvedFirst = new Runner(onBaseBatter, null);
+                    reason = appendReason(reason, "onBaseBatterToFirst");
+                }
+            }
+            if (clean(current.secondBaseRunnerName()) == null && clean(current.secondBaseRunnerId()) == null) {
+                resolvedSecond = new Runner(clean(previous.getFirstBaseRunnerName()), clean(previous.getFirstBaseRunnerId()));
+                reason = appendReason(reason, "advanceFirstToSecond");
+            }
+        }
 
         if (current.runnerOnFirst() && clean(current.firstBaseRunnerName()) == null && !previous.isRunnerOnFirst()) {
             String onBaseBatter = onBaseBatter(previous, current);
@@ -135,7 +173,7 @@ class BaseRunnerNameResolver {
         boolean hasOfficialNames = clean(current.firstBaseRunnerName()) != null
                 || clean(current.secondBaseRunnerName()) != null
                 || clean(current.thirdBaseRunnerName()) != null;
-        if (!hasOfficialNames) {
+        if (!hasOfficialNames && !handledClearFirstToSecond) {
             Advancement advancement = simpleAdvancement(previous, current);
             if (advancement == Advancement.FIRST_TO_SECOND) {
                 resolvedSecond = new Runner(clean(previous.getFirstBaseRunnerName()), clean(previous.getFirstBaseRunnerId()));
@@ -149,6 +187,18 @@ class BaseRunnerNameResolver {
         }
 
         return new Inference(resolvedFirst, resolvedSecond, resolvedThird, ambiguous, reason);
+    }
+
+    private boolean clearFirstToSecondWithBatterToFirst(GameSnapshot previous, ParsedGameDetail current) {
+        return previous.isRunnerOnFirst()
+                && !previous.isRunnerOnSecond()
+                && !previous.isRunnerOnThird()
+                && current.runnerOnFirst()
+                && current.runnerOnSecond()
+                && !current.runnerOnThird()
+                && baseCount(current) == baseCount(previous) + 1
+                && nullSafe(current.outs()) <= nullSafe(previous.getOuts())
+                && (clean(previous.getFirstBaseRunnerName()) != null || clean(previous.getFirstBaseRunnerId()) != null);
     }
 
     private String onBaseBatter(GameSnapshot previous, ParsedGameDetail current) {
@@ -212,6 +262,43 @@ class BaseRunnerNameResolver {
                 && clean(previousName).equals(clean(resolvedName));
     }
 
+    private String resetReason(GameSnapshot previous, ParsedGameDetail current) {
+        if (previous == null) {
+            return null;
+        }
+        if (gameChanged(previous, current)) {
+            return "gameChanged";
+        }
+        if (baseCount(current) == 0) {
+            return "basesEmpty";
+        }
+        if (nullSafe(previous.getOuts()) >= 3 || nullSafe(current.outs()) >= 3) {
+            return "sideChangedOuts";
+        }
+        if (previous.getInning() != null
+                && current.inning() != null
+                && !Objects.equals(previous.getInning(), current.inning())) {
+            return "inningChanged";
+        }
+        String previousHalf = normalizeHalf(previous.getInningHalf());
+        String currentHalf = normalizeHalf(current.inningHalf());
+        if (previousHalf != null && currentHalf != null && !Objects.equals(previousHalf, currentHalf)) {
+            return "inningHalfChanged";
+        }
+        return null;
+    }
+
+    private boolean gameChanged(GameSnapshot previous, ParsedGameDetail current) {
+        if (previous.getGame() == null) {
+            return false;
+        }
+        String previousProviderGameId = clean(previous.getGame().getProviderGameId());
+        String currentProviderGameId = clean(current.providerGameId());
+        return previousProviderGameId != null
+                && currentProviderGameId != null
+                && !Objects.equals(previousProviderGameId, currentProviderGameId);
+    }
+
     private int baseCount(GameSnapshot snapshot) {
         return (snapshot.isRunnerOnFirst() ? 1 : 0)
                 + (snapshot.isRunnerOnSecond() ? 1 : 0)
@@ -226,6 +313,29 @@ class BaseRunnerNameResolver {
 
     private int nullSafe(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private String normalizeHalf(String value) {
+        String cleaned = clean(value);
+        if (cleaned == null) {
+            return null;
+        }
+        String normalized = cleaned.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.startsWith("top") || normalized.equals("초")) {
+            return "top";
+        }
+        if (normalized.startsWith("bot") || normalized.startsWith("bottom") || normalized.equals("말")) {
+            return "bottom";
+        }
+        return normalized;
+    }
+
+    private String baseKey(GameSnapshot snapshot) {
+        return "%s%s%s".formatted(snapshot.isRunnerOnFirst() ? "1" : "-", snapshot.isRunnerOnSecond() ? "2" : "-", snapshot.isRunnerOnThird() ? "3" : "-");
+    }
+
+    private String baseKey(ParsedGameDetail detail) {
+        return "%s%s%s".formatted(detail.runnerOnFirst() ? "1" : "-", detail.runnerOnSecond() ? "2" : "-", detail.runnerOnThird() ? "3" : "-");
     }
 
     private String appendReason(String existing, String reason) {

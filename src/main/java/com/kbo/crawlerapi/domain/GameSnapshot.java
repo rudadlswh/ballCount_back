@@ -381,6 +381,10 @@ public class GameSnapshot {
         return inning;
     }
 
+    public Game getGame() {
+        return game;
+    }
+
     public String getInningHalf() {
         return inningHalf;
     }
