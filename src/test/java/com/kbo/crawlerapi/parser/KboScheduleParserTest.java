@@ -4,10 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.YearMonth;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
 
+@ExtendWith(OutputCaptureExtension.class)
 class KboScheduleParserTest {
 
     private final KboScheduleParser parser = new KboScheduleParser(new ObjectMapper());
@@ -105,5 +109,122 @@ class KboScheduleParserTest {
         assertThat(games.get(1).status()).isEqualTo(GameStatus.CANCELLED);
         assertThat(games.get(1).cancelReason()).isEqualTo(GameCancelReason.UNKNOWN);
         assertThat(games.get(1).rawCancelText()).isEqualTo("취소");
+    }
+
+    @Test
+    void missingProviderGameIdRowsAreReturnedWithoutWarnLogging(CapturedOutput output) {
+        String payload = """
+                {
+                  "rows": [
+                    {
+                      "row": [
+                        { "Text": "05.20(\\uC218)" },
+                        { "Text": "<b>18:30</b>" },
+                        { "Text": "<span>NC</span><em><span>vs</span></em><span>두산</span>" },
+                        { "Text": "" },
+                        { "Text": "" },
+                        { "Text": "" },
+                        { "Text": "" },
+                        { "Text": "잠실" },
+                        { "Text": "우천취소" }
+                      ]
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseMonthlyScheduleResult(payload, YearMonth.of(2026, 5));
+
+        assertThat(result.skippedRows()).hasSize(1);
+        assertThat(result.skippedRows().get(0).reason()).isEqualTo("MISSING_PROVIDER_GAME_ID");
+        assertThat(output.getOut()).doesNotContain("WARN");
+        assertThat(output.getOut()).doesNotContain("Skipped malformed KBO schedule row");
+    }
+
+    @Test
+    void parsesCancelledScheduleRowFromDataGamesShape() {
+        String payload = """
+                {
+                  "data": {
+                    "games": [
+                      {
+                        "G_ID": "20260521HHLT0",
+                        "G_DT": "20260521",
+                        "G_TM": "18:30",
+                        "AWAY_NM": "한화",
+                        "HOME_NM": "롯데",
+                        "S_NM": "사직",
+                        "CANCEL_SC_NM": "경기취소"
+                      }
+                    ]
+                  }
+                }
+                """;
+
+        var games = parser.parseMonthlySchedule(payload, YearMonth.of(2026, 5));
+
+        assertThat(games).hasSize(1);
+        assertThat(games.get(0).providerGameId()).isEqualTo("20260521HHLT0");
+        assertThat(games.get(0).status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(games.get(0).isCancelled()).isTrue();
+        assertThat(games.get(0).awayProviderTeamName()).isEqualTo("한화");
+        assertThat(games.get(0).homeProviderTeamName()).isEqualTo("롯데");
+    }
+
+    @Test
+    void parsesRainCancelledScheduleRowAndPreservesRawCancelText() {
+        String payload = """
+                {
+                  "gameList": [
+                    {
+                      "G_ID": "20260521HHLT0",
+                      "G_DT": "2026-05-21",
+                      "G_TM": "18:30",
+                      "AWAY_ID": "HH",
+                      "HOME_ID": "LT",
+                      "S_NM": "사직",
+                      "GAME_STATE_SC_NM": "RAIN"
+                    }
+                  ]
+                }
+                """;
+
+        var games = parser.parseMonthlySchedule(payload, YearMonth.of(2026, 5));
+
+        assertThat(games).hasSize(1);
+        assertThat(games.get(0).status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(games.get(0).cancelReason()).isEqualTo(GameCancelReason.RAIN);
+        assertThat(games.get(0).rawCancelText()).isEqualTo("RAIN");
+        assertThat(games.get(0).awayProviderTeamName()).isEqualTo("한화");
+        assertThat(games.get(0).homeProviderTeamName()).isEqualTo("롯데");
+    }
+
+    @Test
+    void skipsMalformedRowsWhileKeepingValidRows() {
+        String payload = """
+                {
+                  "data": {
+                    "list": [
+                      { "G_DT": "20260521", "AWAY_NM": "한화" },
+                      {
+                        "G_ID": "20260521HHLT0",
+                        "G_DT": "20260521",
+                        "G_TM": "18:30",
+                        "AWAY_NM": "한화",
+                        "HOME_NM": "롯데",
+                        "S_NM": "사직",
+                        "CANCEL_SC_NM": "우천취소"
+                      }
+                    ]
+                  }
+                }
+                """;
+
+        var result = parser.parseMonthlyScheduleResult(payload, YearMonth.of(2026, 5));
+
+        assertThat(result.games()).hasSize(1);
+        assertThat(result.games().get(0).status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(result.skippedRows()).hasSize(1);
+        assertThat(result.skippedRows().get(0).reason()).isEqualTo("MISSING_TEAM");
     }
 }

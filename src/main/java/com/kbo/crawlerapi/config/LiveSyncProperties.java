@@ -6,6 +6,16 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.live-sync")
 public class LiveSyncProperties {
 
+
+    private Duration pregameCheckInterval = Duration.ofMinutes(30);
+
+    public Duration getPregameCheckInterval() {
+        return pregameCheckInterval;
+    }
+
+    public void setPregameCheckInterval(Duration pregameCheckInterval) {
+        this.pregameCheckInterval = pregameCheckInterval;
+    }
     private boolean enabled = false;
     private Duration schedulerInterval = Duration.ofSeconds(10);
     private Duration pregameEligibilityWindow = Duration.ofHours(4);

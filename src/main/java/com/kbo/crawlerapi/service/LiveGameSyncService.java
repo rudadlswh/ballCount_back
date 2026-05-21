@@ -102,6 +102,7 @@ public class LiveGameSyncService {
         List<Game> candidates = games.stream()
                 .filter(game -> isCandidate(game, force))
                 .filter(game -> !isScheduleCancellationTarget(game.getStatus()))
+                .filter(this::shouldRunDetailImport)
                 .toList();
         log.info("[LiveGameSync] candidate count={}", candidates.size());
 
@@ -154,7 +155,10 @@ public class LiveGameSyncService {
         }
 
         for (Game candidate : candidates) {
-            GameState before = GameState.from(candidate, latestSnapshot(candidate));
+            GameState before = beforeScheduleStates.get(candidate.getPublicGameId());
+            if (before == null) {
+                before = GameState.from(candidate, latestSnapshot(candidate));
+            }
             try {
                 try {
                     gameDetailImportService.importGameDetail(candidate.getPublicGameId());
@@ -289,7 +293,7 @@ public class LiveGameSyncService {
             log.debug("[LiveGameSync] skipped candidate game={} reason=final-confirmed", game.getPublicGameId());
             return false;
         }
-        if (!force && !isActiveKstWindow() && !isNearScheduledStart(game)) {
+        if (!force && !isActiveKstWindow() && !isNearScheduledStart(game) && !hasScheduledStartReached(game)) {
             log.debug(
                     "[LiveGameSync] skipped candidate game={} reason=outside-active-window-and-pregame-eligibility scheduledAt={} now={}",
                     game.getPublicGameId(),
@@ -310,6 +314,36 @@ public class LiveGameSyncService {
             );
         }
         return refreshDue;
+    }
+
+    private boolean shouldRunDetailImport(Game game) {
+        if (isLiveLike(game.getStatus())) {
+            return true;
+        }
+        if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() == null) {
+            return true;
+        }
+        if ((game.getStatus() == GameStatus.SCHEDULED || game.getStatus() == GameStatus.UNKNOWN)
+                && hasScheduledStartReached(game)) {
+            log.info(
+                    "[LiveGameSync] selected detail import game={} status={} scheduledAt={} now={} reason=scheduled_start_reached",
+                    game.getPublicGameId(),
+                    game.getStatus(),
+                    game.getScheduledAt(),
+                    Instant.now(applicationClock)
+            );
+            return true;
+        }
+        log.debug(
+                "[LiveGameSync] skipped detail import game={} reason=not-live-like status={}",
+                game.getPublicGameId(),
+                game.getStatus()
+        );
+        return false;
+    }
+
+    private boolean hasScheduledStartReached(Game game) {
+        return game.getScheduledAt() != null && !Instant.now(applicationClock).isBefore(game.getScheduledAt().toInstant());
     }
 
     private boolean isActiveKstWindow() {

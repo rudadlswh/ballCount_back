@@ -52,6 +52,49 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void parsesGameRowsFromAsmxDStringWrapper() {
+        String payload = """
+                {
+                  "d": "{\\"game\\":[{\\"G_ID\\":\\"20260521HHLT0\\",\\"GAME_STATE_SC\\":\\"2\\",\\"GAME_INN_NO\\":3,\\"GAME_TB_SC\\":\\"B\\",\\"SCORE_CK\\":\\"1\\",\\"T_SCORE_CN\\":\\"1\\",\\"B_SCORE_CN\\":\\"2\\",\\"BALL_CN\\":1,\\"STRIKE_CN\\":2,\\"OUT_CN\\":0}]}"
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).providerGameId()).isEqualTo("20260521HHLT0");
+        assertThat(result.get(0).status().getApiValue()).isEqualTo("live");
+        assertThat(result.get(0).inning()).isEqualTo(3);
+        assertThat(result.get(0).inningHalf()).isEqualTo("bottom");
+    }
+
+    @Test
+    void parsesGameRowsFromDataGamesShape() {
+        String payload = """
+                {
+                  "data": {
+                    "games": [
+                      {
+                        "G_ID": "20260521HHLT0",
+                        "GAME_STATE_SC": "2",
+                        "GAME_INN_NO": 1,
+                        "GAME_TB_SC": "T",
+                        "SCORE_CK": "1",
+                        "T_SCORE_CN": "0",
+                        "B_SCORE_CN": "0"
+                      }
+                    ]
+                  }
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).providerGameId()).isEqualTo("20260521HHLT0");
+    }
+
+    @Test
     void parsesOccupiedFirstBaseRunnerNameAndId() {
         String payload = """
                 {
