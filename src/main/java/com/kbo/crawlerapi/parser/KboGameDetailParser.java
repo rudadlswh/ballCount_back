@@ -77,10 +77,10 @@ public class KboGameDetailParser {
 
     public List<ParsedGameDetail> parseGameList(String responseBody) {
         try {
-            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode root = normalizeRoot(objectMapper.readTree(responseBody));
             List<ParsedGameDetail> details = new ArrayList<>();
 
-            for (JsonNode row : root.path("game")) {
+            for (JsonNode row : gameRows(root)) {
                 String providerGameId = text(row, "G_ID");
                 if (providerGameId == null) {
                     continue;
@@ -162,6 +162,59 @@ public class KboGameDetailParser {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse KBO game detail response", exception);
         }
+    }
+
+    private JsonNode normalizeRoot(JsonNode root) throws IOException {
+        JsonNode d = root.path("d");
+        if (d.isTextual()) {
+            String text = d.asText();
+            if (text != null && (text.trim().startsWith("{") || text.trim().startsWith("["))) {
+                return objectMapper.readTree(text);
+            }
+        }
+        return root;
+    }
+
+    private List<JsonNode> gameRows(JsonNode root) {
+        for (List<String> path : List.of(
+                List.of("game"),
+                List.of("Game"),
+                List.of("games"),
+                List.of("rows"),
+                List.of("list"),
+                List.of("data", "game"),
+                List.of("data", "games"),
+                List.of("data", "rows"),
+                List.of("data", "list")
+        )) {
+            JsonNode node = nodeAt(root, path);
+            if (node.isArray()) {
+                return arrayElements(node);
+            }
+        }
+        if (root.isArray()) {
+            return arrayElements(root);
+        }
+        return List.of();
+    }
+
+    private JsonNode nodeAt(JsonNode root, List<String> path) {
+        JsonNode current = root;
+        for (String segment : path) {
+            current = current.path(segment);
+            if (current.isMissingNode() || current.isNull()) {
+                return current;
+            }
+        }
+        return current;
+    }
+
+    private List<JsonNode> arrayElements(JsonNode arrayNode) {
+        List<JsonNode> rows = new ArrayList<>();
+        for (JsonNode row : arrayNode) {
+            rows.add(row);
+        }
+        return rows;
     }
 
     private String currentPitcherName(JsonNode row, String inningHalf) {

@@ -79,7 +79,7 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
-    void gameExactlyFourHoursBeforeStartIsEligibleOutsideActiveWindow() {
+    void scheduledPregameGameExactlyFourHoursBeforeStartSkipsDetailImport() {
         Clock clock = Clock.fixed(Instant.parse("2026-04-08T21:00:00Z"), ZoneId.of("Asia/Seoul"));
         Game game = fixtureGame(
                 GameStatus.SCHEDULED,
@@ -91,19 +91,19 @@ class LiveGameSyncServiceTest {
         StubGameDetailImportService importService = new StubGameDetailImportService();
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(game.getGameDate())))
                 .thenReturn(List.of(game));
-        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId()))).thenReturn(Optional.empty());
 
         LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
 
         LiveGameSyncService.LiveSyncSummary result = service.sync(game.getGameDate(), false);
 
-        assertThat(result.candidateCount()).isEqualTo(1);
-        assertThat(importService.importedGameIds).containsExactly(game.getPublicGameId());
+        assertThat(result.candidateCount()).isZero();
+        assertThat(result.failedCount()).isZero();
+        assertThat(importService.importedGameIds).isEmpty();
     }
 
     @Test
-    void gameThreeHoursAndFiftyNineMinutesBeforeStartIsEligibleOutsideActiveWindow() {
+    void scheduledPregameGameThreeHoursAndFiftyNineMinutesBeforeStartSkipsDetailImport() {
         Clock clock = Clock.fixed(Instant.parse("2026-04-08T21:01:00Z"), ZoneId.of("Asia/Seoul"));
         Game game = fixtureGame(
                 GameStatus.SCHEDULED,
@@ -115,15 +115,162 @@ class LiveGameSyncServiceTest {
         StubGameDetailImportService importService = new StubGameDetailImportService();
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(game.getGameDate())))
                 .thenReturn(List.of(game));
-        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId()))).thenReturn(Optional.empty());
 
         LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
 
         LiveGameSyncService.LiveSyncSummary result = service.sync(game.getGameDate(), false);
 
+        assertThat(result.candidateCount()).isZero();
+        assertThat(result.failedCount()).isZero();
+        assertThat(importService.importedGameIds).isEmpty();
+    }
+
+    @Test
+    void scheduledGameOneMinuteBeforeStartSkipsDetailImport() {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:29:00Z"), ZoneId.of("Asia/Seoul"));
+        Game game = fixtureGame(
+                GameStatus.SCHEDULED,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(game.getGameDate())))
+                .thenReturn(List.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId()))).thenReturn(Optional.empty());
+
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(game.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isZero();
+        assertThat(result.failedCount()).isZero();
+        assertThat(importService.importedGameIds).isEmpty();
+    }
+
+    @Test
+    void scheduledGameExactlyAtScheduledAtRunsDetailImport() {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:30:00Z"), ZoneId.of("Asia/Seoul"));
+        Game game = fixtureGame(
+                GameStatus.SCHEDULED,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(game);
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(game.getGameDate(), false);
+
         assertThat(result.candidateCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
         assertThat(importService.importedGameIds).containsExactly(game.getPublicGameId());
+    }
+
+    @Test
+    void scheduledGameAfterScheduledAtRunsDetailImport() {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:35:57Z"), ZoneId.of("Asia/Seoul"));
+        Game game = fixtureGame(
+                GameStatus.SCHEDULED,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(game);
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(game.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+        assertThat(importService.importedGameIds).containsExactly(game.getPublicGameId());
+    }
+
+    @Test
+    void unknownGameAfterScheduledAtRunsDetailImport() {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:35:57Z"), ZoneId.of("Asia/Seoul"));
+        Game game = fixtureGame(
+                GameStatus.UNKNOWN,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(game);
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(game.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+        assertThat(importService.importedGameIds).containsExactly(game.getPublicGameId());
+    }
+
+    @Test
+    void cancelledAndPostponedGamesAfterScheduledAtSkipDetailImport() {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:35:57Z"), ZoneId.of("Asia/Seoul"));
+        Game cancelled = fixtureGame(
+                GameStatus.CANCELLED,
+                null,
+                null,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                true,
+                false,
+                GameCancelReason.RAIN,
+                "우천취소"
+        );
+        Game postponed = fixtureGame(
+                GameStatus.POSTPONED,
+                null,
+                null,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                false,
+                true,
+                null,
+                "순연"
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(cancelled.getGameDate())))
+                .thenReturn(List.of(cancelled, postponed));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(cancelled.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(postponed.getId()))).thenReturn(Optional.empty());
+
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(cancelled.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isZero();
+        assertThat(importService.importedGameIds).isEmpty();
+    }
+
+    @Test
+    void liveAndSuspendedGamesRemainDetailImportCandidates() {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T03:01:00Z"), ZoneId.of("Asia/Seoul"));
+        Game live = fixtureGameWithPublicGameId("20260409-LG-KIA-LIVE", GameStatus.LIVE);
+        Game suspended = fixtureGameWithPublicGameId("20260409-LG-KIA-SUSPENDED", GameStatus.SUSPENDED);
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(live.getGameDate())))
+                .thenReturn(List.of(live, suspended));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(live.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(suspended.getId()))).thenReturn(Optional.empty());
+        when(gameRepository.findByPublicGameId(eq(live.getPublicGameId()))).thenReturn(Optional.of(live));
+        when(gameRepository.findByPublicGameId(eq(suspended.getPublicGameId()))).thenReturn(Optional.of(suspended));
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(live.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isEqualTo(2);
+        assertThat(result.failedCount()).isZero();
+        assertThat(importService.importedGameIds).containsExactly(live.getPublicGameId(), suspended.getPublicGameId());
     }
 
     @Test
@@ -158,11 +305,12 @@ class LiveGameSyncServiceTest {
     @Test
     void scheduledToLiveTransitionCreatesGameStartDraftOnce() {
         Game before = fixtureGame(GameStatus.SCHEDULED, 0, 0);
+        Game afterSchedule = fixtureGame(GameStatus.LIVE, 0, 0);
         Game after = fixtureGame(GameStatus.LIVE, 0, 0);
         GameSnapshot snapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
-                .thenReturn(List.of(before));
+                .thenReturn(List.of(before), List.of(afterSchedule));
         when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(snapshot));
@@ -258,10 +406,8 @@ class LiveGameSyncServiceTest {
         Game after = cancelledFixtureGame(GameStatus.CANCELLED, GameCancelReason.RAIN, "우천취소");
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
-                .thenReturn(List.of(before));
-        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+                .thenReturn(List.of(before), List.of(after));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
-        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
 
         StubNotificationEventService notificationEventService = new StubNotificationEventService();
         LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
@@ -303,10 +449,8 @@ class LiveGameSyncServiceTest {
         Game after = cancelledFixtureGame(GameStatus.POSTPONED, null, "순연");
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
-                .thenReturn(List.of(before));
-        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+                .thenReturn(List.of(before), List.of(after));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
-        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
 
         StubNotificationEventService notificationEventService = new StubNotificationEventService();
         LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
@@ -410,7 +554,6 @@ class LiveGameSyncServiceTest {
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
                 .thenReturn(List.of(before), List.of(afterSchedule));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
-        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(afterSchedule.getId()))).thenReturn(Optional.empty());
 
         StubNotificationEventService notificationEventService = new StubNotificationEventService();
         LiveGameSyncService service = service(
@@ -422,8 +565,71 @@ class LiveGameSyncServiceTest {
 
         LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
 
+        assertThat(result.candidateCount()).isEqualTo(1);
         assertThat(result.failedCount()).isEqualTo(1);
         assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void liveDetailParseFailureIsStillHandledAsFailure() {
+        Game live = fixtureGame(GameStatus.LIVE, 0, 0);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(live.getGameDate())))
+                .thenReturn(List.of(live));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(live.getId()))).thenReturn(Optional.empty());
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        StubGameDetailImportService importService = new StubGameDetailImportService(
+                new IllegalStateException("Failed to parse KBO game detail response")
+        );
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                importService,
+                new StubScheduleImportService(),
+                notificationEventService
+        );
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(live.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(importService.importedGameIds).containsExactly(live.getPublicGameId());
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void repeatedPregameChecksForScheduledGamesDoNotCreateFailures() {
+        Game scheduled = fixtureGame(
+                GameStatus.SCHEDULED,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 35, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService(
+                new IllegalStateException("Failed to parse KBO game detail response")
+        );
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(scheduled.getGameDate())))
+                .thenReturn(List.of(scheduled));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(scheduled.getId()))).thenReturn(Optional.empty());
+
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                importService,
+                new StubScheduleImportService(),
+                notificationEventService
+        );
+
+        LiveGameSyncService.LiveSyncSummary first = service.sync(scheduled.getGameDate(), false);
+        LiveGameSyncService.LiveSyncSummary second = service.sync(scheduled.getGameDate(), false);
+
+        assertThat(first.failedCount()).isZero();
+        assertThat(second.failedCount()).isZero();
+        assertThat(importService.importedGameIds).isEmpty();
         assertThat(notificationEventService.drafts).isEmpty();
     }
 
@@ -896,6 +1102,38 @@ class LiveGameSyncServiceTest {
                 isPostponed,
                 cancelReason,
                 rawCancelText,
+                null
+        );
+    }
+
+    private void stubGameForSuccessfulDetailImport(Game game) {
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(game.getGameDate())))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId()))).thenReturn(Optional.empty());
+    }
+
+    private Game fixtureGameWithPublicGameId(String publicGameId, GameStatus status) {
+        Team homeTeam = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
+        Team awayTeam = new Team(UUID.randomUUID(), "kia", "KIA 타이거즈", "KIA", "KIA Tigers", null);
+        return new Game(
+                UUID.randomUUID(),
+                publicGameId,
+                "kbo",
+                publicGameId + "-provider",
+                LocalDate.of(2026, 4, 9),
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                status,
+                homeTeam,
+                awayTeam,
+                0,
+                0,
+                null,
+                false,
+                false,
+                null,
+                null,
                 null
         );
     }

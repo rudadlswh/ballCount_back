@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.api.ResourceNotFoundException;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
+import com.kbo.crawlerapi.crawler.KboGameDetailClient.DetailResponse;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
@@ -92,9 +93,10 @@ public class GameDetailImportService {
     public GameDetailImportResult importGameDetail(String publicGameId) {
         var crawlJob = crawlJobTrackingService.createRunningGameDetailImportJob(publicGameId);
         Game game;
-        String detailResponseBody;
+        DetailResponse detailResponse;
         String lineScoreResponseBody;
         ResolvedOfficialDetail resolvedOfficialDetail;
+        String officialProviderGameId = null;
         ParsedGameDetail parsedDetail;
         ParsedLineScoreResult lineScoreResult;
         ParsedLineupData lineupData;
@@ -112,14 +114,15 @@ public class GameDetailImportService {
         }
 
         try {
-            detailResponseBody = kboGameDetailClient.fetchGameList(game.getGameDate());
+            detailResponse = kboGameDetailClient.fetchGameListResponse(game.getGameDate());
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "request", exception.getMessage(), exception, 0);
             throw exception;
         }
 
         try {
-            resolvedOfficialDetail = resolveOfficialDetail(game, detailResponseBody);
+            resolvedOfficialDetail = resolveOfficialDetail(game, detailResponse.body());
+            officialProviderGameId = resolvedOfficialDetail.providerGameId();
             parsedDetail = resolvedOfficialDetail.parsedDetail();
             logCurrentPlayerDtoState(game, parsedDetail);
             lineScoreResponseBody = kboGameDetailClient.fetchScoreBoard(
@@ -131,6 +134,7 @@ public class GameDetailImportService {
             lineupData = boxscoreFetchResult.lineupData();
             parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
         } catch (Exception exception) {
+            logDetailParseFailure(game, detailResponse, officialProviderGameId, exception);
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
             throw exception;
         }
@@ -259,12 +263,14 @@ public class GameDetailImportService {
 
     private ResolvedOfficialDetail resolveOfficialDetail(Game game, String detailResponseBody) {
         List<ParsedGameDetail> parsedDetails = kboGameDetailParser.parseGameList(detailResponseBody);
-        ParsedGameDetail exactMatch = parsedDetails.stream()
-                .filter(detail -> game.getProviderGameId().equals(detail.providerGameId()))
-                .findFirst()
-                .orElse(null);
-        if (exactMatch != null) {
-            return new ResolvedOfficialDetail(game.getProviderGameId(), exactMatch);
+        if (!isSyntheticProviderGameId(game.getProviderGameId())) {
+            ParsedGameDetail exactMatch = parsedDetails.stream()
+                    .filter(detail -> game.getProviderGameId().equals(detail.providerGameId()))
+                    .findFirst()
+                    .orElse(null);
+            if (exactMatch != null) {
+                return new ResolvedOfficialDetail(game.getProviderGameId(), exactMatch);
+            }
         }
 
         String officialProviderGameId = resolveOfficialProviderGameIdByMatchup(game, detailResponseBody);
@@ -278,9 +284,30 @@ public class GameDetailImportService {
         return new ResolvedOfficialDetail(officialProviderGameId, fallbackMatch);
     }
 
+    private boolean isSyntheticProviderGameId(String providerGameId) {
+        return providerGameId != null && providerGameId.startsWith("sched-");
+    }
+
+    private void logDetailParseFailure(Game game, DetailResponse detailResponse, String officialProviderGameId, Exception exception) {
+        log.warn(
+                "[GameDetailImport] detail parse failure publicGameId={} providerGameId={} officialProviderGameId={} method={} requestUrl={} status={} contentType={} responseType={} bodyLength={} reason={} bodyPreview={}",
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                officialProviderGameId,
+                detailResponse == null ? null : detailResponse.method(),
+                detailResponse == null ? null : detailResponse.requestUri(),
+                detailResponse == null ? null : detailResponse.statusCode(),
+                detailResponse == null ? null : detailResponse.contentType(),
+                detailResponse == null ? null : detailResponse.responseType(),
+                detailResponse == null ? 0 : detailResponse.bodyLength(),
+                exception.getMessage(),
+                detailResponse == null ? null : detailResponse.bodyPreview(5000)
+        );
+    }
+
     private String resolveOfficialProviderGameIdByMatchup(Game game, String detailResponseBody) {
         try {
-            JsonNode rows = objectMapper.readTree(detailResponseBody).path("game");
+            List<JsonNode> rows = detailRows(detailResponseBody);
             String homeTeamCode = officialTeamCode(game.getHomeTeam().getTeamCode());
             String awayTeamCode = officialTeamCode(game.getAwayTeam().getTeamCode());
             String normalizedStadium = normalizeValue(game.getStadium());
@@ -288,7 +315,7 @@ public class GameDetailImportService {
                     ? null
                     : game.getScheduledAt().toLocalTime().format(OFFICIAL_TIME_FORMAT);
 
-            List<JsonNode> teamMatches = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+            List<JsonNode> teamMatches = rows.stream()
                     .filter(row -> homeTeamCode.equals(text(row, "HOME_ID")) && awayTeamCode.equals(text(row, "AWAY_ID")))
                     .toList();
             if (teamMatches.isEmpty()) {
@@ -322,6 +349,52 @@ public class GameDetailImportService {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse official detail payload for matchup resolution", exception);
         }
+    }
+
+    private List<JsonNode> detailRows(String detailResponseBody) throws IOException {
+        JsonNode root = objectMapper.readTree(detailResponseBody);
+        JsonNode d = root.path("d");
+        if (d.isTextual()) {
+            String text = d.asText();
+            if (text != null && (text.trim().startsWith("{") || text.trim().startsWith("["))) {
+                root = objectMapper.readTree(text);
+            }
+        }
+        for (String path : List.of(
+                "game",
+                "Game",
+                "games",
+                "rows",
+                "list",
+                "data.game",
+                "data.games",
+                "data.rows",
+                "data.list"
+        )) {
+            JsonNode node = nodeAt(root, path);
+            if (node.isArray()) {
+                List<JsonNode> rows = new java.util.ArrayList<>();
+                node.forEach(rows::add);
+                return rows;
+            }
+        }
+        if (root.isArray()) {
+            List<JsonNode> rows = new java.util.ArrayList<>();
+            root.forEach(rows::add);
+            return rows;
+        }
+        return List.of();
+    }
+
+    private JsonNode nodeAt(JsonNode root, String dotPath) {
+        JsonNode current = root;
+        for (String segment : dotPath.split("\\.")) {
+            current = current.path(segment);
+            if (current.isMissingNode() || current.isNull()) {
+                return current;
+            }
+        }
+        return current;
     }
 
     private void backfillProviderGameIdIfNeeded(Game game, String providerGameId) {

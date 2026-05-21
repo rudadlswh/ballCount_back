@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -23,6 +24,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.domain.CrawlJob;
@@ -39,7 +42,7 @@ import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
 
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class GameDetailImportServiceTest {
 
     @Mock
@@ -256,7 +259,99 @@ class GameDetailImportServiceTest {
         assertThat(game.getAwayScore()).isEqualTo(6);
         assertThat(game.getHomeScore()).isEqualTo(3);
         assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).isEqualTo(officialProviderGameId);
+        assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).doesNotStartWith("sched-");
         assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
+    }
+
+    @Test
+    void syntheticProviderGameIdIsNeverSentToOfficialDetailEndpoints() {
+        Game game = syntheticFixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        String officialProviderGameId = "20260423HHLG0";
+        kboGameDetailClient.detailBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260423HHLG0",
+                      "HOME_ID": "LG",
+                      "AWAY_ID": "HH",
+                      "S_NM": "잠실",
+                      "G_TM": "18:30",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 1,
+                      "GAME_TB_SC": "T",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "0",
+                      "B_SCORE_CN": "0"
+                    }
+                  ]
+                }
+                """;
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                officialProviderGameId,
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                0,
+                0,
+                1,
+                "top",
+                "Top 1",
+                0,
+                0,
+                0,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).isEqualTo(officialProviderGameId);
+        assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).doesNotStartWith("sched-");
+        assertThat(kboGameDetailClient.lastRequestedBoxScoreProviderGameId).isNull();
+    }
+
+    @Test
+    void detailParseFailureLogsResponseDiagnostics(CapturedOutput output) {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[{\"G_ID\":\"20260401HTLG0\"}]}";
+        kboGameDetailClient.detailContentType = "application/json";
+        kboGameDetailParser.parseFailure = new IllegalStateException("Failed to parse KBO game detail response");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+
+        assertThatThrownBy(() -> gameDetailImportService.importGameDetail(game.getPublicGameId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Failed to parse KBO game detail response");
+
+        assertThat(output.toString()).contains("detail parse failure");
+        assertThat(output.toString()).contains("publicGameId=20260401-LG-KIA");
+        assertThat(output.toString()).contains("providerGameId=20260401HTLG0");
+        assertThat(output.toString()).contains("requestUrl=https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList");
+        assertThat(output.toString()).contains("contentType=application/json");
+        assertThat(output.toString()).contains("responseType=json");
+        assertThat(output.toString()).contains("bodyPreview=");
     }
 
     @Test
@@ -1088,14 +1183,27 @@ class GameDetailImportServiceTest {
     private static final class StubKboGameDetailClient extends KboGameDetailClient {
 
         private String detailBody;
+        private String detailContentType = "application/json";
         private String lineScoreBody;
         private String boxScoreBody;
         private String lastRequestedScoreboardProviderGameId;
+        private String lastRequestedBoxScoreProviderGameId;
         private int requestedBoxScoreCount;
 
         @Override
         public String fetchGameList(LocalDate gameDate) {
             return detailBody;
+        }
+
+        @Override
+        public KboGameDetailClient.DetailResponse fetchGameListResponse(LocalDate gameDate) {
+            return new KboGameDetailClient.DetailResponse(
+                    detailBody,
+                    200,
+                    detailContentType,
+                    "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList",
+                    "POST"
+            );
         }
 
         @Override
@@ -1106,6 +1214,7 @@ class GameDetailImportServiceTest {
 
         @Override
         public String fetchBoxScore(String providerGameId, int seasonId) {
+            lastRequestedBoxScoreProviderGameId = providerGameId;
             requestedBoxScoreCount++;
             return boxScoreBody;
         }
@@ -1115,6 +1224,7 @@ class GameDetailImportServiceTest {
 
         private List<KboGameDetailParser.ParsedGameDetail> parsedGames = List.of();
         private KboGameDetailParser.ParsedLineupData lineupData = KboGameDetailParser.ParsedLineupData.empty(null);
+        private RuntimeException parseFailure;
 
         private StubKboGameDetailParser() {
             super(new ObjectMapper());
@@ -1122,6 +1232,9 @@ class GameDetailImportServiceTest {
 
         @Override
         public List<KboGameDetailParser.ParsedGameDetail> parseGameList(String responseBody) {
+            if (parseFailure != null) {
+                throw parseFailure;
+            }
             return parsedGames;
         }
 
@@ -1201,6 +1314,10 @@ class GameDetailImportServiceTest {
             this.succeededJobId = crawlJobId;
             this.snapshotCreated = snapshotCreated;
             this.importedLineScoreCount = importedLineScoreCount;
+        }
+
+        @Override
+        public void markFailed(UUID crawlJobId, String failureStage, String errorMessage, Throwable throwable, int skippedRowCount) {
         }
     }
 }

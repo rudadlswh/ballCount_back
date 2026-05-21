@@ -160,20 +160,52 @@ public class LiveGameSyncScheduler {
                 .map(OffsetDateTime::toInstant);
     }
 
+//    private void runPreGameHalfHourCheckIfDue() {
+//        LocalDateTime nowKst = LocalDateTime.now(applicationClock.withZone(KST));
+//        if (nowKst.getMinute() != 0 && nowKst.getMinute() != 30) {
+//            log.debug("[LiveGameSync] skipped pre-game not half-hour slot now_kst={}", nowKst);
+//            return;
+//        }
+//
+//        LocalDateTime currentSlot = nowKst.truncatedTo(ChronoUnit.MINUTES);
+//        if (currentSlot.equals(lastPreGameCheckSlot)) {
+//            log.debug("[LiveGameSync] skipped pre-game half-hour slot already checked slot={}", currentSlot);
+//            return;
+//        }
+//
+//        log.info("[LiveGameSync] running pre-game half-hour check");
+//        liveGameSyncService.syncToday();
+//        lastPreGameCheckSlot = currentSlot;
+//    }
+
     private void runPreGameHalfHourCheckIfDue() {
         LocalDateTime nowKst = LocalDateTime.now(applicationClock.withZone(KST));
-        if (nowKst.getMinute() != 0 && nowKst.getMinute() != 30) {
-            log.debug("[LiveGameSync] skipped pre-game not half-hour slot now_kst={}", nowKst);
-            return;
-        }
-
         LocalDateTime currentSlot = nowKst.truncatedTo(ChronoUnit.MINUTES);
+
+        Duration interval = properties.getPregameCheckInterval();
+        if (interval == null || interval.isZero() || interval.isNegative()) {
+            interval = Duration.ofMinutes(30);
+        }
+
         if (currentSlot.equals(lastPreGameCheckSlot)) {
-            log.debug("[LiveGameSync] skipped pre-game half-hour slot already checked slot={}", currentSlot);
+            log.debug("[LiveGameSync] skipped pre-game slot already checked slot={}", currentSlot);
             return;
         }
 
-        log.info("[LiveGameSync] running pre-game half-hour check");
+        if (lastPreGameCheckSlot != null) {
+            Duration elapsed = Duration.between(lastPreGameCheckSlot, currentSlot);
+            if (elapsed.compareTo(interval) < 0) {
+                log.debug(
+                        "[LiveGameSync] skipped pre-game check interval not reached now_kst={} last_slot={} interval={} elapsed={}",
+                        nowKst,
+                        lastPreGameCheckSlot,
+                        interval,
+                        elapsed);
+                return;
+            }
+        }
+
+        log.info("[LiveGameSync] running pre-game check interval={} now_kst={}", interval, nowKst);
         liveGameSyncService.syncToday();
         lastPreGameCheckSlot = currentSlot;
     }

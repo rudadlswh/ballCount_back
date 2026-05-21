@@ -14,6 +14,8 @@ import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.service.LiveGameSyncService;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -90,7 +92,7 @@ class LiveGameSyncSchedulerTest {
     }
 
     @Test
-    void beforeFirstScheduledStartOutsideHalfHourSlotDoesNotCallSyncToday() {
+    void beforeFirstScheduledStartInsidePregameWindowCallsSyncToday() {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
@@ -101,7 +103,7 @@ class LiveGameSyncSchedulerTest {
 
         scheduler.runTick();
 
-        assertThat(service.invocationCount.get()).isZero();
+        assertThat(service.invocationCount.get()).isEqualTo(1);
     }
 
     @Test
@@ -182,6 +184,28 @@ class LiveGameSyncSchedulerTest {
     }
 
     @Test
+    void preGameChecksCanRunRepeatedlyAtConfiguredInterval() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        LiveSyncProperties properties = properties(true);
+        properties.setPregameCheckInterval(Duration.ofMinutes(1));
+        MutableClock clock = new MutableClock("2026-04-30T12:00:03+09:00");
+        LiveGameSyncScheduler scheduler = scheduler(
+                service,
+                properties,
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
+                clock
+        );
+
+        scheduler.runTick();
+        clock.set("2026-04-30T12:01:03+09:00");
+        scheduler.runTick();
+        clock.set("2026-04-30T12:02:03+09:00");
+        scheduler.runTick();
+
+        assertThat(service.invocationCount.get()).isEqualTo(3);
+    }
+
+    @Test
     void atOrAfterScheduledStartTimeCallsSyncToday() {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
@@ -250,6 +274,33 @@ class LiveGameSyncSchedulerTest {
 
     private static Clock clockAt(String offsetDateTime) {
         return Clock.fixed(OffsetDateTime.parse(offsetDateTime).toInstant(), KST);
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        private MutableClock(String offsetDateTime) {
+            set(offsetDateTime);
+        }
+
+        private void set(String offsetDateTime) {
+            this.instant = OffsetDateTime.parse(offsetDateTime).toInstant();
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return KST;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return Clock.fixed(instant, zone);
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
     }
 
     private static GameRepository gameRepository(List<Game> games) {
