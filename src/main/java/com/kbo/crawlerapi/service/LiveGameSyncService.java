@@ -7,7 +7,6 @@ import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
-import com.kbo.crawlerapi.repository.LineScoreRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
 import java.nio.charset.StandardCharsets;
@@ -52,8 +51,8 @@ public class LiveGameSyncService {
 
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
-    private final LineScoreRepository lineScoreRepository;
     private final GameDetailImportService gameDetailImportService;
+    private final KboScheduleImportService kboScheduleImportService;
     private final NotificationEventService notificationEventService;
     private final TeamRankService teamRankService;
     private final LiveSyncProperties properties;
@@ -63,8 +62,8 @@ public class LiveGameSyncService {
     public LiveGameSyncService(
             GameRepository gameRepository,
             GameSnapshotRepository gameSnapshotRepository,
-            LineScoreRepository lineScoreRepository,
             GameDetailImportService gameDetailImportService,
+            KboScheduleImportService kboScheduleImportService,
             NotificationEventService notificationEventService,
             TeamRankService teamRankService,
             LiveSyncProperties properties,
@@ -72,8 +71,8 @@ public class LiveGameSyncService {
     ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
-        this.lineScoreRepository = lineScoreRepository;
         this.gameDetailImportService = gameDetailImportService;
+        this.kboScheduleImportService = kboScheduleImportService;
         this.notificationEventService = notificationEventService;
         this.teamRankService = teamRankService;
         this.properties = properties;
@@ -91,9 +90,18 @@ public class LiveGameSyncService {
     public LiveSyncSummary sync(LocalDate date, boolean force) {
         LocalDate targetDate = date == null ? todayKst() : date;
         log.info("[LiveGameSync] started date={}", targetDate);
+        List<Game> gamesBeforeScheduleRefresh = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
+        Map<String, GameState> beforeScheduleStates = new HashMap<>();
+        for (Game game : gamesBeforeScheduleRefresh) {
+            beforeScheduleStates.put(game.getPublicGameId(), GameState.from(game, latestSnapshot(game)));
+        }
+
+        refreshScheduleBeforeDetailImport(targetDate);
+
         List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
         List<Game> candidates = games.stream()
                 .filter(game -> isCandidate(game, force))
+                .filter(game -> !isScheduleCancellationTarget(game.getStatus()))
                 .toList();
         log.info("[LiveGameSync] candidate count={}", candidates.size());
 
@@ -106,10 +114,66 @@ public class LiveGameSyncService {
         List<String> events = new ArrayList<>();
         List<String> errors = new ArrayList<>();
 
+        for (Game game : games) {
+            GameState before = beforeScheduleStates.get(game.getPublicGameId());
+            if (before == null || !isScheduleCancellationTransition(before.status(), game.getStatus())) {
+                continue;
+            }
+            log.info(
+                    "[LiveGameSync] schedule-level cancellation detected game={} previousStatus={} scheduleStatus={} cancelReason={} rawCancelText={}",
+                    game.getPublicGameId(),
+                    before.status(),
+                    game.getStatus(),
+                    game.getCancelReason(),
+                    game.getRawCancelText()
+            );
+            NotificationEventDraft draft = cancelledDraft(game, game.getStatus());
+            EventDeliveryResult delivery = notificationEventService.createAndDeliver(game, draft);
+            updatedCount++;
+            updatedGames.add(game.getPublicGameId());
+            if (delivery.eventCreated()) {
+                eventCreatedCount++;
+                events.add(delivery.eventKey());
+                log.info(
+                        "[LiveGameSync] cancellation event created game={} eventKey={}",
+                        game.getPublicGameId(),
+                        delivery.eventKey()
+                );
+            }
+            notificationSentCount += delivery.sentCount();
+            notificationSkippedCount += delivery.skippedCount();
+            log.info(
+                    "[LiveGameSync] cancellation notification sent/skipped game={} eventKey={} sent={} skipped={} created={}",
+                    game.getPublicGameId(),
+                    delivery.eventKey(),
+                    delivery.sentCount(),
+                    delivery.skippedCount(),
+                    delivery.eventCreated()
+            );
+            nextRefreshAtByGameId.put(game.getId(), Instant.now(applicationClock).plus(ttlFor(game)));
+        }
+
         for (Game candidate : candidates) {
             GameState before = GameState.from(candidate, latestSnapshot(candidate));
             try {
-                gameDetailImportService.importGameDetail(candidate.getPublicGameId());
+                try {
+                    gameDetailImportService.importGameDetail(candidate.getPublicGameId());
+                } catch (RuntimeException exception) {
+                    if (isDetailParseFailure(exception)) {
+                        log.warn(
+                                "[LiveGameSync] detail parse failure game={} reason={}",
+                                candidate.getPublicGameId(),
+                                exception.getMessage()
+                        );
+                    } else {
+                        log.warn(
+                                "[LiveGameSync] detail import failure game={} reason={}",
+                                candidate.getPublicGameId(),
+                                exception.getMessage()
+                        );
+                    }
+                    throw exception;
+                }
                 Game after = gameRepository.findByPublicGameId(candidate.getPublicGameId()).orElseThrow();
                 after.markLiveChecked(OffsetDateTime.now(applicationClock));
                 boolean finalConfirmed = confirmFinalIfComplete(after);
@@ -128,9 +192,26 @@ public class LiveGameSyncService {
                     if (delivery.eventCreated()) {
                         eventCreatedCount++;
                         events.add(delivery.eventKey());
+                        if (NotificationEventService.EVENT_GAME_CANCELLED.equals(draft.eventType())) {
+                            log.info(
+                                    "[LiveGameSync] cancellation event created game={} eventKey={}",
+                                    after.getPublicGameId(),
+                                    delivery.eventKey()
+                            );
+                        }
                     }
                     notificationSentCount += delivery.sentCount();
                     notificationSkippedCount += delivery.skippedCount();
+                    if (NotificationEventService.EVENT_GAME_CANCELLED.equals(draft.eventType())) {
+                        log.info(
+                                "[LiveGameSync] cancellation notification sent/skipped game={} eventKey={} sent={} skipped={} created={}",
+                                after.getPublicGameId(),
+                                delivery.eventKey(),
+                                delivery.sentCount(),
+                                delivery.skippedCount(),
+                                delivery.eventCreated()
+                        );
+                    }
                 }
                 nextRefreshAtByGameId.put(after.getId(), Instant.now(applicationClock).plus(ttlFor(after)));
             } catch (RuntimeException exception) {
@@ -158,6 +239,45 @@ public class LiveGameSyncService {
                 events,
                 errors
         );
+    }
+
+    private void refreshScheduleBeforeDetailImport(LocalDate targetDate) {
+        if (kboScheduleImportService == null) {
+            return;
+        }
+        try {
+            DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(targetDate);
+            log.info(
+                    "[LiveGameSync] schedule refresh before detail import date={} processed={} updated={} skipped={} failures={}",
+                    targetDate,
+                    result.gameProcessedCount(),
+                    result.gameUpdatedCount(),
+                    result.skippedRowCount(),
+                    result.failureCount()
+            );
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[LiveGameSync] schedule refresh before detail import failed date={} reason={}",
+                    targetDate,
+                    exception.getMessage()
+            );
+        }
+    }
+
+    private boolean isDetailParseFailure(RuntimeException exception) {
+        String message = exception.getMessage();
+        if (message != null && message.toLowerCase(java.util.Locale.ROOT).contains("parse")) {
+            return true;
+        }
+        Throwable cause = exception.getCause();
+        while (cause != null) {
+            String causeMessage = cause.getMessage();
+            if (causeMessage != null && causeMessage.toLowerCase(java.util.Locale.ROOT).contains("parse")) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     private boolean isCandidate(Game game, boolean force) {
@@ -232,28 +352,25 @@ public class LiveGameSyncService {
         if (game.getStatus() != GameStatus.FINAL || game.getFinalConfirmedAt() != null) {
             return false;
         }
-        if (game.getHomeScore() == null || game.getAwayScore() == null) {
-            return false;
-        }
-        if (lineScoreRepository.countByGame_Id(game.getId()) <= 0) {
-            return false;
-        }
         return game.confirmFinal(OffsetDateTime.now(applicationClock));
     }
 
     private boolean becameFinalOrFinalConfirmed(GameState before, Game after, boolean finalConfirmed) {
-        return finalConfirmed || (before.status() != GameStatus.FINAL && after.getStatus() == GameStatus.FINAL);
+        return finalConfirmed
+                || (before.status() != GameStatus.FINAL
+                && after.getStatus() == GameStatus.FINAL
+                && after.getFinalConfirmedAt() != null);
     }
 
     private List<NotificationEventDraft> detectChanges(GameState before, GameState after, Game game) {
         List<NotificationEventDraft> drafts = new ArrayList<>();
-        if (!isLiveLike(before.status()) && isLiveLike(after.status())) {
+        if (before.status() != GameStatus.FINAL && !isLiveLike(before.status()) && isLiveLike(after.status())) {
             drafts.add(startedDraft(game));
         }
         if (isCancellationTransition(before.status(), after.status())) {
             drafts.add(cancelledDraft(game, after.status()));
         }
-        if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL) {
+        if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
             drafts.add(finalDraft(game));
         }
         if (isLiveLike(before.status()) && isLiveLike(after.status()) && inningChanged(before, after)) {
@@ -531,6 +648,16 @@ public class LiveGameSyncService {
 
     private boolean isCancellationTarget(GameStatus status) {
         return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED || status == GameStatus.SUSPENDED;
+    }
+
+    private boolean isScheduleCancellationTransition(GameStatus before, GameStatus after) {
+        return before != after
+                && isScheduleCancellationTarget(after)
+                && (before == GameStatus.SCHEDULED || before == GameStatus.UNKNOWN || isLiveLike(before));
+    }
+
+    private boolean isScheduleCancellationTarget(GameStatus status) {
+        return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
     }
 
     private String cancellationBody(Game game, GameStatus cancelledStatus) {

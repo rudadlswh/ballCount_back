@@ -298,7 +298,7 @@ class KboGameDetailParserTest {
     }
 
     @Test
-    void infersFinalWhenOfficialPayloadShowsGameOverDespiteLiveState() {
+    void keepsLiveWhenNinthInningScoreLooksCompleteWithoutOfficialFinalMarker() {
         String payload = """
                 {
                   "game": [
@@ -323,9 +323,54 @@ class KboGameDetailParserTest {
         var result = parser.parseGameList(payload);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).status().getApiValue()).isEqualTo("final");
+        assertThat(result.get(0).status().getApiValue()).isEqualTo("live");
         assertThat(result.get(0).awayScore()).isEqualTo(4);
         assertThat(result.get(0).homeScore()).isEqualTo(5);
+    }
+
+    @Test
+    void keepsLiveWhenNinthInningHasThreeOutsWithoutOfficialFinalMarker() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260423HHLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_RESULT_CK": 0,
+                      "CANCEL_SC_NM": "정상경기",
+                      "GAME_INN_NO": 9,
+                      "GAME_TB_SC": "T",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "4",
+                      "B_SCORE_CN": "5",
+                      "BALL_CN": 0,
+                      "STRIKE_CN": 0,
+                      "OUT_CN": 3
+                    },
+                    {
+                      "G_ID": "20260423KTLT0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_RESULT_CK": 0,
+                      "CANCEL_SC_NM": "정상경기",
+                      "GAME_INN_NO": 9,
+                      "GAME_TB_SC": "B",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "6",
+                      "B_SCORE_CN": "4",
+                      "BALL_CN": 0,
+                      "STRIKE_CN": 0,
+                      "OUT_CN": 3
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(2);
+        assertThat(result)
+                .extracting(detail -> detail.status().getApiValue())
+                .containsExactly("live", "live");
     }
 
     @Test

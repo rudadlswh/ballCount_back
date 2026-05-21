@@ -418,6 +418,7 @@ public class Game {
 
     private boolean shouldKeepFinalStatus(GameStatus incomingStatus) {
         return this.status == GameStatus.FINAL
+                && this.finalConfirmedAt != null
                 && incomingStatus != GameStatus.FINAL
                 && incomingStatus != GameStatus.CANCELLED
                 && incomingStatus != GameStatus.POSTPONED;

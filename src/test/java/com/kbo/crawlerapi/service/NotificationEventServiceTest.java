@@ -332,7 +332,44 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void muteWhenLosingSkipsRealtimeNotificationsWhenFavoriteTeamIsNotLeading() {
+    void favoriteTeamOnlySkipsScoreNotificationsWhenEventTeamIdIsMissing() {
+        NotificationDevice device = deviceWithSettings("kia", "token-a", true, true, true, true, true, true, true, false);
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, null);
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+
+        var result = service.createAndDeliver(fixtureGame(), draft);
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED);
+    }
+
+    @Test
+    void muteWhenLosingAllowsScoreNotificationsWhenFavoriteTeamIsLeading() {
+        Game leadingGame = fixtureGame(1, 2);
+        NotificationDevice device = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, "lg");
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+
+        var result = service.createAndDeliver(leadingGame, draft);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(device);
+    }
+
+    @Test
+    void muteWhenLosingSkipsRealtimeNotificationsWhenFavoriteTeamIsLosing() {
         NotificationDevice device = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -350,7 +387,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void muteWhenLosingAllowsScoreNotificationsWhenFavoriteTeamTiesGame() {
+    void muteWhenLosingSkipsScoreNotificationsWhenFavoriteTeamTiesGame() {
         Game tiedGame = fixtureGame(3, 3);
         NotificationDevice device = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
@@ -363,8 +400,9 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(tiedGame, draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
@@ -386,7 +424,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void muteWhenLosingSuppressesInningChangeNotificationsWhenFavoriteTeamIsLosing() {
+    void muteWhenLosingDoesNotApplyToInningChangeNotificationsWhenFavoriteTeamIsLosing() {
         NotificationDevice device = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -398,9 +436,8 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
-        assertThat(result.sentCount()).isZero();
-        assertThat(result.skippedCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).isEmpty();
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(device);
     }
 
     @Test

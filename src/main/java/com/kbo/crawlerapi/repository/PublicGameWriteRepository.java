@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
 
@@ -61,7 +62,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 """
                         SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                                home_team_id, away_team_id, home_score, away_score, is_cancelled,
-                               is_postponed, source_updated_at
+                               is_postponed, cancel_reason, raw_cancel_text, source_updated_at
                         FROM games
                         WHERE provider = ? AND provider_game_id = ?
                         """,
@@ -80,7 +81,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 """
                         SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                                home_team_id, away_team_id, home_score, away_score, is_cancelled,
-                               is_postponed, source_updated_at
+                               is_postponed, cancel_reason, raw_cancel_text, source_updated_at
                         FROM games
                         WHERE provider = ?
                           AND game_date = ?
@@ -110,9 +111,9 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                         INSERT INTO games (
                             id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                             home_team_id, away_team_id, home_score, away_score, inning_state,
-                            is_cancelled, is_postponed, source_updated_at, public_game_id
+                            is_cancelled, is_postponed, cancel_reason, raw_cancel_text, source_updated_at, public_game_id
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
                         """,
                 UUID.randomUUID(),
                 parsedGame.provider(),
@@ -127,6 +128,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 normalizedScore(parsedGame.awayScore()),
                 parsedGame.isCancelled(),
                 parsedGame.isPostponed(),
+                cancelReasonValue(parsedGame.cancelReason()),
+                parsedGame.rawCancelText(),
                 sourceUpdatedAt,
                 publicGameId
         );
@@ -156,6 +159,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                             away_score = ?,
                             is_cancelled = ?,
                             is_postponed = ?,
+                            cancel_reason = ?,
+                            raw_cancel_text = ?,
                             source_updated_at = ?,
                             updated_at = now()
                         WHERE id = ?
@@ -172,6 +177,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 normalizedScore(parsedGame.awayScore()),
                 parsedGame.isCancelled(),
                 parsedGame.isPostponed(),
+                cancelReasonValue(parsedGame.cancelReason()),
+                parsedGame.rawCancelText(),
                 sourceUpdatedAt,
                 id
         );
@@ -198,7 +205,13 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 || !Objects.equals(existing.awayScore(), normalizedScore(parsedGame.awayScore()))
                 || existing.cancelled() != parsedGame.isCancelled()
                 || existing.postponed() != parsedGame.isPostponed()
+                || existing.cancelReason() != parsedGame.cancelReason()
+                || !Objects.equals(existing.rawCancelText(), parsedGame.rawCancelText())
                 || !sameInstant(existing.sourceUpdatedAt(), sourceUpdatedAt);
+    }
+
+    private String cancelReasonValue(GameCancelReason cancelReason) {
+        return cancelReason == null ? null : cancelReason.getApiValue();
     }
 
     private String effectiveProviderGameId(ParsedScheduleGame parsedGame, Team awayTeam, Team homeTeam) {
@@ -242,8 +255,14 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 rs.getInt("away_score"),
                 rs.getBoolean("is_cancelled"),
                 rs.getBoolean("is_postponed"),
+                cancelReason(rs.getString("cancel_reason")),
+                rs.getString("raw_cancel_text"),
                 rs.getObject("source_updated_at", OffsetDateTime.class)
         );
+    }
+
+    private GameCancelReason cancelReason(String value) {
+        return value == null ? null : GameCancelReason.fromApiValue(value);
     }
 
     private record PublicGameRow(
@@ -261,6 +280,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             Integer awayScore,
             boolean cancelled,
             boolean postponed,
+            GameCancelReason cancelReason,
+            String rawCancelText,
             OffsetDateTime sourceUpdatedAt
     ) {
     }

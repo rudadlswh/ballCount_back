@@ -371,9 +371,6 @@ public class KboGameDetailParser {
         if ("3".equals(gameState) || row.path("GAME_RESULT_CK").asInt(0) == 1) {
             return GameStatus.FINAL;
         }
-        if (isOfficiallyFinalByGameOverState(row)) {
-            return GameStatus.FINAL;
-        }
         if ("2".equals(gameState)) {
             return GameStatus.LIVE;
         }
@@ -474,28 +471,6 @@ public class KboGameDetailParser {
                 || upper.contains("B1")
                 || upper.contains("B2")
                 || upper.contains("B3");
-    }
-
-    private boolean isOfficiallyFinalByGameOverState(JsonNode row) {
-        Integer inning = integer(row, "GAME_INN_NO");
-        Integer outs = integer(row, "OUT_CN");
-        Integer awayScore = integer(row, "T_SCORE_CN");
-        Integer homeScore = integer(row, "B_SCORE_CN");
-        String inningHalf = resolveHalf(text(row, "GAME_TB_SC"));
-
-        if (inning == null || inning < 9 || inningHalf == null || awayScore == null || homeScore == null) {
-            return false;
-        }
-        if ("bottom".equals(inningHalf) && homeScore > awayScore) {
-            return true;
-        }
-        if (outs == null || outs < 3 || awayScore.equals(homeScore)) {
-            return false;
-        }
-        if ("top".equals(inningHalf) && homeScore > awayScore) {
-            return true;
-        }
-        return "bottom".equals(inningHalf) && awayScore > homeScore;
     }
 
     private boolean hasRealScore(JsonNode row, GameStatus status) {
