@@ -215,7 +215,7 @@ public class NotificationEventService {
             return true;
         }
         String eventTeamId = payloadText(draft, PAYLOAD_EVENT_TEAM_ID);
-        return eventTeamId == null || eventTeamId.equals(device.getFavoriteTeamId());
+        return eventTeamId != null && eventTeamId.equals(device.getFavoriteTeamId());
     }
 
     private boolean muteWhenLosingAllows(NotificationDevice device, String eventType, Game game) {
@@ -227,10 +227,10 @@ public class NotificationEventService {
             return false;
         }
         if (favoriteTeamId.equals(game.getHomeTeam().getTeamCode())) {
-            return game.getHomeScore() >= game.getAwayScore();
+            return game.getHomeScore() > game.getAwayScore();
         }
         if (favoriteTeamId.equals(game.getAwayTeam().getTeamCode())) {
-            return game.getAwayScore() >= game.getHomeScore();
+            return game.getAwayScore() > game.getHomeScore();
         }
         return false;
     }
@@ -244,8 +244,7 @@ public class NotificationEventService {
     private boolean isRealtimeTeamEvent(String eventType) {
         return EVENT_SCORE_CHANGED.equals(eventType)
                 || EVENT_ON_BASE.equals(eventType)
-                || EVENT_LEAD_CHANGED.equals(eventType)
-                || EVENT_INNING_CHANGED.equals(eventType);
+                || EVENT_LEAD_CHANGED.equals(eventType);
     }
 
     private String payloadText(NotificationEventDraft draft, String key) {
