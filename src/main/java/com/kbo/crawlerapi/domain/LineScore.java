@@ -62,4 +62,9 @@ public class LineScore {
     public Integer getHomeRuns() {
         return homeRuns;
     }
+
+    public void updateRuns(Integer awayRuns, Integer homeRuns) {
+        this.awayRuns = awayRuns;
+        this.homeRuns = homeRuns;
+    }
 }

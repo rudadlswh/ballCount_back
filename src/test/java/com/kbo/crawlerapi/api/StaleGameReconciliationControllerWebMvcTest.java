@@ -9,10 +9,17 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kbo.crawlerapi.service.LiveGameSyncService.LiveSyncSummary;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService;
+import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationDateResult;
+import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationDateStatus;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationResult;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -51,7 +58,9 @@ class StaleGameReconciliationControllerWebMvcTest {
                 .andExpect(jsonPath("$.dates[0]").value("2026-04-15"))
                 .andExpect(jsonPath("$.dates[1]").value("2026-04-16"))
                 .andExpect(jsonPath("$.processedDateCount").value(2))
-                .andExpect(jsonPath("$.failedCount").value(0));
+                .andExpect(jsonPath("$.skippedAlreadyInProgressCount").value(0))
+                .andExpect(jsonPath("$.failedCount").value(0))
+                .andExpect(jsonPath("$.dateResults[0].status").value("PROCESSED"));
 
         assertThat(service.requestedDates).containsExactly(
                 LocalDate.of(2026, 4, 16),
@@ -81,6 +90,36 @@ class StaleGameReconciliationControllerWebMvcTest {
                 .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
     }
 
+    @Test
+    void concurrentReconcileRequestsForSameDateSkipSecondRequestWhileFirstIsRunning() throws Exception {
+        BlockingLiveGameSyncService liveSyncService = new BlockingLiveGameSyncService();
+        StaleGameReconciliationService reconciliationService = new StaleGameReconciliationService(liveSyncService);
+        LocalDate date = LocalDate.of(2026, 5, 8);
+        var executor = Executors.newFixedThreadPool(1);
+
+        try {
+            Future<StaleGameReconciliationResult> first = executor.submit(() -> reconciliationService.reconcile(List.of(date)));
+            assertThat(liveSyncService.started.await(1, TimeUnit.SECONDS)).isTrue();
+
+            StaleGameReconciliationResult second = reconciliationService.reconcile(List.of(date));
+
+            assertThat(second.processedDateCount()).isZero();
+            assertThat(second.skippedAlreadyInProgressCount()).isEqualTo(1);
+            assertThat(second.dateResults()).extracting(StaleGameReconciliationDateResult::status)
+                    .containsExactly(StaleGameReconciliationDateStatus.SKIPPED_ALREADY_IN_PROGRESS);
+
+            liveSyncService.release.countDown();
+            StaleGameReconciliationResult firstResult = first.get(1, TimeUnit.SECONDS);
+
+            assertThat(firstResult.processedDateCount()).isEqualTo(1);
+            assertThat(firstResult.skippedAlreadyInProgressCount()).isZero();
+            assertThat(liveSyncService.syncCount).hasValue(1);
+        } finally {
+            liveSyncService.release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
     private static final class RecordingStaleGameReconciliationService extends StaleGameReconciliationService {
         private List<LocalDate> requestedDates = List.of();
 
@@ -96,10 +135,38 @@ class StaleGameReconciliationControllerWebMvcTest {
                     uniqueDates,
                     uniqueDates.size(),
                     0,
+                    0,
                     uniqueDates.stream()
-                            .map(date -> new LiveSyncSummary(date, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of()))
+                            .map(date -> new StaleGameReconciliationDateResult(
+                                    date,
+                                    StaleGameReconciliationDateStatus.PROCESSED,
+                                    null,
+                                    new LiveSyncSummary(date, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of())
+                            ))
                             .toList()
             );
+        }
+    }
+
+    private static final class BlockingLiveGameSyncService extends com.kbo.crawlerapi.service.LiveGameSyncService {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final AtomicInteger syncCount = new AtomicInteger();
+
+        private BlockingLiveGameSyncService() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public LiveSyncSummary sync(LocalDate date, boolean force) {
+            syncCount.incrementAndGet();
+            started.countDown();
+            try {
+                release.await(1, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+            return new LiveSyncSummary(date, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of());
         }
     }
 }
