@@ -28,6 +28,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -632,20 +635,39 @@ public class GameDetailImportService {
             return false;
         }
 
-        lineScoreRepository.deleteByGame_Id(game.getId());
-        lineScoreRepository.flush();
         if (innings.isEmpty()) {
+            lineScoreRepository.deleteAll(existingLineScores);
+            lineScoreRepository.flush();
             return !existingLineScores.isEmpty();
         }
 
+        Map<Integer, LineScore> existingByInning = existingLineScores.stream()
+                .collect(Collectors.toMap(LineScore::getInningNumber, Function.identity(), (first, second) -> first));
+        Set<Integer> incomingInnings = innings.stream()
+                .map(KboLineScoreParser.ParsedLineScoreInning::inningNumber)
+                .collect(Collectors.toSet());
+        List<LineScore> staleLineScores = existingLineScores.stream()
+                .filter(lineScore -> !incomingInnings.contains(lineScore.getInningNumber()))
+                .toList();
+        if (!staleLineScores.isEmpty()) {
+            lineScoreRepository.deleteAll(staleLineScores);
+        }
+
         lineScoreRepository.saveAll(innings.stream()
-                .map(inning -> new LineScore(
-                        UUID.randomUUID(),
-                        game,
-                        inning.inningNumber(),
-                        inning.awayRuns(),
-                        inning.homeRuns()
-                ))
+                .map(inning -> {
+                    LineScore existing = existingByInning.get(inning.inningNumber());
+                    if (existing != null) {
+                        existing.updateRuns(inning.awayRuns(), inning.homeRuns());
+                        return existing;
+                    }
+                    return new LineScore(
+                            UUID.randomUUID(),
+                            game,
+                            inning.inningNumber(),
+                            inning.awayRuns(),
+                            inning.homeRuns()
+                    );
+                })
                 .toList());
         return true;
     }

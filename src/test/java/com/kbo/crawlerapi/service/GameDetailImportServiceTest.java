@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -187,6 +189,69 @@ class GameDetailImportServiceTest {
         assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
         assertThat(crawlJobTrackingService.snapshotCreated).isFalse();
         assertThat(crawlJobTrackingService.importedLineScoreCount).isEqualTo(2);
+    }
+
+    @Test
+    void updatesExistingLineScoreRowsInsteadOfInsertingDuplicatesOnRepeatedImport() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        LineScore existingLineScore = new LineScore(UUID.randomUUID(), game, 1, 0, 3);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.FINAL,
+                false,
+                false,
+                null,
+                null,
+                4,
+                6,
+                9,
+                "bottom",
+                "Bottom 9",
+                0,
+                0,
+                3,
+                true,
+                true,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "detail-hash-updated"
+        ));
+        kboLineScoreParser.result = new KboLineScoreParser.ParsedLineScoreResult(
+                List.of(new KboLineScoreParser.ParsedLineScoreInning(1, 4, 6)),
+                new KboLineScoreParser.ParsedTeamTotals(4, 8, 0, 2),
+                new KboLineScoreParser.ParsedTeamTotals(6, 9, 1, 4),
+                "line-hash-updated"
+        );
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId())))
+                .thenReturn(List.of(existingLineScore), List.of(existingLineScore));
+
+        GameDetailImportResult first = gameDetailImportService.importGameDetail(game.getPublicGameId());
+        GameDetailImportResult second = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(first.lineScoresUpdated()).isTrue();
+        assertThat(second.lineScoresUpdated()).isFalse();
+        assertThat(existingLineScore.getAwayRuns()).isEqualTo(4);
+        assertThat(existingLineScore.getHomeRuns()).isEqualTo(6);
+        ArgumentCaptor<Iterable<LineScore>> lineScoresCaptor = lineScoreIterableCaptor();
+        verify(lineScoreRepository, times(1)).saveAll(lineScoresCaptor.capture());
+        List<LineScore> savedLineScores = new ArrayList<>();
+        lineScoresCaptor.getValue().forEach(savedLineScores::add);
+        assertThat(savedLineScores).containsExactly(existingLineScore);
+        verify(lineScoreRepository, never()).deleteByGame_Id(any(UUID.class));
     }
 
     @Test
@@ -1061,6 +1126,11 @@ class GameDetailImportServiceTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         );
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private ArgumentCaptor<Iterable<LineScore>> lineScoreIterableCaptor() {
+        return ArgumentCaptor.forClass((Class) Iterable.class);
     }
 
     private Game syntheticFixtureGame() {
