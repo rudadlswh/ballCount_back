@@ -95,6 +95,7 @@ public class KboGameDetailParser {
                         ? ("%s %d".formatted("top".equals(inningHalf) ? "Top" : "Bottom", inning))
                         : null;
                 String rawCancelText = text(row, "CANCEL_SC_NM");
+                String statusReason = resolveStatusReason(row, status, rawCancelText);
                 GameCancelReason cancelReason = resolveCancelReason(status, rawCancelText);
                 logCancellationStatusIfNeeded(row, providerGameId, status, cancelReason, rawCancelText);
                 String awayStartingPitcherName = text(row, "T_PIT_P_NM");
@@ -152,7 +153,7 @@ public class KboGameDetailParser {
                         homeStartingPitcherName,
                         awayStartingPitcherName,
                         lineupAvailable,
-                        status == GameStatus.CANCELLED || status == GameStatus.POSTPONED ? rawCancelText : null,
+                        statusReason,
                         null,
                         hash(row.toString())
                 ));
@@ -409,7 +410,7 @@ public class KboGameDetailParser {
     private GameStatus resolveStatus(JsonNode row) {
         String cancelName = text(row, "CANCEL_SC_NM");
         String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");
-        String statusText = String.join(" ", clean(cancelName), clean(rawStatusName)).trim();
+        String statusText = joinClean(cancelName, rawStatusName);
         if (isPostponedText(statusText)) {
             return GameStatus.POSTPONED;
         }
@@ -476,7 +477,15 @@ public class KboGameDetailParser {
             return false;
         }
         String lower = value.toLowerCase(java.util.Locale.ROOT);
-        return value.contains("서스펜") || value.contains("중단") || lower.contains("suspend");
+        return value.contains("서스펜")
+                || value.contains("우천중단")
+                || value.contains("강우중단")
+                || value.contains("경기중단")
+                || value.contains("일시중단")
+                || value.contains("중단")
+                || lower.contains("suspend")
+                || lower.contains("interrupted")
+                || lower.contains("rain delay");
     }
 
     private void logRunnerRelatedKeysIfNeeded(
@@ -531,7 +540,26 @@ public class KboGameDetailParser {
         if ("1".equals(scoreCheck)) {
             return true;
         }
-        return status == GameStatus.LIVE || status == GameStatus.FINAL;
+        return status == GameStatus.LIVE || status == GameStatus.SUSPENDED || status == GameStatus.FINAL;
+    }
+
+    private String resolveStatusReason(JsonNode row, GameStatus status, String rawCancelText) {
+        if (status != GameStatus.CANCELLED && status != GameStatus.POSTPONED && status != GameStatus.SUSPENDED) {
+            return null;
+        }
+        String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");
+        for (String candidate : new String[]{rawStatusName, rawCancelText}) {
+            String cleaned = clean(candidate);
+            if (cleaned != null && !isNormalStatusText(cleaned)) {
+                return cleaned;
+            }
+        }
+        return null;
+    }
+
+    private boolean isNormalStatusText(String value) {
+        String collapsed = value == null ? "" : value.trim().replace(" ", "");
+        return collapsed.equals("정상경기") || collapsed.equals("정상");
     }
 
     private GameCancelReason resolveCancelReason(GameStatus status, String rawCancelText) {
@@ -607,6 +635,13 @@ public class KboGameDetailParser {
 
     private String clean(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String joinClean(String... values) {
+        return java.util.Arrays.stream(values)
+                .map(this::clean)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.joining(" "));
     }
 
     private String hash(String value) {

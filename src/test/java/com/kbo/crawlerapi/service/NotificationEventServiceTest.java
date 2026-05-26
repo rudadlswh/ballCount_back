@@ -533,6 +533,40 @@ class NotificationEventServiceTest {
         assertThat(pushService.sentDevices).containsExactly(losingFavoriteDevice);
     }
 
+    @Test
+    void favoriteTeamOnlyAllowsInterruptedGameNotificationsForFavoriteTeamGame() {
+        NotificationDevice favoriteOnlyDevice = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, true, false);
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_GAME_INTERRUPTED, null);
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(favoriteOnlyDevice));
+
+        var result = service.createAndDeliver(fixtureGame(), draft);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(favoriteOnlyDevice);
+    }
+
+    @Test
+    void muteWhenLosingDoesNotApplyToInterruptedGameNotifications() {
+        NotificationDevice losingFavoriteDevice = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_GAME_INTERRUPTED, null);
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(losingFavoriteDevice));
+
+        var result = service.createAndDeliver(fixtureGame(), draft);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(losingFavoriteDevice);
+    }
+
 
     private NotificationEventService service(RecordingApnsPushService pushService) {
         return new NotificationEventService(

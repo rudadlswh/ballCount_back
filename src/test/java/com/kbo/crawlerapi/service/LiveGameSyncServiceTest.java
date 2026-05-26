@@ -401,6 +401,82 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void liveToRainInterruptedTransitionCreatesGameInterruptedDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 1, 2, "Top 8");
+        Game after = withStatusReason(fixtureGame(GameStatus.SUSPENDED, 1, 2, "Top 8"), "우천중단");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts).hasSize(1);
+        NotificationEventDraft draft = notificationEventService.drafts.get(0);
+        assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_GAME_INTERRUPTED);
+        assertThat(draft.eventKey()).isEqualTo("game:%s:interrupted:우천중단".formatted(after.getId()));
+        assertThat(draft.title()).isEqualTo("경기 중단");
+        assertThat(draft.body()).isEqualTo("KIA vs LG 경기가 우천으로 중단되었습니다.");
+        assertThat(draft.payload())
+                .containsEntry("status", "suspended")
+                .containsEntry("statusReason", "우천중단");
+    }
+
+    @Test
+    void repeatedRainInterruptedStateDoesNotCreateInterruptedDraft() {
+        Game before = withStatusReason(fixtureGame(GameStatus.SUSPENDED, 1, 2, "Top 8"), "우천중단");
+        Game after = withStatusReason(fixtureGame(GameStatus.SUSPENDED, 1, 2, "Top 8"), "우천중단");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void rainInterruptedToLiveTransitionCreatesGameResumedDraft() {
+        Game before = withStatusReason(fixtureGame(GameStatus.SUSPENDED, 1, 2, "Top 8"), "우천중단");
+        Game after = fixtureGame(GameStatus.LIVE, 1, 2, "Top 8");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_GAME_RESUMED);
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA vs LG 경기가 재개되었습니다.");
+    }
+
+    @Test
     void scheduledToCancelledTransitionCreatesGameCancelledDraftOnce() {
         Game before = fixtureGame(GameStatus.SCHEDULED, null, null);
         Game after = cancelledFixtureGame(GameStatus.CANCELLED, GameCancelReason.RAIN, "우천취소");
@@ -1069,6 +1145,25 @@ class LiveGameSyncServiceTest {
                 cancelReason,
                 rawCancelText
         );
+    }
+
+    private Game withStatusReason(Game game, String statusReason) {
+        game.syncDetail(
+                game.getStatus(),
+                game.getHomeScore(),
+                game.getAwayScore(),
+                game.getInningState(),
+                game.isCancelled(),
+                game.isPostponed(),
+                game.getCancelReason(),
+                game.getRawCancelText(),
+                null,
+                null,
+                null,
+                statusReason,
+                game.getSourceUpdatedAt()
+        );
+        return game;
     }
 
     private Game fixtureGame(
