@@ -8,6 +8,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import org.jsoup.Jsoup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,7 +98,7 @@ public class KboGameDetailParser {
                 String rawCancelText = text(row, "CANCEL_SC_NM");
                 String statusReason = resolveStatusReason(row, status, rawCancelText);
                 GameCancelReason cancelReason = resolveCancelReason(status, rawCancelText);
-                logCancellationStatusIfNeeded(row, providerGameId, status, cancelReason, rawCancelText);
+                logStatusDiagnostics(row, providerGameId, status, statusReason, cancelReason, rawCancelText);
                 String awayStartingPitcherName = text(row, "T_PIT_P_NM");
                 String homeStartingPitcherName = text(row, "B_PIT_P_NM");
                 String currentPitcherName = currentPitcherName(row, inningHalf);
@@ -437,27 +438,124 @@ public class KboGameDetailParser {
         return GameStatus.UNKNOWN;
     }
 
-    private void logCancellationStatusIfNeeded(
+    public Optional<ParsedScoreBoardStatus> parseScoreBoardStatus(String providerGameId, String responseBody) {
+        String rawText = scoreBoardStatusText(responseBody);
+        String reason = interruptionReason(rawText);
+        if (reason == null) {
+            log.info(
+                    "[ScoreBoardStatus] providerGameId={} rawStatusText={} normalizedStatus={} statusReason={}",
+                    providerGameId,
+                    abbreviate(clean(rawText), 500),
+                    null,
+                    null
+            );
+            return Optional.empty();
+        }
+        log.info(
+                "[ScoreBoardStatus] providerGameId={} rawStatusText={} normalizedStatus={} statusReason={}",
+                providerGameId,
+                abbreviate(clean(rawText), 500),
+                GameStatus.SUSPENDED.getApiValue(),
+                reason
+        );
+        return Optional.of(new ParsedScoreBoardStatus(GameStatus.SUSPENDED, reason));
+    }
+
+    private String scoreBoardStatusText(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        String trimmed = responseBody.trim();
+        List<String> values = new ArrayList<>();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+                collectTextValues(objectMapper.readTree(trimmed), values);
+            } catch (IOException ignored) {
+                values.add(trimmed);
+            }
+        } else {
+            values.add(Jsoup.parse(responseBody).text());
+        }
+        return joinClean(values.toArray(String[]::new));
+    }
+
+    private void collectTextValues(JsonNode node, List<String> values) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return;
+        }
+        if (node.isTextual()) {
+            String value = clean(node.asText());
+            if (value != null) {
+                values.add(value);
+            }
+            return;
+        }
+        if (node.isValueNode()) {
+            return;
+        }
+        if (node.isArray()) {
+            node.forEach(child -> collectTextValues(child, values));
+            return;
+        }
+        Iterator<JsonNode> elements = node.elements();
+        while (elements.hasNext()) {
+            collectTextValues(elements.next(), values);
+        }
+    }
+
+    private String interruptionReason(String value) {
+        if (value == null) {
+            return null;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        for (String phrase : List.of("우천중단", "강우중단", "경기중단", "일시중단")) {
+            if (value.contains(phrase)) {
+                return phrase;
+            }
+        }
+        if (lower.contains("rain delay")) {
+            return "rain delay";
+        }
+        if (lower.contains("suspended")) {
+            return "suspended";
+        }
+        if (lower.contains("interrupted")) {
+            return "interrupted";
+        }
+        return null;
+    }
+
+    private void logStatusDiagnostics(
             JsonNode row,
             String providerGameId,
             GameStatus normalizedStatus,
+            String statusReason,
             GameCancelReason cancelReason,
             String rawCancelText
     ) {
-        if (normalizedStatus != GameStatus.CANCELLED
-                && normalizedStatus != GameStatus.POSTPONED
-                && normalizedStatus != GameStatus.SUSPENDED) {
-            return;
-        }
         log.info(
-                "[GameStatus] cancellation detected providerGameId={} gameDate={} rawStatusCode={} rawStatusName={} normalizedStatus={} cancelReason={}",
+                "[GameStatus] parser diagnostics providerGameId={} gameDate={} rawStatusCode={} rawStatusName={} rawStateText={} rawStatusText={} normalizedStatus={} statusReason={} cancelReason={}",
                 providerGameId,
                 firstText(row, "G_DT", "GAME_DATE", "GAME_DT"),
                 text(row, "GAME_STATE_SC"),
-                firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM", "CANCEL_SC_NM"),
+                firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM"),
+                statusFieldSummary(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM"),
+                statusFieldSummary(row, "STATUS_NM", "GAME_STATUS_NM", "CANCEL_SC_NM", "DETAIL_SC"),
                 normalizedStatus.getApiValue(),
+                statusReason,
                 cancelReason == null ? clean(rawCancelText) : cancelReason.getApiValue()
         );
+    }
+
+    private String statusFieldSummary(JsonNode row, String... fieldNames) {
+        List<String> parts = new ArrayList<>();
+        for (String fieldName : fieldNames) {
+            String value = text(row, fieldName);
+            if (value != null) {
+                parts.add(fieldName + "=" + value);
+            }
+        }
+        return parts.isEmpty() ? null : String.join(",", parts);
     }
 
     private boolean isPostponedText(String value) {
@@ -635,6 +733,13 @@ public class KboGameDetailParser {
 
     private String clean(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     private String joinClean(String... values) {
@@ -872,6 +977,54 @@ public class KboGameDetailParser {
                     rawHash
             );
         }
+
+        public ParsedGameDetail withScoreBoardStatus(ParsedScoreBoardStatus scoreBoardStatus) {
+            if (scoreBoardStatus == null || scoreBoardStatus.status() == null) {
+                return this;
+            }
+            return new ParsedGameDetail(
+                    providerGameId,
+                    scoreBoardStatus.status(),
+                    false,
+                    false,
+                    scoreBoardStatus.status() == GameStatus.CANCELLED ? cancelReason : null,
+                    scoreBoardStatus.status() == GameStatus.CANCELLED ? rawCancelText : null,
+                    awayScore,
+                    homeScore,
+                    inning,
+                    inningHalf,
+                    inningLabel,
+                    balls,
+                    strikes,
+                    outs,
+                    runnerOnFirst,
+                    runnerOnSecond,
+                    runnerOnThird,
+                    firstBaseBattingOrder,
+                    secondBaseBattingOrder,
+                    thirdBaseBattingOrder,
+                    firstBaseRunnerName,
+                    secondBaseRunnerName,
+                    thirdBaseRunnerName,
+                    firstBaseRunnerId,
+                    secondBaseRunnerId,
+                    thirdBaseRunnerId,
+                    currentPitcherName,
+                    currentBatterName,
+                    homeStartingPitcherName,
+                    awayStartingPitcherName,
+                    lineupAvailable,
+                    scoreBoardStatus.statusReason(),
+                    sourceUpdatedAt,
+                    rawHash
+            );
+        }
+    }
+
+    public record ParsedScoreBoardStatus(
+            GameStatus status,
+            String statusReason
+    ) {
     }
 
     public record ParsedLineupData(

@@ -396,6 +396,75 @@ class GameDetailImportServiceTest {
     }
 
     @Test
+    void scoreBoardRainInterruptionPersistsSuspendedWithoutCancellationFlags() {
+        Game game = fixtureGame();
+        game.syncDetail(
+                GameStatus.LIVE,
+                1,
+                2,
+                "Top 8",
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.now()
+        );
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "<div class=\"status\">우천중단</div>";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                1,
+                8,
+                "top",
+                "Top 8",
+                0,
+                0,
+                0,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "detail-hash"
+        ));
+        kboLineScoreParser.result = new KboLineScoreParser.ParsedLineScoreResult(
+                List.of(new KboLineScoreParser.ParsedLineScoreInning(8, 2, 1)),
+                new KboLineScoreParser.ParsedTeamTotals(2, 5, 0, 1),
+                new KboLineScoreParser.ParsedTeamTotals(1, 4, 0, 2),
+                "line-hash"
+        );
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(game.getStatus()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(game.getStatusReason()).isEqualTo("우천중단");
+        assertThat(game.isCancelled()).isFalse();
+        assertThat(game.isPostponed()).isFalse();
+    }
+
+    @Test
     void detailParseFailureLogsResponseDiagnostics(CapturedOutput output) {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
@@ -1255,6 +1324,7 @@ class GameDetailImportServiceTest {
         private String detailBody;
         private String detailContentType = "application/json";
         private String lineScoreBody;
+        private String scoreBoardPageBody = "";
         private String boxScoreBody;
         private String lastRequestedScoreboardProviderGameId;
         private String lastRequestedBoxScoreProviderGameId;
@@ -1280,6 +1350,11 @@ class GameDetailImportServiceTest {
         public String fetchScoreBoard(String providerGameId, int seasonId) {
             lastRequestedScoreboardProviderGameId = providerGameId;
             return lineScoreBody;
+        }
+
+        @Override
+        public String fetchScoreBoardPage(String providerGameId, LocalDate gameDate) {
+            return scoreBoardPageBody;
         }
 
         @Override

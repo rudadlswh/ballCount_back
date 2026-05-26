@@ -14,6 +14,7 @@ import com.kbo.crawlerapi.parser.KboBoxscoreParser.ParsedBoxscore;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedGameDetail;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
+import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedScoreBoardStatus;
 import com.kbo.crawlerapi.parser.KboLineScoreParser;
 import com.kbo.crawlerapi.parser.KboLineScoreParser.ParsedLineScoreResult;
 import com.kbo.crawlerapi.repository.GameRepository;
@@ -133,6 +134,7 @@ public class GameDetailImportService {
                     game.getGameDate().getYear()
             );
             lineScoreResult = kboLineScoreParser.parse(lineScoreResponseBody);
+            parsedDetail = applyScoreBoardStatusIfNeeded(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineScoreResponseBody);
             boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
             lineupData = boxscoreFetchResult.lineupData();
             parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
@@ -197,6 +199,46 @@ public class GameDetailImportService {
             return new BoxscoreFetchResult(responseBody, kboGameDetailParser.parseLineupData(responseBody));
         } catch (RuntimeException exception) {
             return BoxscoreFetchResult.empty();
+        }
+    }
+
+    private ParsedGameDetail applyScoreBoardStatusIfNeeded(
+            Game game,
+            String providerGameId,
+            ParsedGameDetail parsedDetail,
+            String lineScoreResponseBody
+    ) {
+        ParsedScoreBoardStatus scoreBoardStatus = kboGameDetailParser.parseScoreBoardStatus(providerGameId, lineScoreResponseBody)
+                .orElseGet(() -> fetchScoreBoardPageStatus(game, providerGameId));
+        if (scoreBoardStatus == null || scoreBoardStatus.status() != GameStatus.SUSPENDED) {
+            return parsedDetail;
+        }
+        if (parsedDetail.status() == GameStatus.CANCELLED || parsedDetail.status() == GameStatus.POSTPONED || parsedDetail.status() == GameStatus.FINAL) {
+            return parsedDetail;
+        }
+        log.info(
+                "[GameDetailImport] scoreboard interruption applied publicGameId={} providerGameId={} previousStatus={} normalizedStatus={} statusReason={}",
+                game.getPublicGameId(),
+                providerGameId,
+                parsedDetail.status(),
+                scoreBoardStatus.status(),
+                scoreBoardStatus.statusReason()
+        );
+        return parsedDetail.withScoreBoardStatus(scoreBoardStatus);
+    }
+
+    private ParsedScoreBoardStatus fetchScoreBoardPageStatus(Game game, String providerGameId) {
+        try {
+            String scoreBoardPage = kboGameDetailClient.fetchScoreBoardPage(providerGameId, game.getGameDate());
+            return kboGameDetailParser.parseScoreBoardStatus(providerGameId, scoreBoardPage).orElse(null);
+        } catch (RuntimeException exception) {
+            log.info(
+                    "[GameDetailImport] scoreboard page status unavailable publicGameId={} providerGameId={} reason={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    exception.getMessage()
+            );
+            return null;
         }
     }
 

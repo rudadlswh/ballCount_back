@@ -23,6 +23,7 @@ public class KboGameDetailClient {
     private static final String BASE_URL = "https://www.koreabaseball.com";
     private static final String GAME_LIST_ENDPOINT_PATH = "/ws/Main.asmx/GetKboGameList";
     private static final String SCOREBOARD_ENDPOINT_PATH = "/ws/Schedule.asmx/GetScoreBoardScroll";
+    private static final String SCOREBOARD_PAGE_PATH = "/Schedule/GameCenter/ScoreBoard.aspx";
     private static final String BOXSCORE_ENDPOINT_PATH = "/ws/Schedule.asmx/GetBoxScoreScroll";
     private static final String METHOD = "POST";
     private static final String USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -105,6 +106,28 @@ public class KboGameDetailClient {
             return detailResponse.body();
         } catch (RestClientException exception) {
             throw new IllegalStateException("Failed to fetch KBO line score for " + providerGameId, exception);
+        }
+    }
+
+    public String fetchScoreBoardPage(String providerGameId, LocalDate gameDate) {
+        try {
+            ResponseEntity<String> response = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path(SCOREBOARD_PAGE_PATH)
+                            .queryParam("gameDate", gameDate.format(DATE_FORMATTER))
+                            .queryParam("gameId", providerGameId)
+                            .build())
+                    .header(HttpHeaders.USER_AGENT, USER_AGENT)
+                    .header(HttpHeaders.ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header(HttpHeaders.ACCEPT_LANGUAGE, "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .header(HttpHeaders.REFERER, BASE_URL + "/Schedule/GameCenter/Main.aspx?gameId=" + providerGameId)
+                    .retrieve()
+                    .toEntity(String.class);
+            DetailResponse detailResponse = toDetailResponse(response, SCOREBOARD_PAGE_PATH);
+            validateDetailResponse(detailResponse, "KBO score board page returned error page");
+            return detailResponse.body();
+        } catch (RestClientException exception) {
+            throw new IllegalStateException("Failed to fetch KBO score board page for " + providerGameId, exception);
         }
     }
 

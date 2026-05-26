@@ -61,6 +61,33 @@ class GameTest {
         assertThat(game.getFinalConfirmedAt()).isNotNull();
     }
 
+    @Test
+    void scheduleSyncDoesNotDowngradeSuspendedToLive() {
+        Game game = fixtureGame(GameStatus.SUSPENDED);
+
+        game.syncSchedule(
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getGameDate(),
+                game.getScheduledAt(),
+                game.getStadium(),
+                GameStatus.LIVE,
+                game.getHomeTeam(),
+                game.getAwayTeam(),
+                6,
+                4,
+                false,
+                false,
+                null,
+                null,
+                OffsetDateTime.of(2026, 5, 19, 20, 10, 0, 0, ZoneOffset.ofHours(9))
+        );
+
+        assertThat(game.getStatus()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(game.isCancelled()).isFalse();
+        assertThat(game.isPostponed()).isFalse();
+    }
+
     private Game fixtureGame(GameStatus status) {
         Team homeTeam = new Team(UUID.randomUUID(), "lotte", "롯데 자이언츠", "롯데", "Lotte Giants", null);
         Team awayTeam = new Team(UUID.randomUUID(), "hanwha", "한화 이글스", "한화", "Hanwha Eagles", null);
