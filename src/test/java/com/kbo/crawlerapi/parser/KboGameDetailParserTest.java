@@ -223,6 +223,40 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void mapsRainInterruptedStatusToSuspendedWithoutCancellationFlags() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260526LTLG0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_STATE_SC_NM": "우천중단",
+                      "CANCEL_SC_NM": "정상경기",
+                      "GAME_INN_NO": 8,
+                      "GAME_TB_SC": "T",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "1",
+                      "B_SCORE_CN": "2"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status().getApiValue()).isEqualTo("suspended");
+        assertThat(result.get(0).statusReason()).isEqualTo("우천중단");
+        assertThat(result.get(0).isCancelled()).isFalse();
+        assertThat(result.get(0).isPostponed()).isFalse();
+        assertThat(result.get(0).rawCancelText()).isNull();
+        assertThat(result.get(0).cancelReason()).isNull();
+        assertThat(result.get(0).awayScore()).isEqualTo(1);
+        assertThat(result.get(0).homeScore()).isEqualTo(2);
+        assertThat(result.get(0).inningLabel()).isEqualTo("Top 8");
+    }
+
+    @Test
     void parsesCurrentPitcherAndBatterFromOfficialTeamSideFieldsForTopHalf() {
         String payload = """
                 {

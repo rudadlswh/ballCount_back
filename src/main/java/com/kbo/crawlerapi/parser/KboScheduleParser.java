@@ -317,11 +317,14 @@ public class KboScheduleParser {
         if (note.contains("연기") || note.contains("순연") || normalizedNote.contains("postponed")) {
             return GameStatus.POSTPONED;
         }
+        if (isInterruptedText(note)) {
+            return GameStatus.SUSPENDED;
+        }
         if (note.contains("우천취소")
                 || note.contains("경기취소")
                 || note.contains("취소")
                 || note.contains("노게임")
-                || normalizedNote.contains("rain")
+                || normalizedNote.equals("rain")
                 || normalizedNote.contains("cancel")
                 || normalizedNote.contains("no game")
                 || normalizedNote.contains("nogame")) {
@@ -361,6 +364,22 @@ public class KboScheduleParser {
             return GameCancelReason.UNKNOWN;
         }
         return GameCancelReason.ETC;
+    }
+
+    private boolean isInterruptedText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return value.contains("서스펜")
+                || value.contains("우천중단")
+                || value.contains("강우중단")
+                || value.contains("경기중단")
+                || value.contains("일시중단")
+                || value.contains("중단")
+                || lower.contains("suspend")
+                || lower.contains("interrupted")
+                || lower.contains("rain delay");
     }
 
     private String normalizeRawCancelText(String note) {

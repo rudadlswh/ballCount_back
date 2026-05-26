@@ -200,6 +200,37 @@ class KboScheduleParserTest {
     }
 
     @Test
+    void parsesRainDelayScheduleRowAsSuspendedNotCancelled() {
+        String payload = """
+                {
+                  "gameList": [
+                    {
+                      "G_ID": "20260526LTLG0",
+                      "G_DT": "2026-05-26",
+                      "G_TM": "18:30",
+                      "AWAY_ID": "LT",
+                      "HOME_ID": "LG",
+                      "S_NM": "잠실",
+                      "GAME_STATE_SC_NM": "rain delay",
+                      "AWAY_SCORE": "1",
+                      "HOME_SCORE": "2"
+                    }
+                  ]
+                }
+                """;
+
+        var games = parser.parseMonthlySchedule(payload, YearMonth.of(2026, 5));
+
+        assertThat(games).hasSize(1);
+        assertThat(games.get(0).status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(games.get(0).isCancelled()).isFalse();
+        assertThat(games.get(0).isPostponed()).isFalse();
+        assertThat(games.get(0).rawCancelText()).isNull();
+        assertThat(games.get(0).awayScore()).isEqualTo(1);
+        assertThat(games.get(0).homeScore()).isEqualTo(2);
+    }
+
+    @Test
     void skipsMalformedRowsWhileKeepingValidRows() {
         String payload = """
                 {

@@ -404,6 +404,12 @@ public class LiveGameSyncService {
         if (isCancellationTransition(before.status(), after.status())) {
             drafts.add(cancelledDraft(game, after.status()));
         }
+        if (isInterruptionTransition(before.status(), after.status())) {
+            drafts.add(interruptedDraft(game));
+        }
+        if (isResumeTransition(before.status(), after.status())) {
+            drafts.add(resumedDraft(game));
+        }
         if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
             drafts.add(finalDraft(game));
         }
@@ -439,6 +445,34 @@ public class LiveGameSyncService {
         draft.payload().put("cancelReason", game.getCancelReason() == null ? null : game.getCancelReason().getApiValue());
         draft.payload().put("rawCancelText", game.getRawCancelText());
         return draft;
+    }
+
+    private NotificationEventDraft interruptedDraft(Game game) {
+        String reason = normalizedInterruptionReason(game);
+        String matchup = "%s vs %s".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
+        String body = isRainInterruption(reason)
+                ? "%s 경기가 우천으로 중단되었습니다.".formatted(matchup)
+                : "%s 경기가 중단되었습니다.".formatted(matchup);
+        NotificationEventDraft draft = draft(
+                game,
+                NotificationEventService.EVENT_GAME_INTERRUPTED,
+                "game:%s:interrupted:%s".formatted(game.getId(), safeKey(reason)),
+                "경기 중단",
+                body
+        );
+        draft.payload().put("statusReason", game.getStatusReason());
+        return draft;
+    }
+
+    private NotificationEventDraft resumedDraft(Game game) {
+        String matchup = "%s vs %s".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
+        return draft(
+                game,
+                NotificationEventService.EVENT_GAME_RESUMED,
+                "game:%s:resumed".formatted(game.getId()),
+                "경기 재개",
+                "%s 경기가 재개되었습니다.".formatted(matchup)
+        );
     }
 
     private NotificationEventDraft pitchersDraft(Game game) {
@@ -681,7 +715,7 @@ public class LiveGameSyncService {
     }
 
     private boolean isCancellationTarget(GameStatus status) {
-        return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED || status == GameStatus.SUSPENDED;
+        return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
     }
 
     private boolean isScheduleCancellationTransition(GameStatus before, GameStatus after) {
@@ -692,6 +726,18 @@ public class LiveGameSyncService {
 
     private boolean isScheduleCancellationTarget(GameStatus status) {
         return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
+    }
+
+    private boolean isInterruptionTransition(GameStatus before, GameStatus after) {
+        return before != after && isLiveLike(before) && isInterrupted(after) && !isInterrupted(before);
+    }
+
+    private boolean isResumeTransition(GameStatus before, GameStatus after) {
+        return isInterrupted(before) && after == GameStatus.LIVE;
+    }
+
+    private boolean isInterrupted(GameStatus status) {
+        return status == GameStatus.SUSPENDED;
     }
 
     private String cancellationBody(Game game, GameStatus cancelledStatus) {
@@ -919,6 +965,24 @@ public class LiveGameSyncService {
 
     private String safeKey(String value) {
         return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
+    private String normalizedInterruptionReason(Game game) {
+        String reason = game.getStatusReason();
+        if (reason == null || reason.isBlank()) {
+            reason = game.getRawCancelText();
+        }
+        if (reason == null || reason.isBlank()) {
+            return "interrupted";
+        }
+        return reason.trim().replaceAll("\\s+", "_").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private boolean isRainInterruption(String normalizedReason) {
+        return normalizedReason != null
+                && (normalizedReason.contains("우천")
+                || normalizedReason.contains("강우")
+                || normalizedReason.contains("rain"));
     }
 
     private boolean changedText(String before, String after) {
