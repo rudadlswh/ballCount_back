@@ -30,8 +30,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class LiveGameSyncServiceTest {
 
     private static final Clock ACTIVE_KST_CLOCK = Clock.fixed(
@@ -169,6 +171,26 @@ class LiveGameSyncServiceTest {
         assertThat(result.candidateCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
         assertThat(importService.importedGameIds).containsExactly(game.getPublicGameId());
+    }
+
+    @Test
+    void candidateDiagnosticsIncludeProviderGameId(CapturedOutput output) {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:30:00Z"), ZoneId.of("Asia/Seoul"));
+        Game game = fixtureGame(
+                GameStatus.SCHEDULED,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(game);
+        LiveGameSyncService service = service(clock, importService, new StubNotificationEventService());
+
+        service.sync(game.getGameDate(), false);
+
+        assertThat(output.getOut()).contains("candidate diagnostics");
+        assertThat(output.getOut()).contains("providerGameId=" + game.getProviderGameId());
     }
 
     @Test

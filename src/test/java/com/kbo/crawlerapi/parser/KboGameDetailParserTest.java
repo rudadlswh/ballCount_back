@@ -6,10 +6,30 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.GameCancelReason;
+import com.kbo.crawlerapi.domain.GameStatus;
 
 class KboGameDetailParserTest {
 
     private final KboGameDetailParser parser = new KboGameDetailParser(new ObjectMapper());
+
+    @Test
+    void scoreBoardRainInterruptionMapsToSuspended() {
+        String html = """
+                <html>
+                  <body>
+                    <div class="scoreboard">
+                      <span class="status">우천중단</span>
+                    </div>
+                  </body>
+                </html>
+                """;
+
+        var status = parser.parseScoreBoardStatus("20260526LGLT0", html);
+
+        assertThat(status).isPresent();
+        assertThat(status.get().status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(status.get().statusReason()).isEqualTo("우천중단");
+    }
 
     @Test
     void parsesFinalGameSnapshotFields() {

@@ -99,11 +99,15 @@ public class LiveGameSyncService {
         refreshScheduleBeforeDetailImport(targetDate);
 
         List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
-        List<Game> candidates = games.stream()
-                .filter(game -> isCandidate(game, force))
-                .filter(game -> !isScheduleCancellationTarget(game.getStatus()))
-                .filter(this::shouldRunDetailImport)
-                .toList();
+        List<Game> candidates = new ArrayList<>();
+        for (Game game : games) {
+            String skipReason = detailImportSkipReason(game, force);
+            boolean attempted = skipReason == null;
+            logCandidateDiagnostics(game, attempted, skipReason);
+            if (attempted) {
+                candidates.add(game);
+            }
+        }
         log.info("[LiveGameSync] candidate count={}", candidates.size());
 
         int updatedCount = 0;
@@ -282,6 +286,45 @@ public class LiveGameSyncService {
             cause = cause.getCause();
         }
         return false;
+    }
+
+    private String detailImportSkipReason(Game game, boolean force) {
+        if (game.getProviderGameId() == null || game.getProviderGameId().isBlank()) {
+            return "missing-provider-game-id";
+        }
+        if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
+            return "final-confirmed";
+        }
+        if (!force && !isActiveKstWindow() && !isNearScheduledStart(game) && !hasScheduledStartReached(game)) {
+            return "outside-active-window-and-pregame-eligibility";
+        }
+        Instant nextRefreshAt = nextRefreshAtByGameId.get(game.getId());
+        Instant now = Instant.now(applicationClock);
+        boolean refreshDue = force || nextRefreshAt == null || !now.isBefore(nextRefreshAt);
+        if (!refreshDue) {
+            return "ttl-not-due";
+        }
+        if (isScheduleCancellationTarget(game.getStatus())) {
+            return "schedule-cancellation-target";
+        }
+        if (!shouldRunDetailImport(game)) {
+            return "not-live-like";
+        }
+        return null;
+    }
+
+    private void logCandidateDiagnostics(Game game, boolean detailImportAttempted, String skipReason) {
+        log.info(
+                "[LiveGameSync] candidate diagnostics publicGameId={} providerGameId={} storedStatus={} storedStatusReason={} scheduledAt={} gameDate={} detailImport={} skipReason={}",
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getStatus(),
+                game.getStatusReason(),
+                game.getScheduledAt(),
+                game.getGameDate(),
+                detailImportAttempted ? "attempted" : "skipped",
+                skipReason
+        );
     }
 
     private boolean isCandidate(Game game, boolean force) {

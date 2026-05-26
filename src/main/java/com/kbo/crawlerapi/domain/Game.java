@@ -290,8 +290,9 @@ public class Game {
             this.stadium = stadium;
             changed = true;
         }
-        if (this.status != status) {
-            this.status = status;
+        GameStatus effectiveStatus = shouldKeepSuspendedDuringSchedule(status) ? GameStatus.SUSPENDED : status;
+        if (this.status != effectiveStatus) {
+            this.status = effectiveStatus;
             changed = true;
         }
         if (!this.homeTeam.getId().equals(homeTeam.getId())) {
@@ -422,6 +423,11 @@ public class Game {
                 && incomingStatus != GameStatus.FINAL
                 && incomingStatus != GameStatus.CANCELLED
                 && incomingStatus != GameStatus.POSTPONED;
+    }
+
+    private boolean shouldKeepSuspendedDuringSchedule(GameStatus incomingStatus) {
+        return this.status == GameStatus.SUSPENDED
+                && incomingStatus == GameStatus.LIVE;
     }
 
     private boolean hasText(String value) {
