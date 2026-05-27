@@ -354,6 +354,10 @@ public class Game {
             this.status = effectiveStatus;
             changed = true;
         }
+        if (effectiveStatus != GameStatus.FINAL && this.finalConfirmedAt != null) {
+            this.finalConfirmedAt = null;
+            changed = true;
+        }
         if (homeScore != null && !java.util.Objects.equals(this.homeScore, homeScore)) {
             this.homeScore = homeScore;
             changed = true;
@@ -422,7 +426,8 @@ public class Game {
                 && this.finalConfirmedAt != null
                 && incomingStatus != GameStatus.FINAL
                 && incomingStatus != GameStatus.CANCELLED
-                && incomingStatus != GameStatus.POSTPONED;
+                && incomingStatus != GameStatus.POSTPONED
+                && incomingStatus != GameStatus.SUSPENDED;
     }
 
     private boolean shouldKeepSuspendedDuringSchedule(GameStatus incomingStatus) {

@@ -62,6 +62,35 @@ class GameTest {
     }
 
     @Test
+    void confirmedFinalCanRecoverToSuspendedDetailSync() {
+        Game game = fixtureGame(GameStatus.FINAL);
+        game.confirmFinal(OffsetDateTime.of(2026, 5, 19, 21, 10, 0, 0, ZoneOffset.ofHours(9)));
+
+        game.syncDetail(
+                GameStatus.SUSPENDED,
+                6,
+                4,
+                "Top 8",
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "우천중단",
+                OffsetDateTime.of(2026, 5, 19, 20, 9, 0, 0, ZoneOffset.ofHours(9))
+        );
+
+        assertThat(game.getStatus()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(game.getFinalConfirmedAt()).isNull();
+        assertThat(game.getStatusReason()).isEqualTo("우천중단");
+        assertThat(game.isCancelled()).isFalse();
+        assertThat(game.isPostponed()).isFalse();
+    }
+
+
+    @Test
     void scheduleSyncDoesNotDowngradeSuspendedToLive() {
         Game game = fixtureGame(GameStatus.SUSPENDED);
 

@@ -129,11 +129,12 @@ public class GameDetailImportService {
             officialProviderGameId = resolvedOfficialDetail.providerGameId();
             parsedDetail = resolvedOfficialDetail.parsedDetail();
             logCurrentPlayerDtoState(game, parsedDetail);
-            lineScoreResponseBody = kboGameDetailClient.fetchScoreBoard(
-                    resolvedOfficialDetail.providerGameId(),
-                    game.getGameDate().getYear()
+            LineScoreFetchResult lineScoreFetchResult = fetchLineScoreSafely(
+                    game,
+                    resolvedOfficialDetail.providerGameId()
             );
-            lineScoreResult = kboLineScoreParser.parse(lineScoreResponseBody);
+            lineScoreResponseBody = lineScoreFetchResult.responseBody();
+            lineScoreResult = lineScoreFetchResult.lineScoreResult();
             parsedDetail = applyScoreBoardStatusIfNeeded(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineScoreResponseBody);
             boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
             lineupData = boxscoreFetchResult.lineupData();
@@ -202,6 +203,21 @@ public class GameDetailImportService {
         }
     }
 
+    private LineScoreFetchResult fetchLineScoreSafely(Game game, String providerGameId) {
+        try {
+            String responseBody = kboGameDetailClient.fetchScoreBoard(providerGameId, game.getGameDate().getYear());
+            return new LineScoreFetchResult(responseBody, kboLineScoreParser.parse(responseBody));
+        } catch (RuntimeException exception) {
+            log.info(
+                    "[GameDetailImport] scoreboard line score unavailable publicGameId={} providerGameId={} reason={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    exception.getMessage()
+            );
+            return new LineScoreFetchResult(null, ParsedLineScoreResult.empty("scoreboard-unavailable:" + providerGameId));
+        }
+    }
+
     private ParsedGameDetail applyScoreBoardStatusIfNeeded(
             Game game,
             String providerGameId,
@@ -213,7 +229,10 @@ public class GameDetailImportService {
         if (scoreBoardStatus == null || scoreBoardStatus.status() != GameStatus.SUSPENDED) {
             return parsedDetail;
         }
-        if (parsedDetail.status() == GameStatus.CANCELLED || parsedDetail.status() == GameStatus.POSTPONED || parsedDetail.status() == GameStatus.FINAL) {
+        if (parsedDetail.status() == GameStatus.CANCELLED || parsedDetail.status() == GameStatus.POSTPONED) {
+            return parsedDetail;
+        }
+        if (parsedDetail.status() == GameStatus.FINAL && hasReliableFinalStatusReason(parsedDetail.statusReason())) {
             return parsedDetail;
         }
         log.info(
@@ -240,6 +259,20 @@ public class GameDetailImportService {
             );
             return null;
         }
+    }
+
+    private boolean hasReliableFinalStatusReason(String statusReason) {
+        if (statusReason == null || statusReason.isBlank()) {
+            return false;
+        }
+        String lower = statusReason.toLowerCase(java.util.Locale.ROOT);
+        String collapsed = statusReason.replace(" ", "");
+        return statusReason.equals("GAME_RESULT_CK=1")
+                || collapsed.contains("경기종료")
+                || collapsed.equals("종료")
+                || lower.contains("final")
+                || lower.contains("ended")
+                || lower.contains("completed");
     }
 
     private void saveBoxscoreRecordsIfAvailable(
@@ -794,5 +827,11 @@ public class GameDetailImportService {
         private static BoxscoreFetchResult empty() {
             return new BoxscoreFetchResult(null, ParsedLineupData.empty(null));
         }
+    }
+
+    private record LineScoreFetchResult(
+            String responseBody,
+            ParsedLineScoreResult lineScoreResult
+    ) {
     }
 }
