@@ -465,6 +465,60 @@ class GameDetailImportServiceTest {
     }
 
     @Test
+    void weakFinalDetailCanBeOverriddenByScoreBoardRainInterruption() {
+        Game game = fixtureGame();
+        game.confirmFinal(OffsetDateTime.now());
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "<div class=\"status\">우천중단</div>";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.FINAL,
+                false,
+                false,
+                null,
+                null,
+                2,
+                1,
+                8,
+                "top",
+                "Top 8",
+                0,
+                0,
+                0,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "weak-final-detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(game.getStatus()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(game.getStatusReason()).isEqualTo("우천중단");
+        assertThat(game.getFinalConfirmedAt()).isNull();
+        assertThat(game.isCancelled()).isFalse();
+        assertThat(game.isPostponed()).isFalse();
+        assertThat(game.getAwayScore()).isEqualTo(2);
+        assertThat(game.getHomeScore()).isEqualTo(1);
+        assertThat(game.getInningState()).isEqualTo("Top 8");
+    }
+
+    @Test
     void detailParseFailureLogsResponseDiagnostics(CapturedOutput output) {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);

@@ -292,7 +292,7 @@ public class LiveGameSyncService {
         if (game.getProviderGameId() == null || game.getProviderGameId().isBlank()) {
             return "missing-provider-game-id";
         }
-        if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
+        if (shouldSkipFinalConfirmed(game)) {
             return "final-confirmed";
         }
         if (!force && !isActiveKstWindow() && !isNearScheduledStart(game) && !hasScheduledStartReached(game)) {
@@ -332,7 +332,7 @@ public class LiveGameSyncService {
             log.debug("[LiveGameSync] skipped candidate game={} reason=missing-provider-game-id", game.getPublicGameId());
             return false;
         }
-        if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
+        if (shouldSkipFinalConfirmed(game)) {
             log.debug("[LiveGameSync] skipped candidate game={} reason=final-confirmed", game.getPublicGameId());
             return false;
         }
@@ -363,7 +363,7 @@ public class LiveGameSyncService {
         if (isLiveLike(game.getStatus())) {
             return true;
         }
-        if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() == null) {
+        if (game.getStatus() == GameStatus.FINAL && !shouldSkipFinalConfirmed(game)) {
             return true;
         }
         if ((game.getStatus() == GameStatus.SCHEDULED || game.getStatus() == GameStatus.UNKNOWN)
@@ -419,7 +419,7 @@ public class LiveGameSyncService {
         if (game.getStatus() == GameStatus.LIVE || game.getStatus() == GameStatus.SUSPENDED) {
             return properties.getLiveTtl();
         }
-        if (game.getStatus() == GameStatus.FINAL && game.getFinalConfirmedAt() == null) {
+        if (game.getStatus() == GameStatus.FINAL && !shouldSkipFinalConfirmed(game)) {
             return properties.getFinalConfirmationTtl();
         }
         return properties.getPregameTtl();
@@ -429,7 +429,46 @@ public class LiveGameSyncService {
         if (game.getStatus() != GameStatus.FINAL || game.getFinalConfirmedAt() != null) {
             return false;
         }
+        if (!hasReliableFinalStatusReason(game.getStatusReason())) {
+            log.info(
+                    "[LiveGameSync] final confirmation deferred game={} reason=weak-final-marker statusReason={}",
+                    game.getPublicGameId(),
+                    game.getStatusReason()
+            );
+            return false;
+        }
         return game.confirmFinal(OffsetDateTime.now(applicationClock));
+    }
+
+    private boolean shouldSkipFinalConfirmed(Game game) {
+        if (game.getStatus() != GameStatus.FINAL || game.getFinalConfirmedAt() == null) {
+            return false;
+        }
+        if (game.getGameDate().equals(LocalDate.now(applicationClock.withZone(KST)))
+                && !hasReliableFinalStatusReason(game.getStatusReason())) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isStrongFinal(Game game) {
+        return game.getStatus() == GameStatus.FINAL
+                && game.getFinalConfirmedAt() != null
+                && hasReliableFinalStatusReason(game.getStatusReason());
+    }
+
+    private static boolean hasReliableFinalStatusReason(String statusReason) {
+        if (statusReason == null || statusReason.isBlank()) {
+            return false;
+        }
+        String lower = statusReason.toLowerCase(java.util.Locale.ROOT);
+        String collapsed = statusReason.replace(" ", "");
+        return statusReason.equals("GAME_RESULT_CK=1")
+                || collapsed.contains("경기종료")
+                || collapsed.equals("종료")
+                || lower.contains("final")
+                || lower.contains("ended")
+                || lower.contains("completed");
     }
 
     private boolean becameFinalOrFinalConfirmed(GameState before, Game after, boolean finalConfirmed) {
@@ -447,13 +486,13 @@ public class LiveGameSyncService {
         if (isCancellationTransition(before.status(), after.status())) {
             drafts.add(cancelledDraft(game, after.status()));
         }
-        if (isInterruptionTransition(before.status(), after.status())) {
+        if (isInterruptionTransition(before, after)) {
             drafts.add(interruptedDraft(game));
         }
         if (isResumeTransition(before.status(), after.status())) {
             drafts.add(resumedDraft(game));
         }
-        if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL && game.getFinalConfirmedAt() != null) {
+        if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL && isStrongFinal(game)) {
             drafts.add(finalDraft(game));
         }
         if (isLiveLike(before.status()) && isLiveLike(after.status()) && inningChanged(before, after)) {
@@ -771,8 +810,16 @@ public class LiveGameSyncService {
         return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
     }
 
-    private boolean isInterruptionTransition(GameStatus before, GameStatus after) {
-        return before != after && isLiveLike(before) && isInterrupted(after) && !isInterrupted(before);
+    private boolean isInterruptionTransition(GameState before, GameState after) {
+        return before.status() != after.status()
+                && (isLiveLike(before.status()) || isWeakFinal(before))
+                && isInterrupted(after.status())
+                && !isInterrupted(before.status());
+    }
+
+    private boolean isWeakFinal(GameState state) {
+        return state.status() == GameStatus.FINAL
+                && (state.finalConfirmedAt() == null || !hasReliableFinalStatusReason(state.statusReason()));
     }
 
     private boolean isResumeTransition(GameStatus before, GameStatus after) {
@@ -1048,6 +1095,8 @@ public class LiveGameSyncService {
             GameStatus status,
             boolean isCancelled,
             boolean isPostponed,
+            OffsetDateTime finalConfirmedAt,
+            String statusReason,
             Integer homeScore,
             Integer awayScore,
             String homeStartingPitcherName,
@@ -1068,6 +1117,8 @@ public class LiveGameSyncService {
                     game.getStatus(),
                     game.isCancelled(),
                     game.isPostponed(),
+                    game.getFinalConfirmedAt(),
+                    clean(game.getStatusReason()),
                     game.getHomeScore(),
                     game.getAwayScore(),
                     game.getHomeStartingPitcherName(),

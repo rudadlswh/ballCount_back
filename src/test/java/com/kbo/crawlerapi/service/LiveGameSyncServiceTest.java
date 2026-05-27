@@ -374,7 +374,7 @@ class LiveGameSyncServiceTest {
     @Test
     void liveToFinalTransitionCreatesGameEndDraftOnce() {
         Game before = fixtureGame(GameStatus.LIVE, 3, 2);
-        Game after = fixtureGame(GameStatus.FINAL, 4, 2);
+        Game after = withStatusReason(fixtureGame(GameStatus.FINAL, 4, 2), "GAME_RESULT_CK=1");
         GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
         GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
 
@@ -450,6 +450,31 @@ class LiveGameSyncServiceTest {
         assertThat(draft.payload())
                 .containsEntry("status", "suspended")
                 .containsEntry("statusReason", "우천중단");
+    }
+
+    @Test
+    void weakFinalToRainInterruptedTransitionCreatesGameInterruptedDraft() {
+        Game before = fixtureGame(GameStatus.FINAL, 1, 2, "Top 8");
+        before.confirmFinal(OffsetDateTime.now(ACTIVE_KST_CLOCK));
+        Game after = withStatusReason(fixtureGame(GameStatus.SUSPENDED, 1, 2, "Top 8"), "우천중단");
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 1, false, false, false, 1, 2, 8, "top", "Top 8");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_GAME_INTERRUPTED);
     }
 
     @Test
@@ -734,7 +759,7 @@ class LiveGameSyncServiceTest {
     @Test
     void liveToFinalTransitionTriggersTeamRankRefresh() {
         Game before = fixtureGame(GameStatus.LIVE, 3, 2);
-        Game after = fixtureGame(GameStatus.FINAL, 4, 2);
+        Game after = withStatusReason(fixtureGame(GameStatus.FINAL, 4, 2), "GAME_RESULT_CK=1");
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
                 .thenReturn(List.of(before));
@@ -758,7 +783,7 @@ class LiveGameSyncServiceTest {
     @Test
     void teamRankRefreshFailureDoesNotBreakLiveSync() {
         Game before = fixtureGame(GameStatus.LIVE, 3, 2);
-        Game after = fixtureGame(GameStatus.FINAL, 4, 2);
+        Game after = withStatusReason(fixtureGame(GameStatus.FINAL, 4, 2), "GAME_RESULT_CK=1");
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
                 .thenReturn(List.of(before));
@@ -1071,7 +1096,7 @@ class LiveGameSyncServiceTest {
 
     @Test
     void finalConfirmedGameIsNotRefreshedForever() {
-        Game finalGame = fixtureGame(GameStatus.FINAL, 4, 3);
+        Game finalGame = withStatusReason(fixtureGame(GameStatus.FINAL, 4, 3), "GAME_RESULT_CK=1");
         finalGame.confirmFinal(OffsetDateTime.now(ACTIVE_KST_CLOCK));
         StubGameDetailImportService importService = new StubGameDetailImportService();
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(finalGame.getGameDate())))
@@ -1084,6 +1109,35 @@ class LiveGameSyncServiceTest {
         assertThat(result.candidateCount()).isZero();
         assertThat(importService.importedGameIds).isEmpty();
         verify(gameRepository, never()).findByPublicGameId(eq(finalGame.getPublicGameId()));
+    }
+
+    @Test
+    void storedFinalWithNullFinalConfirmedAtOnTodayIsRevalidated() {
+        Game finalGame = fixtureGame(GameStatus.FINAL, 4, 3);
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(finalGame);
+
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(finalGame.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isEqualTo(1);
+        assertThat(importService.importedGameIds).containsExactly(finalGame.getPublicGameId());
+    }
+
+    @Test
+    void storedFinalWithWeakSameDayConfirmationIsRevalidated() {
+        Game finalGame = fixtureGame(GameStatus.FINAL, 4, 3);
+        finalGame.confirmFinal(OffsetDateTime.now(ACTIVE_KST_CLOCK));
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(finalGame);
+
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, importService, new StubNotificationEventService());
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(finalGame.getGameDate(), false);
+
+        assertThat(result.candidateCount()).isEqualTo(1);
+        assertThat(importService.importedGameIds).containsExactly(finalGame.getPublicGameId());
     }
 
     private LiveGameSyncService service(

@@ -423,7 +423,7 @@ public class KboGameDetailParser {
         }
 
         String gameState = text(row, "GAME_STATE_SC");
-        if ("3".equals(gameState) || row.path("GAME_RESULT_CK").asInt(0) == 1) {
+        if (hasReliableFinalMarker(row)) {
             return GameStatus.FINAL;
         }
         if ("2".equals(gameState)) {
@@ -439,6 +439,14 @@ public class KboGameDetailParser {
     }
 
     public Optional<ParsedScoreBoardStatus> parseScoreBoardStatus(String providerGameId, String responseBody) {
+        if (isInvalidScoreBoardResponse(responseBody)) {
+            log.info(
+                    "[ScoreBoardStatus] providerGameId={} ignored=true reason=invalid-scoreboard-response rawStatusText={}",
+                    providerGameId,
+                    abbreviate(scoreBoardStatusText(responseBody), 500)
+            );
+            return Optional.empty();
+        }
         String rawText = scoreBoardStatusText(responseBody);
         String reason = interruptionReason(rawText);
         if (reason == null) {
@@ -477,6 +485,19 @@ public class KboGameDetailParser {
             values.add(Jsoup.parse(responseBody).text());
         }
         return joinClean(values.toArray(String[]::new));
+    }
+
+    private boolean isInvalidScoreBoardResponse(String responseBody) {
+        String rawText = scoreBoardStatusText(responseBody);
+        if (rawText == null) {
+            return false;
+        }
+        String normalized = rawText.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("object moved")
+                || normalized.contains("입력 문자열의 형식이 잘못되었습니다")
+                || normalized.contains("input string was not in a correct format")
+                || normalized.contains("이용에 불편을 드려 죄송합니다")
+                || normalized.contains("error | kbo");
     }
 
     private void collectTextValues(JsonNode node, List<String> values) {
@@ -586,6 +607,42 @@ public class KboGameDetailParser {
                 || lower.contains("rain delay");
     }
 
+    private boolean hasReliableFinalMarker(JsonNode row) {
+        return row.path("GAME_RESULT_CK").asInt(0) == 1
+                || isFinalText(statusText(row));
+    }
+
+    private String finalStatusReason(JsonNode row) {
+        String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");
+        String rawCancelText = text(row, "CANCEL_SC_NM");
+        for (String candidate : new String[]{rawStatusName, rawCancelText}) {
+            String cleaned = clean(candidate);
+            if (isFinalText(cleaned)) {
+                return cleaned;
+            }
+        }
+        return row.path("GAME_RESULT_CK").asInt(0) == 1 ? "GAME_RESULT_CK=1" : null;
+    }
+
+    private String statusText(JsonNode row) {
+        String cancelName = text(row, "CANCEL_SC_NM");
+        String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");
+        return joinClean(cancelName, rawStatusName);
+    }
+
+    private boolean isFinalText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        String collapsed = value.replace(" ", "");
+        return collapsed.contains("경기종료")
+                || collapsed.equals("종료")
+                || lower.contains("final")
+                || lower.contains("ended")
+                || lower.contains("completed");
+    }
+
     private void logRunnerRelatedKeysIfNeeded(
             JsonNode row,
             String providerGameId,
@@ -642,6 +699,9 @@ public class KboGameDetailParser {
     }
 
     private String resolveStatusReason(JsonNode row, GameStatus status, String rawCancelText) {
+        if (status == GameStatus.FINAL) {
+            return finalStatusReason(row);
+        }
         if (status != GameStatus.CANCELLED && status != GameStatus.POSTPONED && status != GameStatus.SUSPENDED) {
             return null;
         }

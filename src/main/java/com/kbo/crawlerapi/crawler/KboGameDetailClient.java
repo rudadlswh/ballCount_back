@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.crawler;
 
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
@@ -9,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -23,9 +25,8 @@ public class KboGameDetailClient {
     private static final String BASE_URL = "https://www.koreabaseball.com";
     private static final String GAME_LIST_ENDPOINT_PATH = "/ws/Main.asmx/GetKboGameList";
     private static final String SCOREBOARD_ENDPOINT_PATH = "/ws/Schedule.asmx/GetScoreBoardScroll";
-    private static final String SCOREBOARD_PAGE_PATH = "/Schedule/GameCenter/ScoreBoard.aspx";
+    private static final String SCOREBOARD_PAGE_PATH = "/Schedule/ScoreBoard.aspx";
     private static final String BOXSCORE_ENDPOINT_PATH = "/ws/Schedule.asmx/GetBoxScoreScroll";
-    private static final String METHOD = "POST";
     private static final String USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
@@ -39,6 +40,9 @@ public class KboGameDetailClient {
     protected KboGameDetailClient(RestClient.Builder restClientBuilder, String baseUrl) {
         this.restClient = restClientBuilder
                 .baseUrl(baseUrl)
+                .requestFactory(new JdkClientHttpRequestFactory(HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .build()))
                 .build();
         this.baseUrl = baseUrl;
     }
@@ -65,7 +69,7 @@ public class KboGameDetailClient {
                     .body(form)
                     .retrieve()
                     .toEntity(String.class);
-            DetailResponse detailResponse = toDetailResponse(response, GAME_LIST_ENDPOINT_PATH);
+            DetailResponse detailResponse = toDetailResponse(response, GAME_LIST_ENDPOINT_PATH, "POST");
             log.debug(
                     "[KboGameDetailClient] response endpoint=gameList method={} uri={} status={} contentType={} responseType={} bodyLength={}",
                     detailResponse.method(),
@@ -101,7 +105,8 @@ public class KboGameDetailClient {
                     .body(form)
                     .retrieve()
                     .toEntity(String.class);
-            DetailResponse detailResponse = toDetailResponse(response, SCOREBOARD_ENDPOINT_PATH);
+            DetailResponse detailResponse = toDetailResponse(response, SCOREBOARD_ENDPOINT_PATH, "POST");
+            logScoreBoardResponse("scoreBoard", detailResponse);
             validateDetailResponse(detailResponse, "KBO score board endpoint returned error page");
             return detailResponse.body();
         } catch (RestClientException exception) {
@@ -123,7 +128,8 @@ public class KboGameDetailClient {
                     .header(HttpHeaders.REFERER, BASE_URL + "/Schedule/GameCenter/Main.aspx?gameId=" + providerGameId)
                     .retrieve()
                     .toEntity(String.class);
-            DetailResponse detailResponse = toDetailResponse(response, SCOREBOARD_PAGE_PATH);
+            DetailResponse detailResponse = toDetailResponse(response, SCOREBOARD_PAGE_PATH, "GET");
+            logScoreBoardResponse("scoreBoardPage", detailResponse);
             validateDetailResponse(detailResponse, "KBO score board page returned error page");
             return detailResponse.body();
         } catch (RestClientException exception) {
@@ -150,7 +156,7 @@ public class KboGameDetailClient {
                     .body(form)
                     .retrieve()
                     .toEntity(String.class);
-            DetailResponse detailResponse = toDetailResponse(response, BOXSCORE_ENDPOINT_PATH);
+            DetailResponse detailResponse = toDetailResponse(response, BOXSCORE_ENDPOINT_PATH, "POST");
             validateDetailResponse(detailResponse, "KBO box score endpoint returned error page");
             return detailResponse.body();
         } catch (RestClientException exception) {
@@ -158,13 +164,27 @@ public class KboGameDetailClient {
         }
     }
 
-    private DetailResponse toDetailResponse(ResponseEntity<String> response, String endpointPath) {
+    private DetailResponse toDetailResponse(ResponseEntity<String> response, String endpointPath, String method) {
         return new DetailResponse(
                 response.getBody(),
                 response.getStatusCode().value(),
                 response.getHeaders().getContentType() == null ? null : response.getHeaders().getContentType().toString(),
                 URI.create(baseUrl + endpointPath).toString(),
-                METHOD
+                method
+        );
+    }
+
+    private void logScoreBoardResponse(String source, DetailResponse detailResponse) {
+        log.info(
+                "[ScoreBoard] response source={} method={} uri={} status={} contentType={} responseType={} bodyLength={} bodyPreview={}",
+                source,
+                detailResponse.method(),
+                detailResponse.requestUri(),
+                detailResponse.statusCode(),
+                detailResponse.contentType(),
+                detailResponse.responseType(),
+                detailResponse.bodyLength(),
+                detailResponse.bodyPreview(500)
         );
     }
 
@@ -227,7 +247,10 @@ public class KboGameDetailClient {
             return normalized.contains("<title>에러 | kbo홈페이지")
                     || normalized.contains("errorbox")
                     || normalized.contains("이용에 불편을 드려 죄송합니다")
-                    || normalized.contains("kbo홈페이지 </title>");
+                    || normalized.contains("kbo홈페이지 </title>")
+                    || normalized.contains("object moved")
+                    || normalized.contains("입력 문자열의 형식이 잘못되었습니다")
+                    || normalized.contains("input string was not in a correct format");
         }
     }
 

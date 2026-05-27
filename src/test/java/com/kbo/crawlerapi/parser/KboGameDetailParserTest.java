@@ -32,6 +32,47 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void scoreBoardErrorPageIsIgnored() {
+        String html = """
+                <html>
+                  <body>Object moved Object moved to here. 200 입력 문자열의 형식이 잘못되었습니다.</body>
+                </html>
+                """;
+
+        var status = parser.parseScoreBoardStatus("20260526LGLT0", html);
+
+        assertThat(status).isEmpty();
+    }
+
+    @Test
+    void rawStatusCodeThreeWithoutFinalMarkerDoesNotParseAsFinal() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260526LGLT0",
+                      "GAME_STATE_SC": "3",
+                      "GAME_RESULT_CK": 0,
+                      "GAME_SC_NM": "정규경기",
+                      "CANCEL_SC_NM": "정상경기",
+                      "GAME_INN_NO": 8,
+                      "GAME_TB_SC": "T",
+                      "SCORE_CK": "1",
+                      "T_SCORE_CN": "2",
+                      "B_SCORE_CN": "1"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status()).isEqualTo(GameStatus.LIVE);
+        assertThat(result.get(0).statusReason()).isNull();
+    }
+
+    @Test
     void parsesFinalGameSnapshotFields() {
         String payload = """
                 {
