@@ -10,6 +10,10 @@ public interface GameBoxscoreRecordReadRepository {
 
     List<PitcherRecordReadRow> findPitcherRecords(UUID gameId);
 
+    long countBatterRecords(UUID gameId);
+
+    long countPitcherRecords(UUID gameId);
+
     record BatterRecordReadRow(
             UUID teamId,
             int sourceOrder,

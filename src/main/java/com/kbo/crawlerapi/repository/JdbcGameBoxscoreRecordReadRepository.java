@@ -61,6 +61,18 @@ public class JdbcGameBoxscoreRecordReadRepository implements GameBoxscoreRecordR
             ORDER BY source_order ASC
             """;
 
+    private static final String BATTER_COUNT_SQL = """
+            SELECT count(*)
+            FROM kbo_crawler_api.game_batter_records
+            WHERE game_id = ?
+            """;
+
+    private static final String PITCHER_COUNT_SQL = """
+            SELECT count(*)
+            FROM kbo_crawler_api.game_pitcher_records
+            WHERE game_id = ?
+            """;
+
     private final JdbcTemplate jdbcTemplate;
 
     public JdbcGameBoxscoreRecordReadRepository(JdbcTemplate jdbcTemplate) {
@@ -75,6 +87,18 @@ public class JdbcGameBoxscoreRecordReadRepository implements GameBoxscoreRecordR
     @Override
     public List<PitcherRecordReadRow> findPitcherRecords(UUID gameId) {
         return jdbcTemplate.query(PITCHER_SELECT_SQL, (rs, rowNum) -> mapPitcher(rs), gameId);
+    }
+
+    @Override
+    public long countBatterRecords(UUID gameId) {
+        Long count = jdbcTemplate.queryForObject(BATTER_COUNT_SQL, Long.class, gameId);
+        return count == null ? 0L : count;
+    }
+
+    @Override
+    public long countPitcherRecords(UUID gameId) {
+        Long count = jdbcTemplate.queryForObject(PITCHER_COUNT_SQL, Long.class, gameId);
+        return count == null ? 0L : count;
     }
 
     private BatterRecordReadRow mapBatter(ResultSet rs) throws SQLException {

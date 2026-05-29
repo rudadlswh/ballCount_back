@@ -24,8 +24,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -108,10 +110,18 @@ public class GameDetailImportService {
 
         try {
             game = gameRepository.findByPublicGameId(publicGameId)
+                    .or(() -> gameRepository.findByProviderAndProviderGameId("kbo", publicGameId))
                     .orElseThrow(() -> new ResourceNotFoundException("Game not found: " + publicGameId));
             if (game.getProviderGameId() == null || game.getProviderGameId().isBlank()) {
                 throw new IllegalStateException("Provider game ID is not available yet for game " + publicGameId);
             }
+            log.info(
+                    "[GameDetailImport] start publicGameId={} providerGameId={} status={} finalConfirmedAt={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getStatus(),
+                    game.getFinalConfirmedAt()
+            );
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "lookup", exception.getMessage(), exception, 0);
             throw exception;
@@ -166,8 +176,13 @@ public class GameDetailImportService {
                     parsedDetail.statusReason(),
                     parsedDetail.sourceUpdatedAt()
             );
-            saveBoxscoreRecordsIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, boxscoreFetchResult.responseBody());
-            crawlJobTrackingService.markGameDetailSucceeded(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size());
+            BoxscoreImportResult boxscoreImportResult = saveBoxscoreRecordsIfAvailable(
+                    game,
+                    resolvedOfficialDetail.providerGameId(),
+                    parsedDetail,
+                    boxscoreFetchResult
+            );
+            markDetailImportJob(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size(), parsedDetail, boxscoreImportResult);
 
             return new GameDetailImportResult(
                     game.getPublicGameId(),
@@ -192,15 +207,54 @@ public class GameDetailImportService {
     }
 
     private BoxscoreFetchResult fetchBoxscoreIfLineupAvailable(String providerGameId, int seasonId, ParsedGameDetail parsedDetail) {
-        if (!parsedDetail.lineupAvailable()) {
-            return BoxscoreFetchResult.empty();
+        if (!parsedDetail.lineupAvailable() && parsedDetail.status() != GameStatus.FINAL) {
+            return BoxscoreFetchResult.empty("lineupUnavailableNonFinal");
         }
         try {
+            log.info(
+                    "[GameBoxscoreImport] source fetch start source=GetBoxScoreScroll providerGameId={} status={} lineupAvailable={}",
+                    providerGameId,
+                    parsedDetail.status(),
+                    parsedDetail.lineupAvailable()
+            );
             String responseBody = kboGameDetailClient.fetchBoxScore(providerGameId, seasonId);
-            return new BoxscoreFetchResult(responseBody, kboGameDetailParser.parseLineupData(responseBody));
+            ParsedLineupData lineupData = kboGameDetailParser.parseLineupData(responseBody);
+            return new BoxscoreFetchResult(responseBody, lineupData, "GetBoxScoreScroll", null);
         } catch (RuntimeException exception) {
-            return BoxscoreFetchResult.empty();
+            log.warn(
+                    "[GameBoxscoreImport] source fetch failed source=GetBoxScoreScroll providerGameId={} status={} reason={}",
+                    providerGameId,
+                    parsedDetail.status(),
+                    exception.getMessage()
+            );
+            return BoxscoreFetchResult.empty("fetchFailed:" + exception.getMessage());
         }
+    }
+
+    public GameDetailBackfillResult backfillFinalBoxscoreRecords(LocalDate gameDate) {
+        LocalDate targetDate = Objects.requireNonNull(gameDate, "gameDate must not be null");
+        List<String> gameIds = gameRepository.findFinalPublicGameIdsMissingBoxscoreRecordsByDate(targetDate);
+        List<GameDetailBackfillRunResult> runs = new ArrayList<>(gameIds.size());
+        int succeeded = 0;
+        int failed = 0;
+        for (String gameId : gameIds) {
+            try {
+                GameDetailImportResult result = importGameDetail(gameId);
+                runs.add(new GameDetailBackfillRunResult(gameId, true, null, result.status()));
+                succeeded++;
+            } catch (RuntimeException exception) {
+                runs.add(new GameDetailBackfillRunResult(gameId, false, exception.getMessage(), null));
+                failed++;
+            }
+        }
+        log.info(
+                "[GameBoxscoreImport] backfill date={} selected={} succeeded={} failed={}",
+                targetDate,
+                gameIds.size(),
+                succeeded,
+                failed
+        );
+        return new GameDetailBackfillResult(targetDate, gameIds.size(), succeeded, failed, runs);
     }
 
     private LineScoreFetchResult fetchLineScoreSafely(Game game, String providerGameId) {
@@ -275,11 +329,11 @@ public class GameDetailImportService {
                 || lower.contains("completed");
     }
 
-    private void saveBoxscoreRecordsIfAvailable(
+    private BoxscoreImportResult saveBoxscoreRecordsIfAvailable(
             Game game,
             String providerGameId,
             ParsedGameDetail parsedDetail,
-            String boxscoreResponseBody
+            BoxscoreFetchResult boxscoreFetchResult
     ) {
         if (parsedDetail.status() != GameStatus.FINAL) {
             log.debug(
@@ -288,11 +342,19 @@ public class GameDetailImportService {
                     providerGameId,
                     parsedDetail.status()
             );
-            return;
+            return BoxscoreImportResult.skipped("nonFinal");
         }
+        String boxscoreResponseBody = boxscoreFetchResult.responseBody();
         if (boxscoreResponseBody == null || boxscoreResponseBody.isBlank()) {
-            log.info("[GameBoxscoreImport] skipped reason=noBoxscore gameId={} providerGameId={}", game.getPublicGameId(), providerGameId);
-            return;
+            String reason = boxscoreFetchResult.skippedReason() == null ? "noBoxscore" : boxscoreFetchResult.skippedReason();
+            log.info(
+                    "[GameBoxscoreImport] skipped reason={} gameId={} providerGameId={} source={}",
+                    reason,
+                    game.getPublicGameId(),
+                    providerGameId,
+                    boxscoreFetchResult.source()
+            );
+            return BoxscoreImportResult.skipped(reason);
         }
 
         try {
@@ -300,19 +362,35 @@ public class GameDetailImportService {
             int batterCount = parsedBoxscore.awayBatters().size() + parsedBoxscore.homeBatters().size();
             int pitcherCount = parsedBoxscore.awayPitchers().size() + parsedBoxscore.homePitchers().size();
             if (batterCount == 0 && pitcherCount == 0) {
-                log.info("[GameBoxscoreImport] skipped reason=emptyRecords gameId={} providerGameId={}", game.getPublicGameId(), providerGameId);
-                return;
+                log.info(
+                        "[GameBoxscoreImport] skipped reason=emptyRecords gameId={} providerGameId={} source={} parsedBatterCount=0 parsedPitcherCount=0",
+                        game.getPublicGameId(),
+                        providerGameId,
+                        boxscoreFetchResult.source()
+                );
+                return new BoxscoreImportResult(boxscoreFetchResult.source(), batterCount, pitcherCount, 0, 0, "emptyRecords");
             }
 
             GameBoxscoreRecordService.GameBoxscoreRecordSaveResult result =
                     gameBoxscoreRecordService.saveBoxscoreRecords(game, parsedBoxscore);
             log.info(
-                    "[GameBoxscoreImport] gameId={} providerGameId={} batters={} pitchers={} saved={}",
+                    "[GameBoxscoreImport] gameId={} providerGameId={} source={} parsedBatterCount={} parsedPitcherCount={} savedBatterCount={} savedPitcherCount={} saved={}",
                     game.getPublicGameId(),
                     providerGameId,
+                    boxscoreFetchResult.source(),
+                    batterCount,
+                    pitcherCount,
                     result.batterRecordCount(),
                     result.pitcherRecordCount(),
                     result.saved()
+            );
+            return new BoxscoreImportResult(
+                    boxscoreFetchResult.source(),
+                    batterCount,
+                    pitcherCount,
+                    result.batterRecordCount(),
+                    result.pitcherRecordCount(),
+                    null
             );
         } catch (RuntimeException exception) {
             log.warn(
@@ -321,7 +399,38 @@ public class GameDetailImportService {
                     providerGameId,
                     exception.getMessage()
             );
+            return BoxscoreImportResult.skipped("error:" + exception.getMessage());
         }
+    }
+
+    private void markDetailImportJob(
+            UUID crawlJobId,
+            boolean snapshotCreated,
+            int importedLineScoreCount,
+            ParsedGameDetail parsedDetail,
+            BoxscoreImportResult boxscoreImportResult
+    ) {
+        if (parsedDetail.status() == GameStatus.FINAL && !boxscoreImportResult.hasSavedBoxscoreRecords()) {
+            String message = "Final game boxscore records unavailable: source=%s parsedBatterCount=%d parsedPitcherCount=%d savedBatterCount=%d savedPitcherCount=%d reason=%s"
+                    .formatted(
+                            boxscoreImportResult.source(),
+                            boxscoreImportResult.parsedBatterCount(),
+                            boxscoreImportResult.parsedPitcherCount(),
+                            boxscoreImportResult.savedBatterCount(),
+                            boxscoreImportResult.savedPitcherCount(),
+                            boxscoreImportResult.skippedReason()
+                    );
+            crawlJobTrackingService.markGameDetailPartialSuccess(
+                    crawlJobId,
+                    snapshotCreated,
+                    importedLineScoreCount,
+                    "boxscore",
+                    message
+            );
+            log.warn("[GameBoxscoreImport] final detail partial_success reason={}", message);
+            return;
+        }
+        crawlJobTrackingService.markGameDetailSucceeded(crawlJobId, snapshotCreated, importedLineScoreCount);
     }
 
     private String toLineupJson(ParsedLineupData lineupData) {
@@ -822,11 +931,47 @@ public class GameDetailImportService {
 
     private record BoxscoreFetchResult(
             String responseBody,
-            ParsedLineupData lineupData
+            ParsedLineupData lineupData,
+            String source,
+            String skippedReason
     ) {
-        private static BoxscoreFetchResult empty() {
-            return new BoxscoreFetchResult(null, ParsedLineupData.empty(null));
+        private static BoxscoreFetchResult empty(String skippedReason) {
+            return new BoxscoreFetchResult(null, ParsedLineupData.empty(null), "GetBoxScoreScroll", skippedReason);
         }
+    }
+
+    private record BoxscoreImportResult(
+            String source,
+            int parsedBatterCount,
+            int parsedPitcherCount,
+            int savedBatterCount,
+            int savedPitcherCount,
+            String skippedReason
+    ) {
+        private static BoxscoreImportResult skipped(String skippedReason) {
+            return new BoxscoreImportResult("GetBoxScoreScroll", 0, 0, 0, 0, skippedReason);
+        }
+
+        private boolean hasSavedBoxscoreRecords() {
+            return savedBatterCount > 0 && savedPitcherCount > 0;
+        }
+    }
+
+    public record GameDetailBackfillResult(
+            LocalDate gameDate,
+            int selectedGameCount,
+            int succeededCount,
+            int failedCount,
+            List<GameDetailBackfillRunResult> runs
+    ) {
+    }
+
+    public record GameDetailBackfillRunResult(
+            String gameId,
+            boolean succeeded,
+            String errorMessage,
+            String status
+    ) {
     }
 
     private record LineScoreFetchResult(

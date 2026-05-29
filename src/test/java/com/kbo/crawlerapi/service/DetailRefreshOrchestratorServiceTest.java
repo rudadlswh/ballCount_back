@@ -25,6 +25,7 @@ import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -44,6 +45,9 @@ class DetailRefreshOrchestratorServiceTest {
     @Mock
     private LineScoreRepository lineScoreRepository;
 
+    @Mock
+    private GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository;
+
     private DetailRefreshOrchestratorService orchestratorService;
 
     @BeforeEach
@@ -52,6 +56,7 @@ class DetailRefreshOrchestratorServiceTest {
                 gameRepository,
                 gameSnapshotRepository,
                 lineScoreRepository,
+                gameBoxscoreRecordReadRepository,
                 new StubGameDetailImportService(),
                 FIXED_CLOCK,
                 new SchedulerShellProperties()
@@ -110,6 +115,8 @@ class DetailRefreshOrchestratorServiceTest {
                 )));
         when(lineScoreRepository.countByGame_Id(eq(scheduledGame.getId()))).thenReturn(0L);
         when(lineScoreRepository.countByGame_Id(eq(finalGame.getId()))).thenReturn(9L);
+        when(gameBoxscoreRecordReadRepository.countBatterRecords(eq(finalGame.getId()))).thenReturn(18L);
+        when(gameBoxscoreRecordReadRepository.countPitcherRecords(eq(finalGame.getId()))).thenReturn(8L);
 
         var result = orchestratorService.runPass(LocalDate.of(2026, 4, 9), false);
 
@@ -137,6 +144,33 @@ class DetailRefreshOrchestratorServiceTest {
         assertThat(result.selectedGameCount()).isZero();
         assertThat(result.decisions()).isEmpty();
         assertThat(result.executionResults()).isEmpty();
+    }
+
+    @Test
+    void keepsFinalGameEligibleWhenBoxscoreRecordsAreMissing() {
+        Game finalGame = fixtureGame(
+                "20260409-LG-KIA",
+                "20260409HTLG0",
+                LocalDate.of(2026, 4, 9),
+                GameStatus.FINAL,
+                7,
+                2
+        );
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(LocalDate.of(2026, 4, 9))))
+                .thenReturn(List.of(finalGame));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(finalGame.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.countByGame_Id(eq(finalGame.getId()))).thenReturn(9L);
+        when(gameBoxscoreRecordReadRepository.countBatterRecords(eq(finalGame.getId()))).thenReturn(0L);
+        when(gameBoxscoreRecordReadRepository.countPitcherRecords(eq(finalGame.getId()))).thenReturn(0L);
+
+        var result = orchestratorService.runPass(LocalDate.of(2026, 4, 9), false);
+
+        assertThat(result.selectedGameCount()).isEqualTo(1);
+        assertThat(result.decisions().get(0).selected()).isTrue();
+        assertThat(result.decisions().get(0).phase()).isEqualTo("post-final");
+        assertThat(result.decisions().get(0).finalDataComplete()).isFalse();
     }
 
     private Game fixtureGame(

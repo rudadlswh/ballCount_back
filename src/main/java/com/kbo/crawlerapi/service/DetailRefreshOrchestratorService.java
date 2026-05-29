@@ -13,6 +13,7 @@ import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
 
 @Service
@@ -22,6 +23,7 @@ public class DetailRefreshOrchestratorService {
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
     private final LineScoreRepository lineScoreRepository;
+    private final GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository;
     private final GameDetailImportService gameDetailImportService;
     private final Clock applicationClock;
     private final com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties;
@@ -30,6 +32,7 @@ public class DetailRefreshOrchestratorService {
             GameRepository gameRepository,
             GameSnapshotRepository gameSnapshotRepository,
             LineScoreRepository lineScoreRepository,
+            GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository,
             GameDetailImportService gameDetailImportService,
             Clock applicationClock,
             com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties
@@ -37,6 +40,7 @@ public class DetailRefreshOrchestratorService {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
         this.lineScoreRepository = lineScoreRepository;
+        this.gameBoxscoreRecordReadRepository = gameBoxscoreRecordReadRepository;
         this.gameDetailImportService = gameDetailImportService;
         this.applicationClock = applicationClock;
         this.schedulerShellProperties = schedulerShellProperties;
@@ -200,10 +204,15 @@ public class DetailRefreshOrchestratorService {
     }
 
     private boolean isFinalDataComplete(Game game, long lineScoreCount) {
-        return game.getStatus() == GameStatus.FINAL
-                && game.getHomeScore() != null
-                && game.getAwayScore() != null
-                && lineScoreCount > 0;
+        if (game.getStatus() != GameStatus.FINAL
+                || game.getHomeScore() == null
+                || game.getAwayScore() == null
+                || lineScoreCount <= 0) {
+            return false;
+        }
+        long batterRecordCount = gameBoxscoreRecordReadRepository.countBatterRecords(game.getId());
+        long pitcherRecordCount = gameBoxscoreRecordReadRepository.countPitcherRecords(game.getId());
+        return batterRecordCount > 0 && pitcherRecordCount > 0;
     }
 
     private OffsetDateTime toKst(OffsetDateTime value) {
