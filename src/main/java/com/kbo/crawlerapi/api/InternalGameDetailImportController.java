@@ -9,7 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.kbo.crawlerapi.api.InvalidParameterException;
-import com.kbo.crawlerapi.service.GameDetailImportService.GameDetailBackfillResult;
+import com.kbo.crawlerapi.service.GameDetailBoxscoreBackfillService;
+import com.kbo.crawlerapi.service.GameDetailBoxscoreBackfillService.GameDetailBackfillResult;
 import com.kbo.crawlerapi.service.GameDetailImportResult;
 import com.kbo.crawlerapi.service.GameDetailImportService;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -20,9 +21,14 @@ import io.swagger.v3.oas.annotations.Hidden;
 public class InternalGameDetailImportController {
 
     private final GameDetailImportService gameDetailImportService;
+    private final GameDetailBoxscoreBackfillService gameDetailBoxscoreBackfillService;
 
-    public InternalGameDetailImportController(GameDetailImportService gameDetailImportService) {
+    public InternalGameDetailImportController(
+            GameDetailImportService gameDetailImportService,
+            GameDetailBoxscoreBackfillService gameDetailBoxscoreBackfillService
+    ) {
         this.gameDetailImportService = gameDetailImportService;
+        this.gameDetailBoxscoreBackfillService = gameDetailBoxscoreBackfillService;
     }
 
     @PostMapping("/games/{gameId}/detail/import")
@@ -62,7 +68,7 @@ public class InternalGameDetailImportController {
 
     @PostMapping("/games/detail/boxscore/backfill")
     public GameDetailBackfillResult backfillFinalBoxscoreRecords(@RequestParam LocalDate date) {
-        return gameDetailImportService.backfillFinalBoxscoreRecords(date);
+        return gameDetailBoxscoreBackfillService.backfillFinalBoxscoreRecords(date);
     }
 
     public record GameDetailImportResponse(
