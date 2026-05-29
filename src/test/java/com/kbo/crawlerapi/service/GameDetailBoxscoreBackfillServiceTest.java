@@ -6,6 +6,8 @@ import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameRepository.BoxscoreBackfillTarget;
+
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -41,7 +43,7 @@ class GameDetailBoxscoreBackfillServiceTest {
                 "20260528-LOT-LG",
                 "20260528LGLT0",
                 "final",
-                OffsetDateTime.of(2026, 5, 28, 22, 10, 0, 0, ZoneOffset.ofHours(9))
+                OffsetDateTime.of(2026, 5, 28, 22, 10, 0, 0, ZoneOffset.ofHours(9)).toInstant()
         );
         when(gameRepository.findFinalBoxscoreBackfillTargetsByDate(eq(gameDate))).thenReturn(List.of(target));
         gameDetailImportService.result = result(target.getPublicGameId(), target.getProviderGameId());
@@ -118,7 +120,7 @@ class GameDetailBoxscoreBackfillServiceTest {
             String publicGameId,
             String providerGameId,
             String status,
-            OffsetDateTime finalConfirmedAt
+            Instant finalConfirmedAt
     ) implements BoxscoreBackfillTarget {
         @Override
         public UUID getId() {
@@ -141,7 +143,7 @@ class GameDetailBoxscoreBackfillServiceTest {
         }
 
         @Override
-        public OffsetDateTime getFinalConfirmedAt() {
+        public Instant getFinalConfirmedAt() {
             return finalConfirmedAt;
         }
     }

@@ -1,7 +1,8 @@
 package com.kbo.crawlerapi.repository;
 
+import java.time.Instant;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
+//import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -77,6 +78,6 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
 
         String getStatus();
 
-        OffsetDateTime getFinalConfirmedAt();
+        Instant getFinalConfirmedAt();
     }
 }
