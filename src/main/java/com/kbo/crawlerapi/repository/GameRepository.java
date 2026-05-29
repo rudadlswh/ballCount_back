@@ -6,6 +6,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
 
@@ -38,4 +40,25 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
             UUID homeTeamId,
             UUID awayTeamId
     );
+
+    @Query(value = """
+            SELECT g.public_game_id
+            FROM kbo_crawler_api.games g
+            WHERE g.game_date = :gameDate
+              AND g.status = 'final'
+              AND (
+                  NOT EXISTS (
+                      SELECT 1
+                      FROM kbo_crawler_api.game_batter_records br
+                      WHERE br.game_id = g.id
+                  )
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM kbo_crawler_api.game_pitcher_records pr
+                      WHERE pr.game_id = g.id
+                  )
+              )
+            ORDER BY g.scheduled_at ASC NULLS LAST, g.public_game_id ASC
+            """, nativeQuery = true)
+    List<String> findFinalPublicGameIdsMissingBoxscoreRecordsByDate(@Param("gameDate") LocalDate gameDate);
 }

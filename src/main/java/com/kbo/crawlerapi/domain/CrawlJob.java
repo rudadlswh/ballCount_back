@@ -134,6 +134,16 @@ public class CrawlJob {
         this.lastErrorMessage = null;
     }
 
+    public void markDetailPartialSuccess(String detailSnapshotStatus, int importedLineScoreCount, String message) {
+        this.status = "partial_success";
+        this.finishedAt = OffsetDateTime.now();
+        this.skippedRowCount = 0;
+        this.detailSnapshotStatus = detailSnapshotStatus;
+        this.importedLineScoreCount = importedLineScoreCount;
+        clearOrchestrationFields();
+        this.lastErrorMessage = message;
+    }
+
     public void markFailed(String errorMessage, int skippedRowCount) {
         this.status = "failed";
         this.finishedAt = OffsetDateTime.now();

@@ -186,7 +186,7 @@ class GameDetailImportServiceTest {
         verify(gameSnapshotRepository, never()).save(any(GameSnapshot.class));
         verify(lineScoreRepository, never()).deleteByGame_Id(any(UUID.class));
         verify(lineScoreRepository, never()).saveAll(any());
-        assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
+        assertThat(crawlJobTrackingService.partialSuccessJobId).isEqualTo(crawlJob.getId());
         assertThat(crawlJobTrackingService.snapshotCreated).isFalse();
         assertThat(crawlJobTrackingService.importedLineScoreCount).isEqualTo(2);
     }
@@ -325,7 +325,7 @@ class GameDetailImportServiceTest {
         assertThat(game.getHomeScore()).isEqualTo(3);
         assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).isEqualTo(officialProviderGameId);
         assertThat(kboGameDetailClient.lastRequestedScoreboardProviderGameId).doesNotStartWith("sched-");
-        assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
+        assertThat(crawlJobTrackingService.partialSuccessJobId).isEqualTo(crawlJob.getId());
     }
 
     @Test
@@ -777,6 +777,8 @@ class GameDetailImportServiceTest {
         assertThat(kboBoxscoreParser.parsedResponseBody).isEqualTo(kboGameDetailClient.boxScoreBody);
         assertThat(gameBoxscoreRecordService.savedGame).isSameAs(game);
         assertThat(gameBoxscoreRecordService.savedBoxscore).isSameAs(kboBoxscoreParser.result);
+        assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
+        assertThat(crawlJobTrackingService.partialSuccessJobId).isNull();
         verify(lineScoreRepository).saveAll(any());
     }
 
@@ -828,6 +830,63 @@ class GameDetailImportServiceTest {
         assertThat(result.status()).isEqualTo("final");
         assertThat(kboBoxscoreParser.parsedResponseBody).isEqualTo(kboGameDetailClient.boxScoreBody);
         assertThat(gameBoxscoreRecordService.savedGame).isNull();
+        assertThat(crawlJobTrackingService.succeededJobId).isNull();
+        assertThat(crawlJobTrackingService.partialSuccessJobId).isEqualTo(crawlJob.getId());
+        assertThat(crawlJobTrackingService.partialSuccessMessage).contains("Final game boxscore records unavailable");
+    }
+
+    @Test
+    void backfillForDateImportsFinalGamesMissingBoxscoreRecords() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        LocalDate gameDate = game.getGameDate();
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailClient.boxScoreBody = "{\"code\":\"100\",\"arrHitter\":[],\"arrPitcher\":[]}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.FINAL,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                9,
+                "top",
+                "Top 9",
+                0,
+                0,
+                3,
+                false,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                true,
+                null,
+                null,
+                "final-detail-hash-backfill"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+        kboBoxscoreParser.result = parsedBoxscore(1, 1, 1, 1);
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findFinalPublicGameIdsMissingBoxscoreRecordsByDate(eq(gameDate)))
+                .thenReturn(List.of(game.getPublicGameId()));
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportService.GameDetailBackfillResult result = gameDetailImportService.backfillFinalBoxscoreRecords(gameDate);
+
+        assertThat(result.selectedGameCount()).isEqualTo(1);
+        assertThat(result.succeededCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+        assertThat(gameBoxscoreRecordService.savedGame).isSameAs(game);
         assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
     }
 
@@ -1496,8 +1555,10 @@ class GameDetailImportServiceTest {
 
         private CrawlJob createdJob;
         private UUID succeededJobId;
+        private UUID partialSuccessJobId;
         private boolean snapshotCreated;
         private int importedLineScoreCount;
+        private String partialSuccessMessage;
 
         private StubCrawlJobTrackingService() {
             super(null, null);
@@ -1513,6 +1574,20 @@ class GameDetailImportServiceTest {
             this.succeededJobId = crawlJobId;
             this.snapshotCreated = snapshotCreated;
             this.importedLineScoreCount = importedLineScoreCount;
+        }
+
+        @Override
+        public void markGameDetailPartialSuccess(
+                UUID crawlJobId,
+                boolean snapshotCreated,
+                int importedLineScoreCount,
+                String failureStage,
+                String message
+        ) {
+            this.partialSuccessJobId = crawlJobId;
+            this.snapshotCreated = snapshotCreated;
+            this.importedLineScoreCount = importedLineScoreCount;
+            this.partialSuccessMessage = message;
         }
 
         @Override

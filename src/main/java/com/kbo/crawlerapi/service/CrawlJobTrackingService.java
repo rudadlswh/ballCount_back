@@ -60,6 +60,30 @@ public class CrawlJobTrackingService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markGameDetailPartialSuccess(
+            UUID crawlJobId,
+            boolean snapshotCreated,
+            int importedLineScoreCount,
+            String failureStage,
+            String message
+    ) {
+        CrawlJob crawlJob = crawlJobRepository.findById(crawlJobId)
+                .orElseThrow(() -> new IllegalStateException("Crawl job not found: " + crawlJobId));
+        crawlJob.markDetailPartialSuccess(snapshotCreated ? "created" : "unchanged", importedLineScoreCount, message);
+        crawlFailureRepository.save(new CrawlFailure(
+                UUID.randomUUID(),
+                crawlJob,
+                "kbo",
+                crawlJob.getTargetType(),
+                crawlJob.getTargetKey(),
+                failureStage,
+                null,
+                message,
+                null
+        ));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markDetailRefreshOrchestrationSucceeded(
             UUID crawlJobId,
             String phase,

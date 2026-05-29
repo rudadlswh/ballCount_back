@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.kbo.crawlerapi.api.InvalidParameterException;
+import com.kbo.crawlerapi.service.GameDetailImportService.GameDetailBackfillResult;
 import com.kbo.crawlerapi.service.GameDetailImportResult;
 import com.kbo.crawlerapi.service.GameDetailImportService;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -57,6 +58,11 @@ public class InternalGameDetailImportController {
                 .mapToObj(index -> importGameDetail(gameId))
                 .toList();
         return new GameDetailRefreshResponse(gameId, repeat, runs);
+    }
+
+    @PostMapping("/games/detail/boxscore/backfill")
+    public GameDetailBackfillResult backfillFinalBoxscoreRecords(@RequestParam LocalDate date) {
+        return gameDetailImportService.backfillFinalBoxscoreRecords(date);
     }
 
     public record GameDetailImportResponse(

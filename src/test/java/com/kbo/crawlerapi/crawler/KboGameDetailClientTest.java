@@ -1,30 +1,24 @@
 package com.kbo.crawlerapi.crawler;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.RestClient;
 
 class KboGameDetailClientTest {
 
     @Test
     void kboErrorHtmlIsReportedClearly() {
-        RestClient.Builder builder = RestClient.builder();
-        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        KboGameDetailClient client = new KboGameDetailClient(builder, "https://www.koreabaseball.com");
+        KboGameDetailClient.DetailResponse response = new KboGameDetailClient.DetailResponse(
+                kboErrorHtml(),
+                200,
+                "text/html",
+                "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList",
+                "POST"
+        );
 
-        server.expect(requestTo("https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList"))
-                .andRespond(withSuccess(kboErrorHtml(), MediaType.TEXT_HTML));
-
-        assertThatThrownBy(() -> client.fetchGameListResponse(LocalDate.of(2026, 5, 21)))
+        assertThatThrownBy(() -> KboGameDetailClient.validateDetailResponse(response, "KBO game detail list endpoint returned error page"))
                 .isInstanceOf(KboGameDetailClient.KboGameDetailEndpointException.class)
                 .hasMessage("KBO game detail list endpoint returned error page");
-        server.verify();
     }
 
     private String kboErrorHtml() {

@@ -131,7 +131,7 @@ class DetailRefreshSchedulerShellTest {
                 DetailRefreshPassResult fallbackResult,
                 List<DetailRefreshPassResult> scriptedResults
         ) {
-            super(null, null, null, null, Clock.systemUTC(), new SchedulerShellProperties());
+            super(null, null, null, null, null, Clock.systemUTC(), new SchedulerShellProperties());
             this.started = started;
             this.release = release;
             this.fallbackResult = fallbackResult;
