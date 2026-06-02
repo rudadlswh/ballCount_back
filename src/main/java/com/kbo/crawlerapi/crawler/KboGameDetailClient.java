@@ -38,12 +38,17 @@ public class KboGameDetailClient {
     }
 
     protected KboGameDetailClient(RestClient.Builder restClientBuilder, String baseUrl) {
-        this.restClient = restClientBuilder
-                .baseUrl(baseUrl)
-                .requestFactory(new JdkClientHttpRequestFactory(HttpClient.newBuilder()
-                        .followRedirects(HttpClient.Redirect.NORMAL)
-                        .build()))
-                .build();
+        this(restClientBuilder, baseUrl, true);
+    }
+
+    protected KboGameDetailClient(RestClient.Builder restClientBuilder, String baseUrl, boolean configureRequestFactory) {
+        RestClient.Builder builder = restClientBuilder.baseUrl(baseUrl);
+        if (configureRequestFactory) {
+            builder.requestFactory(new JdkClientHttpRequestFactory(HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build()));
+        }
+        this.restClient = builder.build();
         this.baseUrl = baseUrl;
     }
 
@@ -54,17 +59,17 @@ public class KboGameDetailClient {
     public DetailResponse fetchGameListResponse(LocalDate gameDate) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("leId", "1");
-        form.add("srId", "0,1,3,4,5,6,7,9");
+        form.add("srId", "0,1,3,4,5,6,7,8,9");
         form.add("date", gameDate.format(DATE_FORMATTER));
 
         try {
             ResponseEntity<String> response = restClient.post()
                     .uri(GAME_LIST_ENDPOINT_PATH)
-                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .contentType(MediaType.parseMediaType("application/x-www-form-urlencoded; charset=UTF-8"))
                     .header(HttpHeaders.USER_AGENT, USER_AGENT)
                     .header(HttpHeaders.ACCEPT, "application/json, text/javascript, */*; q=0.01")
                     .header(HttpHeaders.ACCEPT_LANGUAGE, "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
-                    .header(HttpHeaders.REFERER, BASE_URL + "/")
+                    .header(HttpHeaders.REFERER, BASE_URL + "/Schedule/GameCenter/Main.aspx")
                     .header("X-Requested-With", "XMLHttpRequest")
                     .body(form)
                     .retrieve()
