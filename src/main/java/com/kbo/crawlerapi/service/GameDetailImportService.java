@@ -24,10 +24,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -229,32 +227,6 @@ public class GameDetailImportService {
             );
             return BoxscoreFetchResult.empty("fetchFailed:" + exception.getMessage());
         }
-    }
-
-    public GameDetailBackfillResult backfillFinalBoxscoreRecords(LocalDate gameDate) {
-        LocalDate targetDate = Objects.requireNonNull(gameDate, "gameDate must not be null");
-        List<String> gameIds = gameRepository.findFinalPublicGameIdsMissingBoxscoreRecordsByDate(targetDate);
-        List<GameDetailBackfillRunResult> runs = new ArrayList<>(gameIds.size());
-        int succeeded = 0;
-        int failed = 0;
-        for (String gameId : gameIds) {
-            try {
-                GameDetailImportResult result = importGameDetail(gameId);
-                runs.add(new GameDetailBackfillRunResult(gameId, true, null, result.status()));
-                succeeded++;
-            } catch (RuntimeException exception) {
-                runs.add(new GameDetailBackfillRunResult(gameId, false, exception.getMessage(), null));
-                failed++;
-            }
-        }
-        log.info(
-                "[GameBoxscoreImport] backfill date={} selected={} succeeded={} failed={}",
-                targetDate,
-                gameIds.size(),
-                succeeded,
-                failed
-        );
-        return new GameDetailBackfillResult(targetDate, gameIds.size(), succeeded, failed, runs);
     }
 
     private LineScoreFetchResult fetchLineScoreSafely(Game game, String providerGameId) {
@@ -603,6 +575,8 @@ public class GameDetailImportService {
                 game.isPostponed(),
                 game.getCancelReason(),
                 game.getRawCancelText(),
+                game.getHomeStartingPitcherName(),
+                game.getAwayStartingPitcherName(),
                 game.getSourceUpdatedAt()
         );
     }
@@ -955,23 +929,6 @@ public class GameDetailImportService {
         private boolean hasSavedBoxscoreRecords() {
             return savedBatterCount > 0 && savedPitcherCount > 0;
         }
-    }
-
-    public record GameDetailBackfillResult(
-            LocalDate gameDate,
-            int selectedGameCount,
-            int succeededCount,
-            int failedCount,
-            List<GameDetailBackfillRunResult> runs
-    ) {
-    }
-
-    public record GameDetailBackfillRunResult(
-            String gameId,
-            boolean succeeded,
-            String errorMessage,
-            String status
-    ) {
     }
 
     private record LineScoreFetchResult(

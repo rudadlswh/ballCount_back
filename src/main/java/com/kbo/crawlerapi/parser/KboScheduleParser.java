@@ -172,6 +172,8 @@ public class KboScheduleParser {
         Integer homeScore = integerText(rowNode, "HOME_SCORE", "HOME_R", "B_SCORE", "homeScore");
         String providerGameId = firstText(rowNode, "G_ID", "GAME_ID", "gameId", "providerGameId");
         String stadium = firstText(rowNode, "S_NM", "STADIUM", "stadium", "stadiumName");
+        String awayStartingPitcherName = startingPitcherName(rowNode, true);
+        String homeStartingPitcherName = startingPitcherName(rowNode, false);
         String cancelText = normalizeRawCancelText(firstText(rowNode, "CANCEL_SC_NM", "CANCEL_NM", "cancelText", "cancelReason", "NOTE", "note"));
         String rawStatusText = firstText(rowNode, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM", "status", "statusName");
         String statusText = String.join(
@@ -200,6 +202,8 @@ public class KboScheduleParser {
                 homeScore,
                 cancelReason,
                 rawCancelText,
+                awayStartingPitcherName,
+                homeStartingPitcherName,
                 null
         );
 
@@ -264,6 +268,8 @@ public class KboScheduleParser {
                 homeScore,
                 cancelReason,
                 rawCancelText,
+                null,
+                null,
                 null
         );
 
@@ -574,6 +580,35 @@ public class KboScheduleParser {
         return PROVIDER_TEAM_NAME_BY_OFFICIAL_ID.getOrDefault(id.trim().toUpperCase(Locale.ROOT), id.trim());
     }
 
+    private String startingPitcherName(JsonNode rowNode, boolean away) {
+        String name = away
+                ? firstText(
+                        rowNode,
+                        "T_PIT_P_NM",
+                        "T_PIT_NM",
+                        "AWAY_PIT_P_NM",
+                        "AWAY_PIT_NM",
+                        "AWAY_STARTING_PITCHER_NAME",
+                        "AWAY_STARTER_NAME",
+                        "awayStartingPitcherName",
+                        "awayPitcherName",
+                        "awayStarterName"
+                )
+                : firstText(
+                        rowNode,
+                        "B_PIT_P_NM",
+                        "B_PIT_NM",
+                        "HOME_PIT_P_NM",
+                        "HOME_PIT_NM",
+                        "HOME_STARTING_PITCHER_NAME",
+                        "HOME_STARTER_NAME",
+                        "homeStartingPitcherName",
+                        "homePitcherName",
+                        "homeStarterName"
+                );
+        return hasText(name) ? name.trim() : null;
+    }
+
     private String firstText(JsonNode node, String... keys) {
         for (String key : keys) {
             JsonNode value = node.path(key);
@@ -643,8 +678,47 @@ public class KboScheduleParser {
             Integer homeScore,
             GameCancelReason cancelReason,
             String rawCancelText,
+            String awayStartingPitcherName,
+            String homeStartingPitcherName,
             OffsetDateTime sourceUpdatedAt
     ) {
+        public ParsedScheduleGame(
+                String provider,
+                String providerGameId,
+                LocalDate gameDate,
+                OffsetDateTime scheduledAt,
+                String stadium,
+                GameStatus status,
+                boolean isCancelled,
+                boolean isPostponed,
+                String awayProviderTeamName,
+                String homeProviderTeamName,
+                Integer awayScore,
+                Integer homeScore,
+                GameCancelReason cancelReason,
+                String rawCancelText,
+                OffsetDateTime sourceUpdatedAt
+        ) {
+            this(
+                    provider,
+                    providerGameId,
+                    gameDate,
+                    scheduledAt,
+                    stadium,
+                    status,
+                    isCancelled,
+                    isPostponed,
+                    awayProviderTeamName,
+                    homeProviderTeamName,
+                    awayScore,
+                    homeScore,
+                    cancelReason,
+                    rawCancelText,
+                    null,
+                    null,
+                    sourceUpdatedAt
+            );
+        }
     }
 
     public record SkippedScheduleRow(

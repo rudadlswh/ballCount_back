@@ -172,6 +172,35 @@ class KboScheduleParserTest {
     }
 
     @Test
+    void parsesStartingPitcherNamesFromOfficialScheduleObjectRow() {
+        String payload = """
+                {
+                  "data": {
+                    "games": [
+                      {
+                        "G_ID": "20260602LTHT0",
+                        "G_DT": "20260602",
+                        "G_TM": "18:30",
+                        "AWAY_NM": "KIA",
+                        "HOME_NM": "롯데",
+                        "S_NM": "사직",
+                        "T_PIT_P_NM": "원정선발",
+                        "B_PIT_P_NM": "홈선발"
+                      }
+                    ]
+                  }
+                }
+                """;
+
+        var games = parser.parseMonthlySchedule(payload, YearMonth.of(2026, 6));
+
+        assertThat(games).hasSize(1);
+        assertThat(games.get(0).providerGameId()).isEqualTo("20260602LTHT0");
+        assertThat(games.get(0).awayStartingPitcherName()).isEqualTo("원정선발");
+        assertThat(games.get(0).homeStartingPitcherName()).isEqualTo("홈선발");
+    }
+
+    @Test
     void parsesRainCancelledScheduleRowAndPreservesRawCancelText() {
         String payload = """
                 {

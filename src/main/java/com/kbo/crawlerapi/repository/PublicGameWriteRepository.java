@@ -62,7 +62,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 """
                         SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                                home_team_id, away_team_id, home_score, away_score, is_cancelled,
-                               is_postponed, cancel_reason, raw_cancel_text, source_updated_at
+                               is_postponed, cancel_reason, raw_cancel_text, away_starting_pitcher_name,
+                               home_starting_pitcher_name, source_updated_at
                         FROM games
                         WHERE provider = ? AND provider_game_id = ?
                         """,
@@ -81,7 +82,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 """
                         SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                                home_team_id, away_team_id, home_score, away_score, is_cancelled,
-                               is_postponed, cancel_reason, raw_cancel_text, source_updated_at
+                               is_postponed, cancel_reason, raw_cancel_text, away_starting_pitcher_name,
+                               home_starting_pitcher_name, source_updated_at
                         FROM games
                         WHERE provider = ?
                           AND game_date = ?
@@ -111,9 +113,10 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                         INSERT INTO games (
                             id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                             home_team_id, away_team_id, home_score, away_score, inning_state,
-                            is_cancelled, is_postponed, cancel_reason, raw_cancel_text, source_updated_at, public_game_id
+                            is_cancelled, is_postponed, cancel_reason, raw_cancel_text,
+                            away_starting_pitcher_name, home_starting_pitcher_name, source_updated_at, public_game_id
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 UUID.randomUUID(),
                 parsedGame.provider(),
@@ -130,6 +133,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 parsedGame.isPostponed(),
                 cancelReasonValue(parsedGame.cancelReason()),
                 parsedGame.rawCancelText(),
+                normalizedText(parsedGame.awayStartingPitcherName()),
+                normalizedText(parsedGame.homeStartingPitcherName()),
                 sourceUpdatedAt,
                 publicGameId
         );
@@ -161,6 +166,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                             is_postponed = ?,
                             cancel_reason = ?,
                             raw_cancel_text = ?,
+                            away_starting_pitcher_name = COALESCE(?, away_starting_pitcher_name),
+                            home_starting_pitcher_name = COALESCE(?, home_starting_pitcher_name),
                             source_updated_at = ?,
                             updated_at = now()
                         WHERE id = ?
@@ -179,6 +186,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 parsedGame.isPostponed(),
                 cancelReasonValue(parsedGame.cancelReason()),
                 parsedGame.rawCancelText(),
+                normalizedText(parsedGame.awayStartingPitcherName()),
+                normalizedText(parsedGame.homeStartingPitcherName()),
                 sourceUpdatedAt,
                 id
         );
@@ -207,6 +216,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 || existing.postponed() != parsedGame.isPostponed()
                 || existing.cancelReason() != parsedGame.cancelReason()
                 || !Objects.equals(existing.rawCancelText(), parsedGame.rawCancelText())
+                || incomingTextDiffers(existing.awayStartingPitcherName(), parsedGame.awayStartingPitcherName())
+                || incomingTextDiffers(existing.homeStartingPitcherName(), parsedGame.homeStartingPitcherName())
                 || !sameInstant(existing.sourceUpdatedAt(), sourceUpdatedAt);
     }
 
@@ -230,6 +241,18 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
 
     private Integer normalizedScore(Integer score) {
         return score == null ? 0 : score;
+    }
+
+    private String normalizedText(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private boolean incomingTextDiffers(String existingValue, String incomingValue) {
+        String normalizedIncoming = normalizedText(incomingValue);
+        return normalizedIncoming != null && !Objects.equals(normalizedText(existingValue), normalizedIncoming);
     }
 
     private boolean sameInstant(OffsetDateTime lhs, OffsetDateTime rhs) {
@@ -257,6 +280,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 rs.getBoolean("is_postponed"),
                 cancelReason(rs.getString("cancel_reason")),
                 rs.getString("raw_cancel_text"),
+                rs.getString("away_starting_pitcher_name"),
+                rs.getString("home_starting_pitcher_name"),
                 rs.getObject("source_updated_at", OffsetDateTime.class)
         );
     }
@@ -282,6 +307,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             boolean postponed,
             GameCancelReason cancelReason,
             String rawCancelText,
+            String awayStartingPitcherName,
+            String homeStartingPitcherName,
             OffsetDateTime sourceUpdatedAt
     ) {
     }

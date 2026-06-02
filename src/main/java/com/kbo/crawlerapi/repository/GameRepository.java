@@ -1,6 +1,8 @@
 package com.kbo.crawlerapi.repository;
 
+import java.time.Instant;
 import java.time.LocalDate;
+//import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,7 +44,12 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
     );
 
     @Query(value = """
-            SELECT g.public_game_id
+            SELECT
+                g.id AS id,
+                g.public_game_id AS "publicGameId",
+                g.provider_game_id AS "providerGameId",
+                g.status AS status,
+                g.final_confirmed_at AS "finalConfirmedAt"
             FROM kbo_crawler_api.games g
             WHERE g.game_date = :gameDate
               AND g.status = 'final'
@@ -60,5 +67,17 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
               )
             ORDER BY g.scheduled_at ASC NULLS LAST, g.public_game_id ASC
             """, nativeQuery = true)
-    List<String> findFinalPublicGameIdsMissingBoxscoreRecordsByDate(@Param("gameDate") LocalDate gameDate);
+    List<BoxscoreBackfillTarget> findFinalBoxscoreBackfillTargetsByDate(@Param("gameDate") LocalDate gameDate);
+
+    interface BoxscoreBackfillTarget {
+        UUID getId();
+
+        String getPublicGameId();
+
+        String getProviderGameId();
+
+        String getStatus();
+
+        Instant getFinalConfirmedAt();
+    }
 }

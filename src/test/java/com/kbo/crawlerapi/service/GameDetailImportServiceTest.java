@@ -836,61 +836,6 @@ class GameDetailImportServiceTest {
     }
 
     @Test
-    void backfillForDateImportsFinalGamesMissingBoxscoreRecords() {
-        Game game = fixtureGame();
-        CrawlJob crawlJob = crawlJob(game);
-        LocalDate gameDate = game.getGameDate();
-        kboGameDetailClient.detailBody = "{\"game\":[]}";
-        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
-        kboGameDetailClient.boxScoreBody = "{\"code\":\"100\",\"arrHitter\":[],\"arrPitcher\":[]}";
-        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
-                game.getProviderGameId(),
-                GameStatus.FINAL,
-                false,
-                false,
-                null,
-                null,
-                2,
-                7,
-                9,
-                "top",
-                "Top 9",
-                0,
-                0,
-                3,
-                false,
-                false,
-                false,
-                "홈투수",
-                "원정타자",
-                "홈선발",
-                "원정선발",
-                true,
-                null,
-                null,
-                "final-detail-hash-backfill"
-        ));
-        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
-        kboBoxscoreParser.result = parsedBoxscore(1, 1, 1, 1);
-
-        crawlJobTrackingService.createdJob = crawlJob;
-        when(gameRepository.findFinalPublicGameIdsMissingBoxscoreRecordsByDate(eq(gameDate)))
-                .thenReturn(List.of(game.getPublicGameId()));
-        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
-        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
-                .thenReturn(Optional.empty());
-        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
-
-        GameDetailImportService.GameDetailBackfillResult result = gameDetailImportService.backfillFinalBoxscoreRecords(gameDate);
-
-        assertThat(result.selectedGameCount()).isEqualTo(1);
-        assertThat(result.succeededCount()).isEqualTo(1);
-        assertThat(result.failedCount()).isZero();
-        assertThat(gameBoxscoreRecordService.savedGame).isSameAs(game);
-        assertThat(crawlJobTrackingService.succeededJobId).isEqualTo(crawlJob.getId());
-    }
-
-    @Test
     void skipsBoxscoreSaveForLiveImportsEvenWhenLineupBoxscoreWasFetched() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
