@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.api.ResourceNotFoundException;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient.DetailResponse;
+import com.kbo.crawlerapi.crawler.KboLiveTextClient;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
@@ -17,6 +18,7 @@ import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedScoreBoardStatus;
 import com.kbo.crawlerapi.parser.KboLineScoreParser;
 import com.kbo.crawlerapi.parser.KboLineScoreParser.ParsedLineScoreResult;
+import com.kbo.crawlerapi.parser.KboLiveTextParser;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
@@ -33,6 +35,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -63,7 +66,10 @@ public class GameDetailImportService {
     private final KboGameDetailParser kboGameDetailParser;
     private final KboLineScoreParser kboLineScoreParser;
     private final KboBoxscoreParser kboBoxscoreParser;
+    private final KboLiveTextClient kboLiveTextClient;
+    private final KboLiveTextParser kboLiveTextParser;
     private final GameBoxscoreRecordService gameBoxscoreRecordService;
+    private final GameLiveTextRecordService gameLiveTextRecordService;
     private final CrawlJobTrackingService crawlJobTrackingService;
     private final BaseRunnerNameResolver baseRunnerNameResolver;
     private final ObjectMapper objectMapper;
@@ -80,6 +86,39 @@ public class GameDetailImportService {
             CrawlJobTrackingService crawlJobTrackingService,
             BaseRunnerNameResolver baseRunnerNameResolver
     ) {
+        this(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                null,
+                null,
+                gameBoxscoreRecordService,
+                null,
+                crawlJobTrackingService,
+                baseRunnerNameResolver
+        );
+    }
+
+    @Autowired
+    public GameDetailImportService(
+            GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
+            LineScoreRepository lineScoreRepository,
+            KboGameDetailClient kboGameDetailClient,
+            KboGameDetailParser kboGameDetailParser,
+            KboLineScoreParser kboLineScoreParser,
+            KboBoxscoreParser kboBoxscoreParser,
+            KboLiveTextClient kboLiveTextClient,
+            KboLiveTextParser kboLiveTextParser,
+            GameBoxscoreRecordService gameBoxscoreRecordService,
+            GameLiveTextRecordService gameLiveTextRecordService,
+            CrawlJobTrackingService crawlJobTrackingService,
+            BaseRunnerNameResolver baseRunnerNameResolver
+    ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
         this.lineScoreRepository = lineScoreRepository;
@@ -87,7 +126,10 @@ public class GameDetailImportService {
         this.kboGameDetailParser = kboGameDetailParser;
         this.kboLineScoreParser = kboLineScoreParser;
         this.kboBoxscoreParser = kboBoxscoreParser;
+        this.kboLiveTextClient = kboLiveTextClient;
+        this.kboLiveTextParser = kboLiveTextParser;
         this.gameBoxscoreRecordService = gameBoxscoreRecordService;
+        this.gameLiveTextRecordService = gameLiveTextRecordService;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.baseRunnerNameResolver = baseRunnerNameResolver;
         this.objectMapper = new ObjectMapper();
@@ -174,6 +216,7 @@ public class GameDetailImportService {
                     parsedDetail.statusReason(),
                     parsedDetail.sourceUpdatedAt()
             );
+            importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, fetchedAt);
             BoxscoreImportResult boxscoreImportResult = saveBoxscoreRecordsIfAvailable(
                     game,
                     resolvedOfficialDetail.providerGameId(),
@@ -201,6 +244,57 @@ public class GameDetailImportService {
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "persist", exception.getMessage(), exception, 0);
             throw exception;
+        }
+    }
+
+    private LiveTextImportResult importLiveTextIfAvailable(
+            Game game,
+            String providerGameId,
+            ParsedGameDetail parsedDetail,
+            OffsetDateTime fetchedAt
+    ) {
+        if (kboLiveTextClient == null || kboLiveTextParser == null || gameLiveTextRecordService == null) {
+            return LiveTextImportResult.skipped("notConfigured");
+        }
+        if (parsedDetail.status() == GameStatus.FINAL) {
+            return LiveTextImportResult.skipped("finalBoxscorePriority");
+        }
+        if (providerGameId == null || providerGameId.isBlank()) {
+            return LiveTextImportResult.skipped("missingProviderGameId");
+        }
+        try {
+            var response = kboLiveTextClient.fetchLiveText(providerGameId, game.getGameDate().getYear());
+            var parsedLiveText = kboLiveTextParser.parse(response.body());
+            if (!parsedLiveText.hasRecords() && !parsedLiveText.hasEvents()) {
+                log.info(
+                        "[KboLiveText] skipped reason=empty providerGameId={} status={} responseType={} bodyLength={}",
+                        providerGameId,
+                        parsedDetail.status(),
+                        response.responseType(),
+                        response.bodyLength()
+                );
+                return LiveTextImportResult.skipped("empty");
+            }
+            var result = gameLiveTextRecordService.saveLiveText(game, parsedLiveText, fetchedAt);
+            log.info(
+                    "[KboLiveText] imported gameId={} providerGameId={} status={} batters={} pitchers={} events={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    parsedDetail.status(),
+                    result.batterRecordCount(),
+                    result.pitcherRecordCount(),
+                    result.eventCount()
+            );
+            return new LiveTextImportResult(result.batterRecordCount(), result.pitcherRecordCount(), result.eventCount(), null);
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[KboLiveText] skipped reason=error gameId={} providerGameId={} status={} error={}",
+                    game.getPublicGameId(),
+                    providerGameId,
+                    parsedDetail.status(),
+                    exception.getMessage()
+            );
+            return LiveTextImportResult.skipped("error:" + exception.getMessage());
         }
     }
 
@@ -928,6 +1022,17 @@ public class GameDetailImportService {
 
         private boolean hasSavedBoxscoreRecords() {
             return savedBatterCount > 0 && savedPitcherCount > 0;
+        }
+    }
+
+    private record LiveTextImportResult(
+            int batterRecordCount,
+            int pitcherRecordCount,
+            int eventCount,
+            String skippedReason
+    ) {
+        private static LiveTextImportResult skipped(String skippedReason) {
+            return new LiveTextImportResult(0, 0, 0, skippedReason);
         }
     }
 

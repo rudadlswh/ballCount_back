@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.parser.KboGameListParser.ParsedGameListGame;
 
 @Component
 public class KboScheduleParser {
@@ -718,6 +719,39 @@ public class KboScheduleParser {
                     null,
                     sourceUpdatedAt
             );
+        }
+
+        public ParsedScheduleGame withGameListStarterNames(ParsedGameListGame gameListGame) {
+            String enrichedProviderGameId = hasText(providerGameId) ? providerGameId : gameListGame.providerGameId();
+            String enrichedAwayStartingPitcherName = hasText(gameListGame.awayStartingPitcherName())
+                    ? gameListGame.awayStartingPitcherName()
+                    : awayStartingPitcherName;
+            String enrichedHomeStartingPitcherName = hasText(gameListGame.homeStartingPitcherName())
+                    ? gameListGame.homeStartingPitcherName()
+                    : homeStartingPitcherName;
+            return new ParsedScheduleGame(
+                    provider,
+                    enrichedProviderGameId,
+                    gameDate,
+                    scheduledAt,
+                    stadium,
+                    status,
+                    isCancelled,
+                    isPostponed,
+                    awayProviderTeamName,
+                    homeProviderTeamName,
+                    awayScore,
+                    homeScore,
+                    cancelReason,
+                    rawCancelText,
+                    enrichedAwayStartingPitcherName,
+                    enrichedHomeStartingPitcherName,
+                    sourceUpdatedAt
+            );
+        }
+
+        private boolean hasText(String value) {
+            return value != null && !value.isBlank();
         }
     }
 

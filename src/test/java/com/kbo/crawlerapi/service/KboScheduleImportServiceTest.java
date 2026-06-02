@@ -39,6 +39,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient.KboScheduleEndpointException;
 import com.kbo.crawlerapi.domain.CrawlJob;
@@ -46,6 +47,7 @@ import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.parser.KboGameListParser;
 import com.kbo.crawlerapi.parser.KboScheduleParser;
 import com.kbo.crawlerapi.parser.KboScheduleParser.MonthlyScheduleParseResult;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
@@ -65,6 +67,8 @@ class KboScheduleImportServiceTest {
 
     private StubKboScheduleClient kboScheduleClient;
     private StubKboScheduleParser kboScheduleParser;
+    private StubKboGameDetailClient kboGameDetailClient;
+    private KboGameListParser kboGameListParser;
     private StubCrawlJobTrackingService crawlJobTrackingService;
     private StubScheduleGameWriteRepository scheduleGameWriteRepository;
     private KboScheduleImportService kboScheduleImportService;
@@ -76,11 +80,15 @@ class KboScheduleImportServiceTest {
         appliedAt = OffsetDateTime.now(fixedClock);
         kboScheduleClient = new StubKboScheduleClient();
         kboScheduleParser = new StubKboScheduleParser();
+        kboGameDetailClient = new StubKboGameDetailClient();
+        kboGameListParser = new KboGameListParser(new com.fasterxml.jackson.databind.ObjectMapper());
         crawlJobTrackingService = new StubCrawlJobTrackingService();
         scheduleGameWriteRepository = new StubScheduleGameWriteRepository();
         kboScheduleImportService = new KboScheduleImportService(
                 kboScheduleClient,
                 kboScheduleParser,
+                kboGameDetailClient,
+                kboGameListParser,
                 teamRepository,
                 gameRepository,
                 scheduleGameWriteRepository,
@@ -409,6 +417,113 @@ class KboScheduleImportServiceTest {
         assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
         assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
         assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
+    }
+
+    @Test
+    void crawlDayEnrichesScheduledGameStartingPitchersByProviderGameId() {
+        LocalDate requestedDate = LocalDate.of(2026, 6, 2);
+        Team lotte = new Team(UUID.randomUUID(), "lotte", "Lotte Giants", "Lotte", "Lotte Giants", null);
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                "20260602LTHT0",
+                requestedDate,
+                OffsetDateTime.of(2026, 6, 2, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "광주",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "롯데",
+                "KIA",
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(parsedGame), List.of());
+        kboGameDetailClient.gameListResponseBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260602LTHT0",
+                      "AWAY_NM": "롯데",
+                      "HOME_NM": "KIA",
+                      "T_PIT_P_NM": "나균안",
+                      "B_PIT_P_NM": "네일"
+                    }
+                  ]
+                }
+                """;
+
+        when(teamRepository.findByTeamCode("lotte")).thenReturn(Optional.of(lotte));
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
+
+        assertThat(kboGameDetailClient.fetchedGameListDate).isEqualTo(requestedDate);
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.publicGameId).isEqualTo("20260602-KIA-LOT");
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isEqualTo("20260602LTHT0");
+        assertThat(scheduleGameWriteRepository.parsedGame.awayStartingPitcherName()).isEqualTo("나균안");
+        assertThat(scheduleGameWriteRepository.parsedGame.homeStartingPitcherName()).isEqualTo("네일");
+    }
+
+    @Test
+    void crawlDayBackfillsMissingScheduleProviderGameIdFromGameListTeamMatch() {
+        LocalDate requestedDate = LocalDate.of(2026, 6, 2);
+        Team lotte = new Team(UUID.randomUUID(), "lotte", "Lotte Giants", "Lotte", "Lotte Giants", null);
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                null,
+                requestedDate,
+                OffsetDateTime.of(2026, 6, 2, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "광주",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "롯데",
+                "KIA",
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(
+                List.of(parsedGame),
+                List.of(new SkippedScheduleRow(requestedDate, "MISSING_PROVIDER_GAME_ID", "롯데vsKIA", null))
+        );
+        kboGameDetailClient.gameListResponseBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260602LTHT0",
+                      "AWAY_NM": "롯데",
+                      "HOME_NM": "KIA",
+                      "T_PIT_P_NM": "나균안",
+                      "B_PIT_P_NM": "네일"
+                    }
+                  ]
+                }
+                """;
+
+        when(teamRepository.findByTeamCode("lotte")).thenReturn(Optional.of(lotte));
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
+
+        assertThat(result.gameProcessedCount()).isEqualTo(1);
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isEqualTo("20260602LTHT0");
+        assertThat(scheduleGameWriteRepository.parsedGame.awayStartingPitcherName()).isEqualTo("나균안");
+        assertThat(scheduleGameWriteRepository.parsedGame.homeStartingPitcherName()).isEqualTo("네일");
     }
 
     @Test
@@ -945,6 +1060,24 @@ class KboScheduleImportServiceTest {
                     "https://www.koreabaseball.com/ws/Schedule.asmx/GetScheduleList",
                     "POST",
                     null
+            );
+        }
+    }
+
+    private static final class StubKboGameDetailClient extends KboGameDetailClient {
+
+        private String gameListResponseBody = "{\"game\":[]}";
+        private LocalDate fetchedGameListDate;
+
+        @Override
+        public KboGameDetailClient.DetailResponse fetchGameListResponse(LocalDate gameDate) {
+            this.fetchedGameListDate = gameDate;
+            return new KboGameDetailClient.DetailResponse(
+                    gameListResponseBody,
+                    200,
+                    "application/json",
+                    "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList",
+                    "POST"
             );
         }
     }

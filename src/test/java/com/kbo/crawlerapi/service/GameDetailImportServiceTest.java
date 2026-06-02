@@ -30,6 +30,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
+import com.kbo.crawlerapi.crawler.KboLiveTextClient;
 import com.kbo.crawlerapi.domain.CrawlJob;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameCancelReason;
@@ -40,6 +41,7 @@ import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboBoxscoreParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboLineScoreParser;
+import com.kbo.crawlerapi.parser.KboLiveTextParser;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
@@ -901,6 +903,82 @@ class GameDetailImportServiceTest {
     }
 
     @Test
+    void importsLiveTextRecordsForLiveDetailImport() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
+        StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
+        StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
+        gameDetailImportService = new GameDetailImportService(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                liveTextClient,
+                liveTextParser,
+                gameBoxscoreRecordService,
+                liveTextRecordService,
+                crawlJobTrackingService,
+                new BaseRunnerNameResolver()
+        );
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        liveTextClient.responseBody = "<html>live</html>";
+        liveTextParser.result = new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, "유", "박승욱", 4, 1, 2, 1, 0, 1, 0, 1, 0, 0, 0, 0)),
+                List.of(),
+                List.of(new KboLiveTextParser.ParsedLiveTextPitcherRecord("away", 0, 1, "박세웅", "선발", null, "6", 24, 88, 22, 5, 0, 1, 1, 6, 1, 1, 0)),
+                List.of(),
+                List.of(new KboLiveTextParser.ParsedLiveTextEvent(1, 1, "top", "HIT", "박승욱 : 중견수 앞 1루타", "박승욱"))
+        );
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                6,
+                "top",
+                "Top 6",
+                1,
+                2,
+                1,
+                true,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                false,
+                null,
+                null,
+                "live-detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        assertThat(liveTextClient.requestedProviderGameId).isEqualTo(game.getProviderGameId());
+        assertThat(liveTextParser.parsedHtml).isEqualTo(liveTextClient.responseBody);
+        assertThat(liveTextRecordService.savedGame).isSameAs(game);
+        assertThat(liveTextRecordService.savedLiveText).isSameAs(liveTextParser.result);
+        assertThat(liveTextRecordService.sourceUpdatedAt).isNotNull();
+    }
+
+    @Test
     void infersFirstBaseRunnerNameFromPreviousBatterWhenOfficialRunnerNameMissing() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
@@ -1477,6 +1555,38 @@ class GameDetailImportServiceTest {
         }
     }
 
+    private static final class StubKboLiveTextClient extends KboLiveTextClient {
+
+        private String responseBody;
+        private String requestedProviderGameId;
+        private int requestedSeason;
+
+        @Override
+        public LiveTextResponse fetchLiveText(String providerGameId, int season) {
+            this.requestedProviderGameId = providerGameId;
+            this.requestedSeason = season;
+            return new LiveTextResponse(
+                    responseBody,
+                    200,
+                    "text/html",
+                    "https://www.koreabaseball.com/Game/LiveTextView2.aspx",
+                    "POST"
+            );
+        }
+    }
+
+    private static final class StubKboLiveTextParser extends KboLiveTextParser {
+
+        private KboLiveTextParser.ParsedLiveText result = KboLiveTextParser.ParsedLiveText.empty();
+        private String parsedHtml;
+
+        @Override
+        public KboLiveTextParser.ParsedLiveText parse(String html) {
+            this.parsedHtml = html;
+            return result;
+        }
+    }
+
     private static final class StubGameBoxscoreRecordService extends GameBoxscoreRecordService {
 
         private Game savedGame;
@@ -1493,6 +1603,31 @@ class GameDetailImportServiceTest {
             int batterCount = parsedBoxscore.awayBatters().size() + parsedBoxscore.homeBatters().size();
             int pitcherCount = parsedBoxscore.awayPitchers().size() + parsedBoxscore.homePitchers().size();
             return new GameBoxscoreRecordSaveResult(batterCount, pitcherCount, batterCount, pitcherCount, true);
+        }
+    }
+
+    private static final class StubGameLiveTextRecordService extends GameLiveTextRecordService {
+
+        private Game savedGame;
+        private KboLiveTextParser.ParsedLiveText savedLiveText;
+        private OffsetDateTime sourceUpdatedAt;
+
+        private StubGameLiveTextRecordService() {
+            super(null, null);
+        }
+
+        @Override
+        public GameLiveTextRecordSaveResult saveLiveText(
+                Game game,
+                KboLiveTextParser.ParsedLiveText parsedLiveText,
+                OffsetDateTime sourceUpdatedAt
+        ) {
+            this.savedGame = game;
+            this.savedLiveText = parsedLiveText;
+            this.sourceUpdatedAt = sourceUpdatedAt;
+            int batterCount = parsedLiveText.awayBatters().size() + parsedLiveText.homeBatters().size();
+            int pitcherCount = parsedLiveText.awayPitchers().size() + parsedLiveText.homePitchers().size();
+            return new GameLiveTextRecordSaveResult(batterCount, pitcherCount, parsedLiveText.events().size(), parsedLiveText.events().size(), null);
         }
     }
 

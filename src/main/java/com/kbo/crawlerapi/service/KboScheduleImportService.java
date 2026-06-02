@@ -6,8 +6,10 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,12 +18,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient.ScheduleResponse;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.parser.KboGameListParser;
+import com.kbo.crawlerapi.parser.KboGameListParser.ParsedGameListGame;
 import com.kbo.crawlerapi.parser.KboScheduleParser;
 import com.kbo.crawlerapi.parser.KboScheduleParser.MonthlyScheduleParseResult;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
@@ -40,6 +45,8 @@ public class KboScheduleImportService {
 
     private final KboScheduleClient kboScheduleClient;
     private final KboScheduleParser kboScheduleParser;
+    private final KboGameDetailClient kboGameDetailClient;
+    private final KboGameListParser kboGameListParser;
     private final TeamRepository teamRepository;
     private final GameRepository gameRepository;
     private final ScheduleGameWriteRepository scheduleGameWriteRepository;
@@ -50,6 +57,8 @@ public class KboScheduleImportService {
     public KboScheduleImportService(
             KboScheduleClient kboScheduleClient,
             KboScheduleParser kboScheduleParser,
+            KboGameDetailClient kboGameDetailClient,
+            KboGameListParser kboGameListParser,
             TeamRepository teamRepository,
             GameRepository gameRepository,
             ScheduleGameWriteRepository scheduleGameWriteRepository,
@@ -58,6 +67,8 @@ public class KboScheduleImportService {
     ) {
         this.kboScheduleClient = kboScheduleClient;
         this.kboScheduleParser = kboScheduleParser;
+        this.kboGameDetailClient = kboGameDetailClient;
+        this.kboGameListParser = kboGameListParser;
         this.teamRepository = teamRepository;
         this.gameRepository = gameRepository;
         this.scheduleGameWriteRepository = scheduleGameWriteRepository;
@@ -73,7 +84,20 @@ public class KboScheduleImportService {
             CrawlJobTrackingService crawlJobTrackingService,
             Clock applicationClock
     ) {
-        this(kboScheduleClient, kboScheduleParser, teamRepository, null, scheduleGameWriteRepository, crawlJobTrackingService, applicationClock);
+        this(kboScheduleClient, kboScheduleParser, null, null, teamRepository, null, scheduleGameWriteRepository, crawlJobTrackingService, applicationClock);
+    }
+
+    protected KboScheduleImportService(
+            KboScheduleClient kboScheduleClient,
+            KboScheduleParser kboScheduleParser,
+            KboGameDetailClient kboGameDetailClient,
+            KboGameListParser kboGameListParser,
+            TeamRepository teamRepository,
+            ScheduleGameWriteRepository scheduleGameWriteRepository,
+            CrawlJobTrackingService crawlJobTrackingService,
+            Clock applicationClock
+    ) {
+        this(kboScheduleClient, kboScheduleParser, kboGameDetailClient, kboGameListParser, teamRepository, null, scheduleGameWriteRepository, crawlJobTrackingService, applicationClock);
     }
 
     public ScheduleIngestionResult importMonthlySchedule(YearMonth yearMonth) {
@@ -162,6 +186,7 @@ public class KboScheduleImportService {
         List<KboScheduleParser.SkippedScheduleRow> skippedRowsForDate = parseResult.skippedRows().stream()
                 .filter(skippedRow -> date.equals(skippedRow.gameDate()))
                 .toList();
+        gamesForDate = enrichDailyScheduleGames(date, gamesForDate);
 
         log.info(
                 "Filtered daily KBO schedule crawl rows. requestedDate={}, derivedMonth={}, fetchedRowCount={}, parsedGameCount={}, filteredGameCount={}, filteredSkippedRowCount={}",
@@ -375,6 +400,77 @@ public class KboScheduleImportService {
         );
     }
 
+    private List<ParsedScheduleGame> enrichDailyScheduleGames(LocalDate date, List<ParsedScheduleGame> gamesForDate) {
+        if (kboGameDetailClient == null || kboGameListParser == null || gamesForDate.isEmpty()) {
+            return gamesForDate;
+        }
+
+        List<ParsedGameListGame> gameListGames;
+        try {
+            var response = kboGameDetailClient.fetchGameListResponse(date);
+            KboGameDetailClient.validateDetailResponse(response, "KBO game list endpoint returned error page");
+            gameListGames = kboGameListParser.parseGameList(response.body());
+        } catch (Exception exception) {
+            log.warn("KBO GameList starter enrichment failed. date={}, reason={}", date, exception.getMessage(), exception);
+            return gamesForDate;
+        }
+
+        Map<String, ParsedGameListGame> byProviderGameId = new HashMap<>();
+        Map<String, ParsedGameListGame> byNaturalKey = new HashMap<>();
+        for (ParsedGameListGame gameListGame : gameListGames) {
+            byProviderGameId.put(gameListGame.providerGameId(), gameListGame);
+            if (!gameListGame.naturalKey().equals("|")) {
+                byNaturalKey.put(gameListGame.naturalKey(), gameListGame);
+            }
+            log.info(
+                    "KBO GameList starter parsed. date={}, providerGameId={}, awayStartingPitcherName={}, homeStartingPitcherName={}",
+                    date,
+                    gameListGame.providerGameId(),
+                    gameListGame.awayStartingPitcherName(),
+                    gameListGame.homeStartingPitcherName()
+            );
+        }
+
+        List<ParsedScheduleGame> enrichedGames = new ArrayList<>();
+        for (ParsedScheduleGame parsedGame : gamesForDate) {
+            ParsedGameListGame gameListGame = null;
+            String resolvedBy = null;
+            if (hasText(parsedGame.providerGameId())) {
+                gameListGame = byProviderGameId.get(parsedGame.providerGameId());
+                resolvedBy = gameListGame == null ? null : "providerGameId";
+            }
+            if (gameListGame == null) {
+                String naturalKey = ParsedGameListGame.naturalKey(parsedGame.awayProviderTeamName(), parsedGame.homeProviderTeamName());
+                gameListGame = byNaturalKey.get(naturalKey);
+                resolvedBy = gameListGame == null ? null : "teams";
+            }
+
+            if (gameListGame == null) {
+                log.debug(
+                        "KBO GameList starter enrichment skipped. date={}, providerGameId={}, away={}, home={}, reason=noMatch",
+                        date,
+                        parsedGame.providerGameId(),
+                        parsedGame.awayProviderTeamName(),
+                        parsedGame.homeProviderTeamName()
+                );
+                enrichedGames.add(parsedGame);
+                continue;
+            }
+
+            ParsedScheduleGame enrichedGame = parsedGame.withGameListStarterNames(gameListGame);
+            log.info(
+                    "KBO GameList starter enrichment matched. date={}, providerGameId={}, resolvedBy={}, awayStartingPitcherName={}, homeStartingPitcherName={}",
+                    date,
+                    enrichedGame.providerGameId(),
+                    resolvedBy,
+                    enrichedGame.awayStartingPitcherName(),
+                    enrichedGame.homeStartingPitcherName()
+            );
+            enrichedGames.add(enrichedGame);
+        }
+        return enrichedGames;
+    }
+
     protected PersistResult persistParsedGames(java.util.List<ParsedScheduleGame> parsedGames, List<KboScheduleParser.SkippedScheduleRow> skippedRows) {
         OffsetDateTime appliedAt = OffsetDateTime.now(applicationClock);
         int teamCreatedCount = 0;
@@ -411,12 +507,42 @@ public class KboScheduleImportService {
                     publicGameId,
                     sourceUpdatedAtForApply(parsedGame, appliedAt)
             );
+            logStarterPersistence(parsedGame, gameResult);
             gameCreatedCount += gameResult.created() ? 1 : 0;
             gameUpdatedCount += gameResult.updated() ? 1 : 0;
         }
 
         gameUpdatedCount += applyMissingProviderCancellationFallbacks(skippedRows, appliedAt);
         return new PersistResult(teamCreatedCount, teamUpdatedCount, gameCreatedCount, gameUpdatedCount);
+    }
+
+    private void logStarterPersistence(ParsedScheduleGame parsedGame, ScheduleGameWriteRepository.GameWriteResult gameResult) {
+        if (!hasText(parsedGame.awayStartingPitcherName()) && !hasText(parsedGame.homeStartingPitcherName())) {
+            log.debug(
+                    "KBO starter persistence skipped. date={}, providerGameId={}, reason=noStarterNames",
+                    parsedGame.gameDate(),
+                    parsedGame.providerGameId()
+            );
+            return;
+        }
+        if (gameResult.created() || gameResult.updated()) {
+            log.info(
+                    "KBO starter persistence applied. date={}, providerGameId={}, awayStartingPitcherName={}, homeStartingPitcherName={}, persisted={}",
+                    parsedGame.gameDate(),
+                    parsedGame.providerGameId(),
+                    parsedGame.awayStartingPitcherName(),
+                    parsedGame.homeStartingPitcherName(),
+                    gameResult.created() ? "created" : "updated"
+            );
+            return;
+        }
+        log.info(
+                "KBO starter persistence skipped. date={}, providerGameId={}, awayStartingPitcherName={}, homeStartingPitcherName={}, reason=unchangedOrExistingValue",
+                parsedGame.gameDate(),
+                parsedGame.providerGameId(),
+                parsedGame.awayStartingPitcherName(),
+                parsedGame.homeStartingPitcherName()
+        );
     }
 
     private int applyMissingProviderCancellationFallbacks(List<KboScheduleParser.SkippedScheduleRow> skippedRows, OffsetDateTime appliedAt) {
@@ -569,6 +695,10 @@ public class KboScheduleImportService {
         }
         String normalized = note.trim();
         return normalized.isBlank() || "-".equals(normalized) ? null : normalized;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private TeamUpsertResult upsertTeam(String providerTeamName) {
