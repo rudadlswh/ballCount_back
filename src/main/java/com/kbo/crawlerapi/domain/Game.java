@@ -128,6 +128,52 @@ public class Game {
             String rawCancelText,
             OffsetDateTime sourceUpdatedAt
     ) {
+        this(
+                id,
+                publicGameId,
+                provider,
+                providerGameId,
+                gameDate,
+                scheduledAt,
+                stadium,
+                status,
+                homeTeam,
+                awayTeam,
+                homeScore,
+                awayScore,
+                inningState,
+                isCancelled,
+                isPostponed,
+                cancelReason,
+                rawCancelText,
+                null,
+                null,
+                sourceUpdatedAt
+        );
+    }
+
+    public Game(
+            UUID id,
+            String publicGameId,
+            String provider,
+            String providerGameId,
+            LocalDate gameDate,
+            OffsetDateTime scheduledAt,
+            String stadium,
+            GameStatus status,
+            Team homeTeam,
+            Team awayTeam,
+            Integer homeScore,
+            Integer awayScore,
+            String inningState,
+            boolean isCancelled,
+            boolean isPostponed,
+            GameCancelReason cancelReason,
+            String rawCancelText,
+            String homeStartingPitcherName,
+            String awayStartingPitcherName,
+            OffsetDateTime sourceUpdatedAt
+    ) {
         this.id = id;
         this.publicGameId = publicGameId;
         this.provider = provider;
@@ -145,6 +191,8 @@ public class Game {
         this.isPostponed = isPostponed;
         this.cancelReason = cancelReason;
         this.rawCancelText = rawCancelText;
+        this.homeStartingPitcherName = homeStartingPitcherName;
+        this.awayStartingPitcherName = awayStartingPitcherName;
         this.sourceUpdatedAt = sourceUpdatedAt;
     }
 
@@ -267,6 +315,8 @@ public class Game {
             boolean isPostponed,
             GameCancelReason cancelReason,
             String rawCancelText,
+            String homeStartingPitcherName,
+            String awayStartingPitcherName,
             OffsetDateTime sourceUpdatedAt
     ) {
         boolean changed = false;
@@ -325,6 +375,14 @@ public class Game {
         }
         if (!java.util.Objects.equals(this.rawCancelText, rawCancelText)) {
             this.rawCancelText = rawCancelText;
+            changed = true;
+        }
+        if (hasText(homeStartingPitcherName) && !java.util.Objects.equals(this.homeStartingPitcherName, homeStartingPitcherName)) {
+            this.homeStartingPitcherName = homeStartingPitcherName;
+            changed = true;
+        }
+        if (hasText(awayStartingPitcherName) && !java.util.Objects.equals(this.awayStartingPitcherName, awayStartingPitcherName)) {
+            this.awayStartingPitcherName = awayStartingPitcherName;
             changed = true;
         }
         if (changed && !java.util.Objects.equals(this.sourceUpdatedAt, sourceUpdatedAt)) {

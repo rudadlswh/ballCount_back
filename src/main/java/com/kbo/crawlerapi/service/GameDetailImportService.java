@@ -575,6 +575,8 @@ public class GameDetailImportService {
                 game.isPostponed(),
                 game.getCancelReason(),
                 game.getRawCancelText(),
+                game.getHomeStartingPitcherName(),
+                game.getAwayStartingPitcherName(),
                 game.getSourceUpdatedAt()
         );
     }

@@ -303,6 +303,44 @@ class KboScheduleImportServiceTest {
     }
 
     @Test
+    void importMonthlySchedulePassesStartingPitcherNamesToGameWriter() {
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        Team lotte = new Team(UUID.randomUUID(), "lotte", "Lotte Giants", "Lotte", "Lotte Giants", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                "20260602LTHT0",
+                LocalDate.of(2026, 6, 2),
+                OffsetDateTime.of(2026, 6, 2, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "사직",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "KIA",
+                "롯데",
+                null,
+                null,
+                null,
+                null,
+                "원정선발",
+                "홈선발",
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(parsedGame), List.of());
+
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        when(teamRepository.findByTeamCode("lotte")).thenReturn(Optional.of(lotte));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 6));
+
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.publicGameId).isEqualTo("20260602-LOT-KIA");
+        assertThat(scheduleGameWriteRepository.parsedGame.awayStartingPitcherName()).isEqualTo("원정선발");
+        assertThat(scheduleGameWriteRepository.parsedGame.homeStartingPitcherName()).isEqualTo("홈선발");
+    }
+
+    @Test
     void crawlDayFetchesMonthAndPersistsOnlyRequestedDate() {
         LocalDate requestedDate = LocalDate.of(2026, 5, 17);
         Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
@@ -756,6 +794,75 @@ class KboScheduleImportServiceTest {
         assertThat(inMemoryRepository.storedGames).hasSize(2);
     }
 
+    @Test
+    void crawlMonthDoesNotOverwriteExistingStartingPitchersWithBlankIncomingNames() {
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        Team lotte = new Team(UUID.randomUUID(), "lotte", "Lotte Giants", "Lotte", "Lotte Giants", null);
+        InMemoryUpsertScheduleGameWriteRepository inMemoryRepository = new InMemoryUpsertScheduleGameWriteRepository();
+
+        kboScheduleImportService = new KboScheduleImportService(
+                kboScheduleClient,
+                kboScheduleParser,
+                teamRepository,
+                inMemoryRepository,
+                crawlJobTrackingService,
+                Clock.fixed(Instant.parse("2026-04-11T12:00:00Z"), ZoneId.of("Asia/Seoul"))
+        );
+
+        ParsedScheduleGame withPitchers = new ParsedScheduleGame(
+                "kbo",
+                "20260602LTHT0",
+                LocalDate.of(2026, 6, 2),
+                OffsetDateTime.of(2026, 6, 2, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "사직",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "KIA",
+                "롯데",
+                null,
+                null,
+                null,
+                null,
+                "원정선발",
+                "홈선발",
+                null
+        );
+        ParsedScheduleGame blankPitchers = new ParsedScheduleGame(
+                "kbo",
+                "20260602LTHT0",
+                LocalDate.of(2026, 6, 2),
+                OffsetDateTime.of(2026, 6, 2, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "사직",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "KIA",
+                "롯데",
+                null,
+                null,
+                null,
+                null,
+                " ",
+                null,
+                null
+        );
+
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        when(teamRepository.findByTeamCode("lotte")).thenReturn(Optional.of(lotte));
+
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(withPitchers), List.of());
+        kboScheduleImportService.crawlMonth(YearMonth.of(2026, 6));
+
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(blankPitchers), List.of());
+        MonthScheduleIngestionResult secondRun = kboScheduleImportService.crawlMonth(YearMonth.of(2026, 6));
+
+        assertThat(secondRun.updatedCount()).isZero();
+        var storedGame = inMemoryRepository.storedGames.get("kbo:20260602LTHT0");
+        assertThat(storedGame.awayStartingPitcherName()).isEqualTo("원정선발");
+        assertThat(storedGame.homeStartingPitcherName()).isEqualTo("홈선발");
+    }
+
     private DayScheduleIngestionResult successResult(LocalDate date, int createdCount, int updatedCount, int skippedCount) {
         return new DayScheduleIngestionResult(
                 date,
@@ -987,6 +1094,8 @@ class KboScheduleImportServiceTest {
                     parsedGame.homeScore(),
                     parsedGame.isCancelled(),
                     parsedGame.isPostponed(),
+                    normalizedText(parsedGame.awayStartingPitcherName()),
+                    normalizedText(parsedGame.homeStartingPitcherName()),
                     sourceUpdatedAt
             );
             StoredGame existing = storedGames.get(key);
@@ -1000,8 +1109,17 @@ class KboScheduleImportServiceTest {
                 return new GameWriteResult(false, false);
             }
 
+            updated = updated.withPreservedPitchers(existing);
+            if (Objects.equals(existing, updated)) {
+                return new GameWriteResult(false, false);
+            }
+
             storedGames.put(key, updated);
             return new GameWriteResult(false, true);
+        }
+
+        private String normalizedText(String value) {
+            return value == null || value.isBlank() ? null : value.trim();
         }
 
         private record StoredGame(
@@ -1017,8 +1135,29 @@ class KboScheduleImportServiceTest {
                 Integer homeScore,
                 boolean cancelled,
                 boolean postponed,
+                String awayStartingPitcherName,
+                String homeStartingPitcherName,
                 OffsetDateTime sourceUpdatedAt
         ) {
+            private StoredGame withPreservedPitchers(StoredGame existing) {
+                return new StoredGame(
+                        publicGameId,
+                        providerGameId,
+                        gameDate,
+                        scheduledAt,
+                        stadium,
+                        status,
+                        awayTeamId,
+                        homeTeamId,
+                        awayScore,
+                        homeScore,
+                        cancelled,
+                        postponed,
+                        awayStartingPitcherName == null ? existing.awayStartingPitcherName : awayStartingPitcherName,
+                        homeStartingPitcherName == null ? existing.homeStartingPitcherName : homeStartingPitcherName,
+                        sourceUpdatedAt
+                );
+            }
         }
     }
 }

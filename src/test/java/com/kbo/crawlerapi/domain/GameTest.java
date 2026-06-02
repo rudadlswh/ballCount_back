@@ -109,12 +109,67 @@ class GameTest {
                 false,
                 null,
                 null,
+                null,
+                null,
                 OffsetDateTime.of(2026, 5, 19, 20, 10, 0, 0, ZoneOffset.ofHours(9))
         );
 
         assertThat(game.getStatus()).isEqualTo(GameStatus.SUSPENDED);
         assertThat(game.isCancelled()).isFalse();
         assertThat(game.isPostponed()).isFalse();
+    }
+
+    @Test
+    void scheduleSyncUpdatesStartingPitchersOnlyWhenIncomingNamesArePresent() {
+        Game game = fixtureGame(GameStatus.SCHEDULED);
+
+        boolean changed = game.syncSchedule(
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getGameDate(),
+                game.getScheduledAt(),
+                game.getStadium(),
+                GameStatus.SCHEDULED,
+                game.getHomeTeam(),
+                game.getAwayTeam(),
+                null,
+                null,
+                false,
+                false,
+                null,
+                null,
+                "홈선발",
+                "원정선발",
+                OffsetDateTime.of(2026, 5, 19, 12, 0, 0, 0, ZoneOffset.ofHours(9))
+        );
+
+        assertThat(changed).isTrue();
+        assertThat(game.getHomeStartingPitcherName()).isEqualTo("홈선발");
+        assertThat(game.getAwayStartingPitcherName()).isEqualTo("원정선발");
+
+        changed = game.syncSchedule(
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getGameDate(),
+                game.getScheduledAt(),
+                game.getStadium(),
+                GameStatus.SCHEDULED,
+                game.getHomeTeam(),
+                game.getAwayTeam(),
+                null,
+                null,
+                false,
+                false,
+                null,
+                null,
+                " ",
+                null,
+                OffsetDateTime.of(2026, 5, 19, 12, 5, 0, 0, ZoneOffset.ofHours(9))
+        );
+
+        assertThat(changed).isFalse();
+        assertThat(game.getHomeStartingPitcherName()).isEqualTo("홈선발");
+        assertThat(game.getAwayStartingPitcherName()).isEqualTo("원정선발");
     }
 
     private Game fixtureGame(GameStatus status) {
