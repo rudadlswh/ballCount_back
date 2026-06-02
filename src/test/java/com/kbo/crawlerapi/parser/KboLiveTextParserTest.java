@@ -76,6 +76,25 @@ class KboLiveTextParserTest {
     }
 
     @Test
+    void extractsEventsFromNumContSpansWithBrChildren() {
+        var result = parser.parse(fixtureHtml());
+
+        assertThat(result.eventCandidateCount()).isEqualTo(11);
+        assertThat(result.skippedEventCount()).isEqualTo(3);
+        assertThat(result.events()).hasSize(8);
+        assertThat(result.events().get(0).inning()).isEqualTo(1);
+        assertThat(result.events().get(0).inningHalf()).isEqualTo("top");
+        assertThat(result.events().get(0).eventText()).isEqualTo("김주원 : 삼진 아웃");
+    }
+
+    @Test
+    void persistsUnknownRawEventsInsteadOfDroppingThem() {
+        var result = parser.parse(fixtureHtml());
+
+        assertThat(eventType(result, "비디오 판독 후 원심 유지")).isEqualTo("UNKNOWN");
+    }
+
+    @Test
     void handlesEmptyOrMissingTablesGracefully() {
         var result = parser.parse("<html><body><div>no records</div></body></html>");
 
@@ -130,14 +149,22 @@ class KboLiveTextParserTest {
                       <tr><td>최준용</td><td>3</td><td>10</td><td>40</td><td>9</td><td>1</td><td>0</td><td>0</td><td>1</td><td>3</td><td>0</td><td>0</td></tr>
                     </table>
 
-                    <div>1회초</div>
-                    <p>김주원 : 삼진 아웃</p>
-                    <p>박승욱 : 중견수 앞 1루타</p>
-                    <p>나승엽 : 볼넷</p>
-                    <p>투수 박세웅 : 투수 김원중 (으)로 교체</p>
-                    <p>2루주자 박승욱 : 홈인</p>
-                    <p>패전투수: 전사민</p>
-                    <p>승리투수: 최준용</p>
+                    <div id="numCont1" class="numCon">
+                      <span id="rptLiveText1_spanLiveText_0" class="blue">
+                        1회초 롯데 공격<br />
+                        ---------------------------------------
+                      </span>
+                      <span id="rptLiveText1_spanLiveText_1" class="normaiflTxt">김주원 : 삼진 아웃<br /></span>
+                      <span id="rptLiveText1_spanLiveText_2" class="normalifLTxt">박승욱 : 중견수 앞 1루타<br /></span>
+                      <span id="rptLiveText1_spanLiveText_3" class="normaiflTxt">나승엽 : 볼넷<br /></span>
+                      <span id="rptLiveText1_spanLiveText_4" class="red">투수 박세웅 : 투수 김원중 (으)로 교체<br /></span>
+                      <span id="rptLiveText1_spanLiveText_5" class="normaiflTxt">2루주자 박승욱 : 홈인<br /></span>
+                      <span id="rptLiveText1_spanLiveText_6" class="normaiflTxt">비디오 판독 후 원심 유지<br /></span>
+                      <span id="rptLiveText1_spanLiveText_7" class="normaiflTxt">- 1구 볼<br /></span>
+                      <span id="rptLiveText1_spanLiveText_8" class="normaiflTxt">4번타자 나승엽<br /></span>
+                      <span id="rptLiveText1_spanLiveText_9" class="blue">패전투수: 전사민<br /></span>
+                      <span id="rptLiveText1_spanLiveText_10" class="blue">승리투수: 최준용<br /></span>
+                    </div>
                   </body>
                 </html>
                 """;
