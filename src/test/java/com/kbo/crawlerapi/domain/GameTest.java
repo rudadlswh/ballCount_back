@@ -172,6 +172,61 @@ class GameTest {
         assertThat(game.getAwayStartingPitcherName()).isEqualTo("원정선발");
     }
 
+    @Test
+    void liveDetailSyncPreservesExistingScoreWhenIncomingScoreRegresses() {
+        Game game = fixtureGame(GameStatus.LIVE);
+
+        boolean changed = game.syncDetail(
+                GameStatus.LIVE,
+                0,
+                0,
+                "Bottom 7",
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.of(2026, 5, 19, 20, 10, 0, 0, ZoneOffset.ofHours(9))
+        );
+
+        assertThat(changed).isTrue();
+        assertThat(game.getHomeScore()).isEqualTo(6);
+        assertThat(game.getAwayScore()).isEqualTo(4);
+        assertThat(game.getInningState()).isEqualTo("Bottom 7");
+    }
+
+    @Test
+    void liveScheduleSyncPreservesExistingScoreWhenIncomingScoreRegresses() {
+        Game game = fixtureGame(GameStatus.LIVE);
+
+        boolean changed = game.syncSchedule(
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getGameDate(),
+                game.getScheduledAt(),
+                game.getStadium(),
+                GameStatus.LIVE,
+                game.getHomeTeam(),
+                game.getAwayTeam(),
+                0,
+                0,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.of(2026, 5, 19, 20, 10, 0, 0, ZoneOffset.ofHours(9))
+        );
+
+        assertThat(changed).isFalse();
+        assertThat(game.getHomeScore()).isEqualTo(6);
+        assertThat(game.getAwayScore()).isEqualTo(4);
+    }
+
     private Game fixtureGame(GameStatus status) {
         Team homeTeam = new Team(UUID.randomUUID(), "lotte", "롯데 자이언츠", "롯데", "Lotte Giants", null);
         Team awayTeam = new Team(UUID.randomUUID(), "hanwha", "한화 이글스", "한화", "Hanwha Eagles", null);

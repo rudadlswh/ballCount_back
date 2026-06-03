@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 import com.kbo.crawlerapi.domain.GameCancelReason;
+import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
 
@@ -48,7 +49,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                     : parsedGame.providerGameId();
             boolean changed = hasChanges(existing, parsedGame, awayTeam, homeTeam, publicGameId, providerGameId, sourceUpdatedAt);
             if (changed) {
-                update(existing.id(), parsedGame, awayTeam, homeTeam, publicGameId, providerGameId, sourceUpdatedAt);
+                update(existing, parsedGame, awayTeam, homeTeam, publicGameId, providerGameId, sourceUpdatedAt);
             }
             return new GameWriteResult(false, changed);
         }
@@ -141,7 +142,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     }
 
     private void update(
-            UUID id,
+            PublicGameRow existing,
             ParsedScheduleGame parsedGame,
             Team awayTeam,
             Team homeTeam,
@@ -180,8 +181,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 parsedGame.status().getApiValue(),
                 homeTeam.getId(),
                 awayTeam.getId(),
-                normalizedScore(parsedGame.homeScore()),
-                normalizedScore(parsedGame.awayScore()),
+                effectiveHomeScore(existing, parsedGame),
+                effectiveAwayScore(existing, parsedGame),
                 parsedGame.isCancelled(),
                 parsedGame.isPostponed(),
                 cancelReasonValue(parsedGame.cancelReason()),
@@ -189,7 +190,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 normalizedText(parsedGame.awayStartingPitcherName()),
                 normalizedText(parsedGame.homeStartingPitcherName()),
                 sourceUpdatedAt,
-                id
+                existing.id()
         );
     }
 
@@ -202,6 +203,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             String providerGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
+        Integer effectiveHomeScore = effectiveHomeScore(existing, parsedGame);
+        Integer effectiveAwayScore = effectiveAwayScore(existing, parsedGame);
         return !Objects.equals(existing.publicGameId(), publicGameId)
                 || !Objects.equals(existing.providerGameId(), providerGameId)
                 || !Objects.equals(existing.gameDate(), parsedGame.gameDate())
@@ -210,8 +213,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 || !Objects.equals(existing.status(), parsedGame.status().getApiValue())
                 || !Objects.equals(existing.homeTeamId(), homeTeam.getId())
                 || !Objects.equals(existing.awayTeamId(), awayTeam.getId())
-                || !Objects.equals(existing.homeScore(), normalizedScore(parsedGame.homeScore()))
-                || !Objects.equals(existing.awayScore(), normalizedScore(parsedGame.awayScore()))
+                || !Objects.equals(existing.homeScore(), effectiveHomeScore)
+                || !Objects.equals(existing.awayScore(), effectiveAwayScore)
                 || existing.cancelled() != parsedGame.isCancelled()
                 || existing.postponed() != parsedGame.isPostponed()
                 || existing.cancelReason() != parsedGame.cancelReason()
@@ -241,6 +244,39 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
 
     private Integer normalizedScore(Integer score) {
         return score == null ? 0 : score;
+    }
+
+    private Integer effectiveHomeScore(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        return shouldPreserveExistingScores(existing, parsedGame)
+                ? existing.homeScore()
+                : normalizedScore(parsedGame.homeScore());
+    }
+
+    private Integer effectiveAwayScore(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        return shouldPreserveExistingScores(existing, parsedGame)
+                ? existing.awayScore()
+                : normalizedScore(parsedGame.awayScore());
+    }
+
+    private boolean shouldPreserveExistingScores(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        GameStatus existingStatus = GameStatus.fromApiValue(existing.status());
+        if (existingStatus == GameStatus.FINAL && parsedGame.status() == GameStatus.SUSPENDED) {
+            return false;
+        }
+        if (!isScoreTrackedStatus(existingStatus) || !isScoreTrackedStatus(parsedGame.status())) {
+            return false;
+        }
+        if (existing.homeScore() == null || existing.awayScore() == null) {
+            return false;
+        }
+        if (parsedGame.homeScore() == null || parsedGame.awayScore() == null) {
+            return true;
+        }
+        return parsedGame.homeScore() < existing.homeScore() || parsedGame.awayScore() < existing.awayScore();
+    }
+
+    private boolean isScoreTrackedStatus(GameStatus status) {
+        return status == GameStatus.LIVE || status == GameStatus.SUSPENDED || status == GameStatus.FINAL;
     }
 
     private String normalizedText(String value) {
@@ -274,8 +310,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 rs.getString("status"),
                 rs.getObject("home_team_id", UUID.class),
                 rs.getObject("away_team_id", UUID.class),
-                rs.getInt("home_score"),
-                rs.getInt("away_score"),
+                rs.getObject("home_score", Integer.class),
+                rs.getObject("away_score", Integer.class),
                 rs.getBoolean("is_cancelled"),
                 rs.getBoolean("is_postponed"),
                 cancelReason(rs.getString("cancel_reason")),

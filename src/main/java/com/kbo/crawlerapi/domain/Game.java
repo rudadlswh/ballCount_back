@@ -320,6 +320,7 @@ public class Game {
             OffsetDateTime sourceUpdatedAt
     ) {
         boolean changed = false;
+        GameStatus previousStatus = this.status;
         if (!this.publicGameId.equals(publicGameId)) {
             this.publicGameId = publicGameId;
             changed = true;
@@ -353,12 +354,15 @@ public class Game {
             this.awayTeam = awayTeam;
             changed = true;
         }
-        if (!java.util.Objects.equals(this.homeScore, homeScore)) {
-            this.homeScore = homeScore;
+        boolean preserveExistingScores = shouldPreserveExistingScores(previousStatus, effectiveStatus, homeScore, awayScore);
+        Integer effectiveHomeScore = preserveExistingScores ? this.homeScore : homeScore;
+        Integer effectiveAwayScore = preserveExistingScores ? this.awayScore : awayScore;
+        if (!java.util.Objects.equals(this.homeScore, effectiveHomeScore)) {
+            this.homeScore = effectiveHomeScore;
             changed = true;
         }
-        if (!java.util.Objects.equals(this.awayScore, awayScore)) {
-            this.awayScore = awayScore;
+        if (!java.util.Objects.equals(this.awayScore, effectiveAwayScore)) {
+            this.awayScore = effectiveAwayScore;
             changed = true;
         }
         if (this.isCancelled != isCancelled) {
@@ -407,6 +411,7 @@ public class Game {
             OffsetDateTime sourceUpdatedAt
     ) {
         boolean changed = false;
+        GameStatus previousStatus = this.status;
         GameStatus effectiveStatus = shouldKeepFinalStatus(status) ? GameStatus.FINAL : status;
         if (this.status != effectiveStatus) {
             this.status = effectiveStatus;
@@ -416,12 +421,15 @@ public class Game {
             this.finalConfirmedAt = null;
             changed = true;
         }
-        if (homeScore != null && !java.util.Objects.equals(this.homeScore, homeScore)) {
-            this.homeScore = homeScore;
+        boolean preserveExistingScores = shouldPreserveExistingScores(previousStatus, effectiveStatus, homeScore, awayScore);
+        Integer effectiveHomeScore = preserveExistingScores ? this.homeScore : homeScore;
+        Integer effectiveAwayScore = preserveExistingScores ? this.awayScore : awayScore;
+        if (effectiveHomeScore != null && !java.util.Objects.equals(this.homeScore, effectiveHomeScore)) {
+            this.homeScore = effectiveHomeScore;
             changed = true;
         }
-        if (awayScore != null && !java.util.Objects.equals(this.awayScore, awayScore)) {
-            this.awayScore = awayScore;
+        if (effectiveAwayScore != null && !java.util.Objects.equals(this.awayScore, effectiveAwayScore)) {
+            this.awayScore = effectiveAwayScore;
             changed = true;
         }
         if (hasText(inningState) && !java.util.Objects.equals(this.inningState, inningState)) {
@@ -491,6 +499,31 @@ public class Game {
     private boolean shouldKeepSuspendedDuringSchedule(GameStatus incomingStatus) {
         return this.status == GameStatus.SUSPENDED
                 && incomingStatus == GameStatus.LIVE;
+    }
+
+    private boolean shouldPreserveExistingScores(
+            GameStatus previousStatus,
+            GameStatus incomingStatus,
+            Integer incomingHomeScore,
+            Integer incomingAwayScore
+    ) {
+        if (previousStatus == GameStatus.FINAL && incomingStatus == GameStatus.SUSPENDED) {
+            return false;
+        }
+        if (!isScoreTrackedStatus(previousStatus) || !isScoreTrackedStatus(incomingStatus)) {
+            return false;
+        }
+        if (this.homeScore == null || this.awayScore == null) {
+            return false;
+        }
+        if (incomingHomeScore == null || incomingAwayScore == null) {
+            return true;
+        }
+        return incomingHomeScore < this.homeScore || incomingAwayScore < this.awayScore;
+    }
+
+    private boolean isScoreTrackedStatus(GameStatus status) {
+        return status == GameStatus.LIVE || status == GameStatus.SUSPENDED || status == GameStatus.FINAL;
     }
 
     private boolean hasText(String value) {
