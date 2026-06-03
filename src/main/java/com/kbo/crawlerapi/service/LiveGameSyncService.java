@@ -577,7 +577,6 @@ public class LiveGameSyncService {
     }
 
     private NotificationEventDraft scoreDraft(Game game, GameState before, GameState after) {
-        String inning = game.getInningState() == null ? "경기" : game.getInningState();
         int runCount = Math.max(
                 1,
                 Math.max(0, nullSafe(after.awayScore()) - nullSafe(before.awayScore()))
@@ -599,14 +598,10 @@ public class LiveGameSyncService {
         return liveDraft(
                 game,
                 NotificationEventService.EVENT_SCORE_CHANGED,
-                "game:%s:score:%d-%d:inning:%s:batter:%s:pitcher:%s:result:%s".formatted(
+                "game:%s:score:%d-%d".formatted(
                         game.getId(),
                         game.getAwayScore(),
-                        game.getHomeScore(),
-                        inning,
-                        safeKey(batterName),
-                        safeKey(pitcherName),
-                        safeKey(result)
+                        game.getHomeScore()
                 ),
                 title,
                 scoringBody(game, eventTeamId, runCount),

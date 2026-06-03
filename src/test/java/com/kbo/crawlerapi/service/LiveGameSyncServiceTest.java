@@ -322,6 +322,9 @@ class LiveGameSyncServiceTest {
                 .isEqualTo("KIA 2 : 0 LG");
         assertThat(notificationEventService.drafts.get(0).body())
                 .isEqualTo("KIA 득점");
+        assertThat(notificationEventService.drafts.get(0).eventKey())
+                .isEqualTo("game:%s:score:2-0".formatted(after.getId()))
+                .doesNotContain("inning:", "batter:", "pitcher:", "result:");
     }
 
     @Test

@@ -59,16 +59,38 @@ public class GameLiveTextRecordService {
                         sourceUpdatedAt
                 ))
                 .toList();
+        int parsedEventCount = eventRows.size();
         int eventWriteCount = gameEventWriteRepository.upsertEvents(eventRows);
+        int persistenceSkippedCount = Math.max(0, parsedEventCount - eventWriteCount);
+        if (parsedEventCount > 0 && eventWriteCount == 0) {
+            log.warn(
+                    "[KboLiveText] event persistence skipped gameId={} providerGameId={} parsedEventCount={} skippedReason=noRowsSaved",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    parsedEventCount
+            );
+        } else if (persistenceSkippedCount > 0) {
+            log.warn(
+                    "[KboLiveText] event persistence partially skipped gameId={} providerGameId={} parsedEventCount={} savedEventCount={} skippedEventCount={} skippedReason=batchWriteCountMismatch",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    parsedEventCount,
+                    eventWriteCount,
+                    persistenceSkippedCount
+            );
+        }
         log.info(
-                "[KboLiveText] persisted gameId={} batters={} pitchers={} events={} eventWrites={}",
+                "[KboLiveText] persisted gameId={} providerGameId={} batters={} pitchers={} eventCandidateCount={} parsedEventCount={} savedEventCount={} skippedEventCount={}",
                 game.getPublicGameId(),
+                game.getProviderGameId(),
                 batterCount,
                 pitcherCount,
-                eventRows.size(),
-                eventWriteCount
+                parsedLiveText.eventCandidateCount(),
+                parsedEventCount,
+                eventWriteCount,
+                parsedLiveText.skippedEventCount() + persistenceSkippedCount
         );
-        return new GameLiveTextRecordSaveResult(batterCount, pitcherCount, eventRows.size(), eventWriteCount, null);
+        return new GameLiveTextRecordSaveResult(batterCount, pitcherCount, parsedEventCount, eventWriteCount, null);
     }
 
     private String providerEventId(int sequenceNumber, String eventText) {

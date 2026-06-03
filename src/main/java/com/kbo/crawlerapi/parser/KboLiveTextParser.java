@@ -20,6 +20,8 @@ public class KboLiveTextParser {
     private static final List<String> REQUIRED_BATTER_HEADERS = List.of("타자", "타수", "득점", "안타", "홈런", "타점", "도루", "희타", "볼넷", "삼진", "병살", "실책");
     private static final List<String> REQUIRED_PITCHER_HEADERS = List.of("투수", "이닝", "타자", "투구", "타수", "안타", "홈런", "희타", "볼넷", "삼진", "실점", "자책");
     private static final Pattern INNING_PATTERN = Pattern.compile("(\\d+)\\s*회\\s*(초|말)");
+    private static final Pattern NUM_CONT_ID_PATTERN = Pattern.compile("numCont(\\d+)");
+    private static final String EVENT_SPAN_SELECTOR = "span.normaiflTxt, span.normalifLTxt, span.red, span.blue";
 
     public ParsedLiveText parse(String html) {
         if (html == null || html.isBlank()) {
@@ -56,12 +58,15 @@ public class KboLiveTextParser {
             }
         }
 
+        ParsedEventResult eventResult = parseEvents(document);
         return new ParsedLiveText(
                 awayBatters,
                 homeBatters,
                 awayPitchers,
                 homePitchers,
-                parseEvents(document)
+                eventResult.events(),
+                eventResult.candidateCount(),
+                eventResult.skippedCount()
         );
     }
 
@@ -132,42 +137,57 @@ public class KboLiveTextParser {
         return records;
     }
 
-    private List<ParsedLiveTextEvent> parseEvents(Document document) {
+    private ParsedEventResult parseEvents(Document document) {
         List<ParsedLiveTextEvent> events = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
-        Integer currentInning = null;
-        String currentHalf = null;
+        int candidateCount = 0;
+        int skippedCount = 0;
         int sequence = 1;
-        for (Element element : document.select("li, p, td, div, span")) {
-            if (!element.children().isEmpty()) {
-                continue;
-            }
-            String text = normalize(element.text());
-            if (!hasText(text)) {
-                continue;
-            }
-            Matcher inningMatcher = INNING_PATTERN.matcher(text);
-            if (inningMatcher.find()) {
-                currentInning = parseInteger(inningMatcher.group(1));
-                currentHalf = "초".equals(inningMatcher.group(2)) ? "top" : "bottom";
-            }
-            if (!looksLikeEvent(text)) {
-                continue;
-            }
-            String key = currentInning + "|" + currentHalf + "|" + text;
-            if (!seen.add(key)) {
-                continue;
-            }
-            events.add(new ParsedLiveTextEvent(
-                    sequence++,
-                    currentInning,
-                    currentHalf,
-                    eventType(text),
-                    text,
-                    playerName(text)
-            ));
+
+        List<Element> inningContainers = document.select("div[id^=numCont]").stream()
+                .filter(container -> !"numCont11".equals(container.id()))
+                .toList();
+        if (inningContainers.isEmpty()) {
+            inningContainers = List.of(document.body());
         }
-        return events;
+
+        for (Element container : inningContainers) {
+            Integer currentInning = inningFromContainer(container);
+            String currentHalf = currentInning == null ? null : "top";
+            for (Element element : container.select(EVENT_SPAN_SELECTOR)) {
+                String text = normalize(element.text());
+                if (!hasText(text)) {
+                    skippedCount++;
+                    continue;
+                }
+                candidateCount++;
+                Matcher inningMatcher = INNING_PATTERN.matcher(text);
+                if (inningMatcher.find()) {
+                    currentInning = parseInteger(inningMatcher.group(1));
+                    currentHalf = "초".equals(inningMatcher.group(2)) ? "top" : "bottom";
+                    skippedCount++;
+                    continue;
+                }
+                if (isNoiseLiveText(text)) {
+                    skippedCount++;
+                    continue;
+                }
+                String key = currentInning + "|" + currentHalf + "|" + text;
+                if (!seen.add(key)) {
+                    skippedCount++;
+                    continue;
+                }
+                events.add(new ParsedLiveTextEvent(
+                        sequence++,
+                        currentInning,
+                        currentHalf,
+                        eventType(text),
+                        text,
+                        playerName(text)
+                ));
+            }
+        }
+        return new ParsedEventResult(events, candidateCount, skippedCount);
     }
 
     private List<String> headers(Element table) {
@@ -216,13 +236,21 @@ public class KboLiveTextParser {
         return null;
     }
 
-    private boolean looksLikeEvent(String text) {
-        return text.contains(" : ")
-                || text.contains(":")
-                || text.contains("투수 ")
-                || text.contains("승리투수")
-                || text.contains("패전투수")
-                || text.contains("경기종료");
+    private Integer inningFromContainer(Element container) {
+        Matcher matcher = NUM_CONT_ID_PATTERN.matcher(container.id());
+        if (!matcher.matches()) {
+            return null;
+        }
+        return parseInteger(matcher.group(1));
+    }
+
+    private boolean isNoiseLiveText(String text) {
+        String normalized = text.replace(" ", "");
+        return normalized.equals("-")
+                || normalized.matches("-?\\d+구.*")
+                || normalized.matches("\\d+번타자.+")
+                || normalized.contains("---------------------------------------")
+                || INNING_PATTERN.matcher(text).find();
     }
 
     private String eventType(String text) {
@@ -331,15 +359,34 @@ public class KboLiveTextParser {
         return value != null && !value.isBlank();
     }
 
+    private record ParsedEventResult(
+            List<ParsedLiveTextEvent> events,
+            int candidateCount,
+            int skippedCount
+    ) {
+    }
+
     public record ParsedLiveText(
             List<ParsedLiveTextBatterRecord> awayBatters,
             List<ParsedLiveTextBatterRecord> homeBatters,
             List<ParsedLiveTextPitcherRecord> awayPitchers,
             List<ParsedLiveTextPitcherRecord> homePitchers,
-            List<ParsedLiveTextEvent> events
+            List<ParsedLiveTextEvent> events,
+            int eventCandidateCount,
+            int skippedEventCount
     ) {
+        public ParsedLiveText(
+                List<ParsedLiveTextBatterRecord> awayBatters,
+                List<ParsedLiveTextBatterRecord> homeBatters,
+                List<ParsedLiveTextPitcherRecord> awayPitchers,
+                List<ParsedLiveTextPitcherRecord> homePitchers,
+                List<ParsedLiveTextEvent> events
+        ) {
+            this(awayBatters, homeBatters, awayPitchers, homePitchers, events, events.size(), 0);
+        }
+
         public static ParsedLiveText empty() {
-            return new ParsedLiveText(List.of(), List.of(), List.of(), List.of(), List.of());
+            return new ParsedLiveText(List.of(), List.of(), List.of(), List.of(), List.of(), 0, 0);
         }
 
         public boolean hasRecords() {
