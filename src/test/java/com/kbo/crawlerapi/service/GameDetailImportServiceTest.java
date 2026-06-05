@@ -1421,6 +1421,8 @@ class GameDetailImportServiceTest {
                         null,
                         null,
                         null,
+                        null,
+                        null,
                         new BigDecimal("0.333"),
                         index
                 ))

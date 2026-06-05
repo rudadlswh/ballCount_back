@@ -85,6 +85,8 @@ public class GameBoxscoreRecordService {
                         record.walks(),
                         record.strikeouts(),
                         record.stolenBases(),
+                        record.groundedIntoDoublePlay(),
+                        record.errors(),
                         decimalString(record.battingAverage())
                 ))
                 .toList();

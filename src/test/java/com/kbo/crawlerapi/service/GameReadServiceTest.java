@@ -377,11 +377,11 @@ class GameReadServiceTest {
 
         when(gameRepository.findByPublicGameId(eq("20260510-SSG-KIA"))).thenReturn(java.util.Optional.of(game));
         when(gameBoxscoreRecordReadRepository.findBatterRecords(eq(game.getId()))).thenReturn(List.of(
-                new BatterRecordReadRow(home.getId(), 1, 2, "중", "박찬호", 4, 1, 2, 1, null, null, null, null, "0.300",
+                new BatterRecordReadRow(home.getId(), 1, 2, "중", "박찬호", 4, 1, 2, 1, null, null, null, null, null, null, "0.300",
                         OffsetDateTime.of(2026, 5, 10, 17, 2, 0, 0, ZoneOffset.UTC)),
-                new BatterRecordReadRow(away.getId(), 2, 3, "좌", "최정", 3, 0, 1, 0, null, null, null, null, "0.280",
+                new BatterRecordReadRow(away.getId(), 2, 3, "좌", "최정", 3, 0, 1, 0, null, null, null, null, null, null, "0.280",
                         OffsetDateTime.of(2026, 5, 10, 17, 1, 0, 0, ZoneOffset.UTC)),
-                new BatterRecordReadRow(away.getId(), 0, 1, "유", "안상현", 3, 1, 0, 0, null, null, null, null, "0.300",
+                new BatterRecordReadRow(away.getId(), 0, 1, "유", "안상현", 3, 1, 0, 0, null, null, null, null, null, null, "0.300",
                         OffsetDateTime.of(2026, 5, 10, 17, 3, 0, 0, ZoneOffset.UTC))
         ));
         when(gameBoxscoreRecordReadRepository.findPitcherRecords(eq(game.getId()))).thenReturn(List.of(

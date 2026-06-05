@@ -218,6 +218,8 @@ public class GameReadService {
                 row.walks(),
                 row.strikeouts(),
                 row.stolenBases(),
+                row.groundedIntoDoublePlay(),
+                row.errors(),
                 row.battingAverage()
         );
     }

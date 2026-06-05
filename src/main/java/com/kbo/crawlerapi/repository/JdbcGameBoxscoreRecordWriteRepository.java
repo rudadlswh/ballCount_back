@@ -25,10 +25,12 @@ public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecord
                 walks,
                 strikeouts,
                 stolen_bases,
+                grounded_into_double_play,
+                errors,
                 batting_average,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
             ON CONFLICT (game_id, team_id, source_order) DO UPDATE SET
                 batting_order = excluded.batting_order,
                 position = excluded.position,
@@ -41,6 +43,8 @@ public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecord
                 walks = excluded.walks,
                 strikeouts = excluded.strikeouts,
                 stolen_bases = excluded.stolen_bases,
+                grounded_into_double_play = excluded.grounded_into_double_play,
+                errors = excluded.errors,
                 batting_average = excluded.batting_average,
                 updated_at = now()
             """;
@@ -118,7 +122,9 @@ public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecord
             ps.setObject(13, row.walks());
             ps.setObject(14, row.strikeouts());
             ps.setObject(15, row.stolenBases());
-            ps.setString(16, row.battingAverage());
+            ps.setObject(16, row.groundedIntoDoublePlay());
+            ps.setObject(17, row.errors());
+            ps.setString(18, row.battingAverage());
         });
         return count(results);
     }

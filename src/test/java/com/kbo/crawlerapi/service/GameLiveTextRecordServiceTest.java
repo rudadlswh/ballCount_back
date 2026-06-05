@@ -56,6 +56,8 @@ class GameLiveTextRecordServiceTest {
         assertThat(boxscoreRepository.pitcherRows).hasSize(2);
         assertThat(eventRepository.eventRows).hasSize(2);
         assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 0)).playerName()).isEqualTo("박승욱");
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), homeTeam.getId(), 0)).groundedIntoDoublePlay()).isEqualTo(1);
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), homeTeam.getId(), 0)).errors()).isEqualTo(1);
         assertThat(boxscoreRepository.pitcherRows.get(new RowKey(liveGame.getId(), homeTeam.getId(), 0)).playerName()).isEqualTo("전사민");
         assertThat(eventRepository.eventRows.get(new EventKey(liveGame.getId(), 1)).eventType()).isEqualTo("STRIKEOUT");
     }

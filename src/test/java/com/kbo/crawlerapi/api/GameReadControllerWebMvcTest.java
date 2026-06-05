@@ -268,6 +268,8 @@ class GameReadControllerWebMvcTest {
                             null,
                             null,
                             null,
+                            null,
+                            null,
                             "0.300"
                     )),
                     List.of(new GameBatterRecordDto(
@@ -279,6 +281,8 @@ class GameReadControllerWebMvcTest {
                             1,
                             2,
                             1,
+                            null,
+                            null,
                             null,
                             null,
                             null,

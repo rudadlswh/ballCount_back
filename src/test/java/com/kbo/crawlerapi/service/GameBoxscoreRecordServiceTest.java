@@ -195,6 +195,8 @@ class GameBoxscoreRecordServiceTest {
                 walks,
                 strikeouts,
                 first.stolenBases(),
+                first.groundedIntoDoublePlay(),
+                first.errors(),
                 first.battingAverage(),
                 first.sourceOrder()
         );
