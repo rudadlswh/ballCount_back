@@ -1048,6 +1048,51 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void sameLeaderScoreChangeCreatesScoreDraftWithoutLeadChangeDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 5, 2);
+        Game after = fixtureGame(GameStatus.LIVE, 5, 3);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_SCORE_CHANGED);
+    }
+
+    @Test
+    void scoreRegressionDoesNotCreateScoreOrLeadChangeDraft() {
+        Game before = fixtureGame(GameStatus.LIVE, 6, 3);
+        Game after = fixtureGame(GameStatus.LIVE, 0, 0);
+        GameSnapshot beforeSnapshot = snapshot(before, "김타자", "박투수", 0, false, false, false);
+        GameSnapshot afterSnapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
     void awayLeadToHomeLeadCreatesLeadChangeDraftWithHomeEventTeamId() {
         Game before = fixtureGame(GameStatus.LIVE, 3, 1);
         Game after = fixtureGame(GameStatus.LIVE, 3, 4);

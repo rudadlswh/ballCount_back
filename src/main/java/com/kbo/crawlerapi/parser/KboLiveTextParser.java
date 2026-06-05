@@ -441,6 +441,8 @@ public class KboLiveTextParser {
                     walks,
                     strikeouts,
                     stolenBases,
+                    groundedIntoDoublePlay,
+                    errors,
                     null,
                     sourceOrder
             );

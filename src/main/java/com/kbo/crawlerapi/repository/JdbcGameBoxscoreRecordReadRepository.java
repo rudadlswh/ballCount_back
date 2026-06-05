@@ -26,6 +26,8 @@ public class JdbcGameBoxscoreRecordReadRepository implements GameBoxscoreRecordR
                 walks,
                 strikeouts,
                 stolen_bases,
+                grounded_into_double_play,
+                errors,
                 batting_average,
                 updated_at
             FROM kbo_crawler_api.game_batter_records
@@ -116,6 +118,8 @@ public class JdbcGameBoxscoreRecordReadRepository implements GameBoxscoreRecordR
                 getInteger(rs, "walks"),
                 getInteger(rs, "strikeouts"),
                 getInteger(rs, "stolen_bases"),
+                getInteger(rs, "grounded_into_double_play"),
+                getInteger(rs, "errors"),
                 rs.getString("batting_average"),
                 rs.getObject("updated_at", OffsetDateTime.class)
         );

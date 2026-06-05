@@ -83,6 +83,8 @@ public class KboBoxscoreParser {
                     countPlateAppearances(detailCells, PlateAppearanceKind.WALK),
                     countPlateAppearances(detailCells, PlateAppearanceKind.STRIKEOUT),
                     null,
+                    null,
+                    null,
                     parseDecimal(cellText(totalCells, 4)),
                     index
             ));
@@ -294,6 +296,8 @@ public class KboBoxscoreParser {
             Integer walks,
             Integer strikeouts,
             Integer stolenBases,
+            Integer groundedIntoDoublePlay,
+            Integer errors,
             BigDecimal battingAverage,
             int sourceOrder
     ) {

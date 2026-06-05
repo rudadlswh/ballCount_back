@@ -28,6 +28,8 @@ public interface GameBoxscoreRecordReadRepository {
             Integer walks,
             Integer strikeouts,
             Integer stolenBases,
+            Integer groundedIntoDoublePlay,
+            Integer errors,
             String battingAverage,
             OffsetDateTime updatedAt
     ) {

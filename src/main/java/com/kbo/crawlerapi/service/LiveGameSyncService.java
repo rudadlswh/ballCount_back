@@ -505,7 +505,7 @@ public class LiveGameSyncService {
         if (after.status() == GameStatus.LIVE
                 && after.awayScore() != null
                 && after.homeScore() != null
-                && (changedInteger(before.awayScore(), after.awayScore()) || changedInteger(before.homeScore(), after.homeScore()))) {
+                && scoreIncreased(before, after)) {
             drafts.add(scoreDraft(game, before, after));
         }
         if (after.status() == GameStatus.LIVE
@@ -860,6 +860,9 @@ public class LiveGameSyncService {
         if (!isLiveLike(after.status()) || before.awayScore() == null || before.homeScore() == null || after.awayScore() == null || after.homeScore() == null) {
             return null;
         }
+        if (!scoreIncreased(before, after)) {
+            return null;
+        }
         String previousLeader = leadingTeamId(game, before.awayScore(), before.homeScore());
         String currentLeader = leadingTeamId(game, after.awayScore(), after.homeScore());
         if (currentLeader != null && !currentLeader.equals(previousLeader)) {
@@ -1074,8 +1077,9 @@ public class LiveGameSyncService {
         return after != null && !after.isBlank() && !java.util.Objects.equals(before, after);
     }
 
-    private boolean changedInteger(Integer before, Integer after) {
-        return after != null && !java.util.Objects.equals(before, after);
+    private boolean scoreIncreased(GameState before, GameState after) {
+        return nullSafe(after.awayScore()) > nullSafe(before.awayScore())
+                || nullSafe(after.homeScore()) > nullSafe(before.homeScore());
     }
 
     private String sha256(String value) {
