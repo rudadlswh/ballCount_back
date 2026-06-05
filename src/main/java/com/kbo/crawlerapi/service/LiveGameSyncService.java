@@ -708,6 +708,8 @@ public class LiveGameSyncService {
         );
         draft.payload().put("previousAwayScore", before.awayScore());
         draft.payload().put("previousHomeScore", before.homeScore());
+        draft.payload().put("awayScore", after.awayScore());
+        draft.payload().put("homeScore", after.homeScore());
         draft.payload().put(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, eventTeamId);
         if (tied) {
             draft.payload().put("leadChangeReason", "TIED_GAME");

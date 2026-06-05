@@ -1,6 +1,9 @@
 package com.kbo.crawlerapi.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
 import java.io.ByteArrayInputStream;
@@ -23,6 +26,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +56,7 @@ public class ApnsPushService {
     private final ApnsProperties properties;
     private final Clock applicationClock;
     private final HttpClient httpClient;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private ProviderToken cachedProviderToken;
 
     @Autowired
@@ -123,6 +129,53 @@ public class ApnsPushService {
         }
     }
 
+    public ApnsSendResult sendLiveActivityUpdate(NotificationEvent event, LiveActivityToken liveActivityToken, Map<String, Object> contentState) {
+        String tokenSkipReason = liveActivityTokenSkipReason(liveActivityToken);
+        if (tokenSkipReason != null) {
+            log.info(
+                    "[LiveActivity] APNs skipped eventId={} activityId={} reason={} configuredEnv={} tokenEnv={}",
+                    event.getId(),
+                    liveActivityToken.getActivityId(),
+                    tokenSkipReason,
+                    configuredEnvironment(),
+                    liveActivityToken.getEnvironment()
+            );
+            return ApnsSendResult.skipped(tokenSkipReason);
+        }
+
+        String readinessSkipReason = readinessSkipReason();
+        if (readinessSkipReason != null) {
+            log.warn(
+                    "[LiveActivity] APNs skipped eventId={} activityId={} reason={} configuredEnv={} tokenEnv={}",
+                    event.getId(),
+                    liveActivityToken.getActivityId(),
+                    readinessSkipReason,
+                    configuredEnvironment(),
+                    liveActivityToken.getEnvironment()
+            );
+            return ApnsSendResult.skipped(readinessSkipReason);
+        }
+
+        try {
+            String token = providerToken();
+            HttpRequest request = buildLiveActivityUpdateRequest(event, liveActivityToken, contentState, token);
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                log.info("[LiveActivity] APNs sent eventId={} activityId={}", event.getId(), liveActivityToken.getActivityId());
+                return ApnsSendResult.sentResult();
+            }
+            String reason = response.body() == null || response.body().isBlank()
+                    ? "status_" + response.statusCode()
+                    : response.body();
+            String mappedReason = mapApnsFailureReason(reason);
+            log.warn("[LiveActivity] APNs failed eventId={} activityId={} reason={}", event.getId(), liveActivityToken.getActivityId(), mappedReason);
+            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), mappedReason), mappedReason);
+        } catch (Exception exception) {
+            log.warn("[LiveActivity] APNs failed eventId={} activityId={} reason={}", event.getId(), liveActivityToken.getActivityId(), exception.getClass().getSimpleName());
+            return new ApnsSendResult(false, false, false, exception.getMessage());
+        }
+    }
+
     public String readinessSkipReason() {
         if (!properties.isPushEnabled()) {
             return APNS_PUSH_DISABLED;
@@ -182,6 +235,19 @@ public class ApnsPushService {
         return null;
     }
 
+    private String liveActivityTokenSkipReason(LiveActivityToken token) {
+        if (!"ios".equalsIgnoreCase(token.getPlatform())) {
+            return UNSUPPORTED_PLATFORM;
+        }
+        if (!token.isActive()) {
+            return DEVICE_NOTIFICATIONS_DISABLED;
+        }
+        if (!environmentMatches(token.getEnvironment())) {
+            return ENVIRONMENT_MISMATCH;
+        }
+        return null;
+    }
+
     private PrivateKeyLoadResult privateKeyLoadResult() {
         try {
             privateKey();
@@ -201,6 +267,14 @@ public class ApnsPushService {
         return host + "/3/device/" + device.getDeviceToken();
     }
 
+    private String endpoint(LiveActivityToken token) {
+        String env = normalizeEnvironment(token.getEnvironment());
+        String host = "production".equalsIgnoreCase(env)
+                ? "https://api.push.apple.com"
+                : "https://api.sandbox.push.apple.com";
+        return host + "/3/device/" + token.getPushToken();
+    }
+
     HttpRequest buildRequest(NotificationEvent event, NotificationDevice device, String token) {
         String body = """
                 {"aps":{"alert":{"title":%s,"body":%s},"sound":"default"},"data":%s}
@@ -214,6 +288,32 @@ public class ApnsPushService {
                 .header("content-type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
+    }
+
+    HttpRequest buildLiveActivityUpdateRequest(NotificationEvent event, LiveActivityToken liveActivityToken, Map<String, Object> contentState, String token) {
+        Map<String, Object> aps = new LinkedHashMap<>();
+        aps.put("timestamp", Instant.now(applicationClock).getEpochSecond());
+        aps.put("event", "update");
+        aps.put("content-state", contentState);
+        aps.put("stale-date", Instant.now(applicationClock).plusSeconds(120).getEpochSecond());
+        Map<String, Object> payload = Map.of("aps", aps);
+        return HttpRequest.newBuilder()
+                .uri(URI.create(endpoint(liveActivityToken)))
+                .header("authorization", "bearer " + token)
+                .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")
+                .header("apns-push-type", "liveactivity")
+                .header("apns-priority", "10")
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(toJson(payload)))
+                .build();
+    }
+
+    private String toJson(Map<String, Object> payload) {
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Failed to serialize APNs payload", exception);
+        }
     }
 
     private String normalizeEnvironment(String environment) {

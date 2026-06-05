@@ -3,6 +3,7 @@ package com.kbo.crawlerapi.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
 import java.io.IOException;
@@ -27,6 +28,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Map;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,6 +62,37 @@ class ApnsPushServiceTest {
         assertThat(body(request)).contains(
                 "\"aps\":{\"alert\":{\"title\":\"KBO Score test\",\"body\":\"APNs manual test\"},\"sound\":\"default\"}",
                 "\"data\":{\"routeHint\":\"notifications\"}"
+        );
+    }
+
+    @Test
+    void buildsLiveActivityUpdateRequestWithActivityHeadersAndContentState() throws Exception {
+        ApnsProperties properties = new ApnsProperties();
+        properties.setBundleId("com.chogm.kboScore");
+        ApnsPushService service = new ApnsPushService(properties, Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")));
+        LiveActivityToken token = liveActivityToken();
+
+        HttpRequest request = service.buildLiveActivityUpdateRequest(
+                event(),
+                token,
+                Map.of(
+                        "isPreGame", false,
+                        "favoriteScoreText", "1",
+                        "opponentScoreText", "1",
+                        "inningText", "1회 초"
+                ),
+                "jwt-token"
+        );
+
+        assertThat(request.uri().toString()).isEqualTo("https://api.sandbox.push.apple.com/3/device/live-token-123");
+        assertThat(request.headers().firstValue("apns-topic")).contains("com.chogm.kboScore.push-type.liveactivity");
+        assertThat(request.headers().firstValue("apns-push-type")).contains("liveactivity");
+        assertThat(request.headers().firstValue("authorization")).contains("bearer jwt-token");
+        assertThat(body(request)).contains(
+                "\"aps\":{\"timestamp\":1780653600,\"event\":\"update\",\"content-state\":",
+                "\"favoriteScoreText\":\"1\"",
+                "\"opponentScoreText\":\"1\"",
+                "\"stale-date\":1780653720"
         );
     }
 
@@ -186,6 +219,23 @@ class ApnsPushServiceTest {
                 "lg",
                 true,
                 OffsetDateTime.parse("2026-05-01T09:00:00+09:00")
+        );
+    }
+
+    private LiveActivityToken liveActivityToken() {
+        return new LiveActivityToken(
+                UUID.randomUUID(),
+                "activity-1",
+                "ios",
+                "sandbox",
+                "live-token-123",
+                "install-1",
+                "lg",
+                "20260605-LOT-HAN",
+                "20260605HHLT0",
+                UUID.randomUUID().toString(),
+                "provider:20260605HHLT0",
+                OffsetDateTime.parse("2026-06-05T19:00:00+09:00")
         );
     }
 
