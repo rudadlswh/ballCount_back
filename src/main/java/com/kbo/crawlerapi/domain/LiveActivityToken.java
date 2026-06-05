@@ -25,8 +25,8 @@ public class LiveActivityToken {
     @Column(nullable = false, length = 30)
     private String environment;
 
-    @Column(name = "push_token", nullable = false)
-    private String pushToken;
+    @Column(name = "activity_token", nullable = false)
+    private String activityToken;
 
     @Column(name = "installation_id", length = 100)
     private String installationId;
@@ -68,7 +68,7 @@ public class LiveActivityToken {
             String activityId,
             String platform,
             String environment,
-            String pushToken,
+            String activityToken,
             String installationId,
             String favoriteTeamId,
             String publicGameId,
@@ -81,7 +81,7 @@ public class LiveActivityToken {
         this.activityId = activityId;
         this.platform = platform;
         this.environment = environment;
-        this.pushToken = pushToken;
+        this.activityToken = activityToken;
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
         this.publicGameId = publicGameId;
@@ -108,8 +108,8 @@ public class LiveActivityToken {
         return environment;
     }
 
-    public String getPushToken() {
-        return pushToken;
+    public String getActivityToken() {
+        return activityToken;
     }
 
     public String getInstallationId() {
@@ -140,11 +140,15 @@ public class LiveActivityToken {
         return active;
     }
 
+    public OffsetDateTime getLastSeenAt() {
+        return lastSeenAt;
+    }
+
     public void update(
             String activityId,
             String platform,
             String environment,
-            String pushToken,
+            String activityToken,
             String installationId,
             String favoriteTeamId,
             String publicGameId,
@@ -156,7 +160,7 @@ public class LiveActivityToken {
         this.activityId = activityId;
         this.platform = platform;
         this.environment = environment;
-        this.pushToken = pushToken;
+        this.activityToken = activityToken;
         this.installationId = installationId;
         this.favoriteTeamId = favoriteTeamId;
         this.publicGameId = publicGameId;
