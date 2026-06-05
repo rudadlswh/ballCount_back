@@ -1,8 +1,8 @@
 ALTER TABLE kbo_crawler_api.game_batter_records
-    ADD COLUMN IF NOT EXISTS grounded_into_double_play INTEGER,
-    ADD COLUMN IF NOT EXISTS errors INTEGER;
+    ADD COLUMN IF NOT EXISTS grounded_into_double_play integer,
+    ADD COLUMN IF NOT EXISTS errors integer;
 
-CREATE OR REPLACE VIEW public_game_batter_records AS
+CREATE OR REPLACE VIEW kbo_crawler_api.public_game_batter_records AS
 SELECT
     id,
     game_id,
@@ -19,11 +19,9 @@ SELECT
     walks,
     strikeouts,
     stolen_bases,
-    grounded_into_double_play,
-    errors,
     batting_average,
     created_at,
-    updated_at
+    updated_at,
+    grounded_into_double_play,
+    errors
 FROM kbo_crawler_api.game_batter_records;
-
-GRANT SELECT ON public_game_batter_records TO anon, authenticated;
