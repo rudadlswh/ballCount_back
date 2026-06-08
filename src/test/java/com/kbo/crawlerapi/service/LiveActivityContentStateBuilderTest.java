@@ -55,6 +55,29 @@ class LiveActivityContentStateBuilderTest {
     }
 
     @Test
+    void englishSnapshotInningLabelMapsIntoKoreanContentState() {
+        Game game = game(0, 0);
+        GameSnapshot snapshot = snapshot(game, 1, 1, "Bottom 3");
+        LiveActivityContentStateBuilder builder = new LiveActivityContentStateBuilder(gameSnapshotRepository);
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())).thenReturn(Optional.of(snapshot));
+
+        var state = builder.build(game, token("hanwha"));
+
+        assertThat(state.get("inningText")).isEqualTo("3회 말");
+    }
+
+    @Test
+    void englishGameInningStateFallbackMapsIntoKoreanContentState() {
+        Game game = game(0, 0, "Top 7");
+        LiveActivityContentStateBuilder builder = new LiveActivityContentStateBuilder(gameSnapshotRepository);
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())).thenReturn(Optional.empty());
+
+        var state = builder.build(game, token("hanwha"));
+
+        assertThat(state.get("inningText")).isEqualTo("7회 초");
+    }
+
+    @Test
     void eventDerivedScoreMapsIntoContentStateWhenSnapshotScoreIsMissing() {
         Game game = game(0, 0);
         NotificationEvent event = new NotificationEvent(
@@ -89,6 +112,10 @@ class LiveActivityContentStateBuilderTest {
     }
 
     private Game game(Integer awayScore, Integer homeScore) {
+        return game(awayScore, homeScore, "1회 초");
+    }
+
+    private Game game(Integer awayScore, Integer homeScore, String inningState) {
         Team homeTeam = new Team(UUID.randomUUID(), "hanwha", "한화 이글스", "HAN", "Hanwha Eagles", null);
         Team awayTeam = new Team(UUID.randomUUID(), "lotte", "롯데 자이언츠", "LOT", "Lotte Giants", null);
         return new Game(
@@ -104,7 +131,7 @@ class LiveActivityContentStateBuilderTest {
                 awayTeam,
                 homeScore,
                 awayScore,
-                "1회 초",
+                inningState,
                 false,
                 false,
                 null,
@@ -116,12 +143,16 @@ class LiveActivityContentStateBuilderTest {
     }
 
     private GameSnapshot snapshot(Game game, Integer awayScore, Integer homeScore) {
+        return snapshot(game, awayScore, homeScore, "1회 초");
+    }
+
+    private GameSnapshot snapshot(Game game, Integer awayScore, Integer homeScore, String inningLabel) {
         return new GameSnapshot(
                 UUID.randomUUID(),
                 game,
                 1,
                 "top",
-                "1회 초",
+                inningLabel,
                 1,
                 2,
                 0,
