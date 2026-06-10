@@ -17,14 +17,14 @@ public class LiveActivityTokenController {
         this.liveActivityTokenRegistrationService = liveActivityTokenRegistrationService;
     }
 
-    @PostMapping("/live-activities/register")
+    @PostMapping({"/devices/live-activities/register", "/live-activities/register"})
     public LiveActivityTokenRegistrationResult register(@RequestBody LiveActivityTokenRegisterRequest request) {
         try {
             return liveActivityTokenRegistrationService.register(new LiveActivityTokenRegistrationCommand(
                     request.activityId(),
                     request.platform(),
                     request.environment(),
-                    request.pushToken(),
+                    request.activityToken(),
                     request.installationId(),
                     request.favoriteTeamId(),
                     request.publicGameId(),
@@ -41,7 +41,8 @@ public class LiveActivityTokenController {
             String activityId,
             String platform,
             String environment,
-            String pushToken,
+            @JsonAlias({"pushToken", "activityToken"})
+            String activityToken,
             String installationId,
             @JsonAlias("favoriteTeamID")
             String favoriteTeamId,

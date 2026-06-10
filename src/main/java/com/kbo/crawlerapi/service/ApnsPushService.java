@@ -272,7 +272,7 @@ public class ApnsPushService {
         String host = "production".equalsIgnoreCase(env)
                 ? "https://api.push.apple.com"
                 : "https://api.sandbox.push.apple.com";
-        return host + "/3/device/" + token.getPushToken();
+        return host + "/3/device/" + token.getActivityToken();
     }
 
     HttpRequest buildRequest(NotificationEvent event, NotificationDevice device, String token) {

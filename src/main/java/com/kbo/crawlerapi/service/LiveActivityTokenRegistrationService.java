@@ -27,48 +27,53 @@ public class LiveActivityTokenRegistrationService {
 
     @Transactional
     public LiveActivityTokenRegistrationResult register(LiveActivityTokenRegistrationCommand command) {
-        String activityId = requireText(command.activityId(), "activityId");
-        String pushToken = requireText(command.pushToken(), "pushToken");
+        String activityId = blankToNull(command.activityId());
+        String activityToken = requireText(command.activityToken(), "activityToken");
         String platform = normalizePlatform(command.platform());
         String environment = normalizeEnvironment(command.environment());
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
+        String publicGameId = blankToNull(command.publicGameId());
+        String providerGameId = blankToNull(command.providerGameId());
+        String databaseId = blankToNull(command.databaseId());
+        String stableDetailIdentity = blankToNull(command.stableDetailIdentity());
 
-        Optional<LiveActivityToken> activityMatch = liveActivityTokenRepository.findByActivityId(activityId);
-        Optional<LiveActivityToken> tokenMatch = liveActivityTokenRepository.findByPlatformAndEnvironmentAndPushToken(platform, environment, pushToken);
-        boolean created = activityMatch.isEmpty() && tokenMatch.isEmpty();
-        LiveActivityToken token = activityMatch
-                .or(() -> tokenMatch)
+        Optional<LiveActivityToken> registrationMatch = liveActivityTokenRepository.findRegistrationMatches(
+                        environment,
+                        activityToken,
+                        publicGameId,
+                        providerGameId,
+                        databaseId,
+                        stableDetailIdentity
+                )
+                .stream()
+                .findFirst();
+        boolean created = registrationMatch.isEmpty();
+        LiveActivityToken token = registrationMatch
                 .orElseGet(() -> new LiveActivityToken(
                         UUID.randomUUID(),
                         activityId,
                         platform,
                         environment,
-                        pushToken,
+                        activityToken,
                         blankToNull(command.installationId()),
                         blankToNull(command.favoriteTeamId()),
-                        blankToNull(command.publicGameId()),
-                        blankToNull(command.providerGameId()),
-                        blankToNull(command.databaseId()),
-                        blankToNull(command.stableDetailIdentity()),
+                        publicGameId,
+                        providerGameId,
+                        databaseId,
+                        stableDetailIdentity,
                         now
                 ));
-        tokenMatch
-                .filter(matched -> !matched.getId().equals(token.getId()))
-                .ifPresent(matched -> {
-                    liveActivityTokenRepository.delete(matched);
-                    liveActivityTokenRepository.flush();
-        });
         token.update(
                 activityId,
                 platform,
                 environment,
-                pushToken,
+                activityToken,
                 blankToNull(command.installationId()),
                 blankToNull(command.favoriteTeamId()),
-                blankToNull(command.publicGameId()),
-                blankToNull(command.providerGameId()),
-                blankToNull(command.databaseId()),
-                blankToNull(command.stableDetailIdentity()),
+                publicGameId,
+                providerGameId,
+                databaseId,
+                stableDetailIdentity,
                 now
         );
         liveActivityTokenRepository.save(token);
@@ -76,14 +81,14 @@ public class LiveActivityTokenRegistrationService {
                 "[LiveActivity] token registration {} activityId={} tokenPrefix={} publicGameId={} providerGameId={} databaseId={} stableDetailIdentity={} environment={}",
                 created ? "created" : "updated",
                 activityId,
-                tokenPrefix(pushToken),
+                tokenPrefix(activityToken),
                 token.getPublicGameId(),
                 token.getProviderGameId(),
                 token.getDatabaseId(),
                 token.getStableDetailIdentity(),
                 environment
         );
-        return new LiveActivityTokenRegistrationResult(token.getId(), activityId, environment, tokenPrefix(pushToken), token.isActive());
+        return new LiveActivityTokenRegistrationResult(token.getId(), activityId, environment, tokenPrefix(activityToken), token.isActive());
     }
 
     private String normalizePlatform(String platform) {
@@ -129,7 +134,7 @@ public class LiveActivityTokenRegistrationService {
             String activityId,
             String platform,
             String environment,
-            String pushToken,
+            String activityToken,
             String installationId,
             String favoriteTeamId,
             String publicGameId,

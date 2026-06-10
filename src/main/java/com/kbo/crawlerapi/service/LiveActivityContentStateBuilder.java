@@ -65,12 +65,52 @@ public class LiveActivityContentStateBuilder {
 
     private String inningText(Game game, GameSnapshot snapshot) {
         if (snapshot != null && clean(snapshot.getInningLabel()) != null) {
-            return snapshot.getInningLabel();
+            return localizedInningText(snapshot.getInningLabel());
         }
         if (clean(game.getInningState()) != null) {
-            return game.getInningState();
+            return localizedInningText(game.getInningState());
         }
         return statusText(game.getStatus());
+    }
+
+    private String localizedInningText(String value) {
+        String trimmed = clean(value);
+        if (trimmed == null) {
+            return null;
+        }
+
+        String lowercased = trimmed.toLowerCase(java.util.Locale.ROOT);
+        String half = null;
+        if (trimmed.contains("초") || lowercased.contains("top")) {
+            half = "초";
+        } else if (trimmed.contains("말") || lowercased.contains("bottom") || lowercased.contains("bot")) {
+            half = "말";
+        }
+
+        Integer inning = firstInteger(trimmed);
+        if (inning == null) {
+            return trimmed;
+        }
+        if (half == null) {
+            return "%d회".formatted(inning);
+        }
+        return "%d회 %s".formatted(inning, half);
+    }
+
+    private Integer firstInteger(String value) {
+        StringBuilder digits = new StringBuilder();
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (Character.isDigit(character)) {
+                digits.append(character);
+            } else if (digits.length() > 0) {
+                break;
+            }
+        }
+        if (digits.length() == 0) {
+            return null;
+        }
+        return Integer.parseInt(digits.toString());
     }
 
     private String scheduledTimeText(Game game) {
