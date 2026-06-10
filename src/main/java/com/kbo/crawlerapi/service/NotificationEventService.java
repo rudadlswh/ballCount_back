@@ -40,40 +40,20 @@ public class NotificationEventService {
     private final NotificationEventRepository notificationEventRepository;
     private final NotificationDeviceRepository notificationDeviceRepository;
     private final ApnsPushService apnsPushService;
-    private final LiveActivityUpdateService liveActivityUpdateService;
     private final ObjectMapper objectMapper;
     private final Clock applicationClock;
-
-    public NotificationEventService(
-            NotificationEventRepository notificationEventRepository,
-            NotificationDeviceRepository notificationDeviceRepository,
-            ApnsPushService apnsPushService,
-            ObjectMapper objectMapper,
-            Clock applicationClock
-    ) {
-        this(
-                notificationEventRepository,
-                notificationDeviceRepository,
-                apnsPushService,
-                new NoOpLiveActivityUpdateService(applicationClock),
-                objectMapper,
-                applicationClock
-        );
-    }
 
     @Autowired
     public NotificationEventService(
             NotificationEventRepository notificationEventRepository,
             NotificationDeviceRepository notificationDeviceRepository,
             ApnsPushService apnsPushService,
-            LiveActivityUpdateService liveActivityUpdateService,
             ObjectMapper objectMapper,
             Clock applicationClock
     ) {
         this.notificationEventRepository = notificationEventRepository;
         this.notificationDeviceRepository = notificationDeviceRepository;
         this.apnsPushService = apnsPushService;
-        this.liveActivityUpdateService = liveActivityUpdateService;
         this.objectMapper = objectMapper;
         this.applicationClock = applicationClock;
     }
@@ -96,8 +76,6 @@ public class NotificationEventService {
                 draft.body(),
                 toJson(draft.payload())
         ));
-
-        liveActivityUpdateService.deliverUpdate(game, event);
 
         List<String> eventTeamIds = eventTeamIds(game);
         List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByFavoriteTeamIdIn(eventTeamIds)
@@ -336,17 +314,6 @@ public class NotificationEventService {
 
         public static EventDeliveryResult skipped(String eventKey) {
             return new EventDeliveryResult(null, eventKey, false, 0, 1, 0);
-        }
-    }
-
-    private static final class NoOpLiveActivityUpdateService extends LiveActivityUpdateService {
-        private NoOpLiveActivityUpdateService(Clock clock) {
-            super(null, null, null, clock);
-        }
-
-        @Override
-        public LiveActivityDeliveryResult deliverUpdate(Game game, NotificationEvent event) {
-            return new LiveActivityDeliveryResult(0, 0, 0);
         }
     }
 }

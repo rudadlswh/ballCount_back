@@ -31,4 +31,15 @@ public interface LiveActivityTokenRepository extends JpaRepository<LiveActivityT
     );
 
     List<LiveActivityToken> findByActiveTrue();
+
+    List<LiveActivityToken> findByActiveTrueAndEnvironmentAndInstallationIdAndActivityId(
+            String environment,
+            String installationId,
+            String activityId
+    );
+
+    List<LiveActivityToken> findByActiveTrueAndEnvironmentAndInstallationId(
+            String environment,
+            String installationId
+    );
 }

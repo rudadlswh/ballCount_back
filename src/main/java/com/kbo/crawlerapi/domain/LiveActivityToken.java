@@ -46,6 +46,12 @@ public class LiveActivityToken {
     @Column(name = "stable_detail_identity", length = 180)
     private String stableDetailIdentity;
 
+    @Column(name = "content_state_hash", length = 128)
+    private String contentStateHash;
+
+    @Column(name = "content_state_json", columnDefinition = "TEXT")
+    private String contentStateJson;
+
     @Column(name = "active", nullable = false)
     private boolean active;
 
@@ -136,6 +142,14 @@ public class LiveActivityToken {
         return stableDetailIdentity;
     }
 
+    public String getContentStateHash() {
+        return contentStateHash;
+    }
+
+    public String getContentStateJson() {
+        return contentStateJson;
+    }
+
     public boolean isActive() {
         return active;
     }
@@ -173,6 +187,12 @@ public class LiveActivityToken {
 
     public void disable(OffsetDateTime seenAt) {
         this.active = false;
+        this.lastSeenAt = seenAt;
+    }
+
+    public void markContentStateDelivered(String contentStateHash, String contentStateJson, OffsetDateTime seenAt) {
+        this.contentStateHash = contentStateHash;
+        this.contentStateJson = contentStateJson;
         this.lastSeenAt = seenAt;
     }
 }

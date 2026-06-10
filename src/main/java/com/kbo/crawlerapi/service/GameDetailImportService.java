@@ -70,6 +70,7 @@ public class GameDetailImportService {
     private final KboLiveTextParser kboLiveTextParser;
     private final GameBoxscoreRecordService gameBoxscoreRecordService;
     private final GameLiveTextRecordService gameLiveTextRecordService;
+    private final LiveActivityUpdateService liveActivityUpdateService;
     private final CrawlJobTrackingService crawlJobTrackingService;
     private final BaseRunnerNameResolver baseRunnerNameResolver;
     private final ObjectMapper objectMapper;
@@ -98,6 +99,40 @@ public class GameDetailImportService {
                 null,
                 gameBoxscoreRecordService,
                 null,
+                null,
+                crawlJobTrackingService,
+                baseRunnerNameResolver
+        );
+    }
+
+    public GameDetailImportService(
+            GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
+            LineScoreRepository lineScoreRepository,
+            KboGameDetailClient kboGameDetailClient,
+            KboGameDetailParser kboGameDetailParser,
+            KboLineScoreParser kboLineScoreParser,
+            KboBoxscoreParser kboBoxscoreParser,
+            KboLiveTextClient kboLiveTextClient,
+            KboLiveTextParser kboLiveTextParser,
+            GameBoxscoreRecordService gameBoxscoreRecordService,
+            GameLiveTextRecordService gameLiveTextRecordService,
+            CrawlJobTrackingService crawlJobTrackingService,
+            BaseRunnerNameResolver baseRunnerNameResolver
+    ) {
+        this(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                kboLiveTextClient,
+                kboLiveTextParser,
+                gameBoxscoreRecordService,
+                gameLiveTextRecordService,
+                null,
                 crawlJobTrackingService,
                 baseRunnerNameResolver
         );
@@ -116,6 +151,7 @@ public class GameDetailImportService {
             KboLiveTextParser kboLiveTextParser,
             GameBoxscoreRecordService gameBoxscoreRecordService,
             GameLiveTextRecordService gameLiveTextRecordService,
+            LiveActivityUpdateService liveActivityUpdateService,
             CrawlJobTrackingService crawlJobTrackingService,
             BaseRunnerNameResolver baseRunnerNameResolver
     ) {
@@ -130,6 +166,7 @@ public class GameDetailImportService {
         this.kboLiveTextParser = kboLiveTextParser;
         this.gameBoxscoreRecordService = gameBoxscoreRecordService;
         this.gameLiveTextRecordService = gameLiveTextRecordService;
+        this.liveActivityUpdateService = liveActivityUpdateService;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.baseRunnerNameResolver = baseRunnerNameResolver;
         this.objectMapper = new ObjectMapper();
@@ -224,6 +261,7 @@ public class GameDetailImportService {
                     boxscoreFetchResult
             );
             markDetailImportJob(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size(), parsedDetail, boxscoreImportResult);
+            deliverLiveActivityUpdateIfNeeded(game, parsedDetail);
 
             return new GameDetailImportResult(
                     game.getPublicGameId(),
@@ -295,6 +333,42 @@ public class GameDetailImportService {
                     exception.getMessage()
             );
             return LiveTextImportResult.skipped("error:" + exception.getMessage());
+        }
+    }
+
+    private void deliverLiveActivityUpdateIfNeeded(Game game, ParsedGameDetail parsedDetail) {
+        if (liveActivityUpdateService == null) {
+            return;
+        }
+        if (!isLiveLike(parsedDetail.status())) {
+            log.debug(
+                    "[LiveActivity] update skipped publicGameId={} providerGameId={} databaseId={} reason=non_live_status status={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    parsedDetail.status()
+            );
+            return;
+        }
+        try {
+            LiveActivityUpdateService.LiveActivityDeliveryResult result = liveActivityUpdateService.deliverUpdate(game);
+            log.info(
+                    "[LiveActivity] state-driven update completed publicGameId={} providerGameId={} databaseId={} sent={} skipped={} failed={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    result.sentCount(),
+                    result.skippedCount(),
+                    result.failedCount()
+            );
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[LiveActivity] state-driven update failed publicGameId={} providerGameId={} databaseId={} reason={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    exception.getMessage()
+            );
         }
     }
 

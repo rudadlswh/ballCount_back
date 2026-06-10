@@ -78,6 +78,33 @@ class LiveActivityTokenRegistrationServiceTest {
         assertThat(captor.getValue().isActive()).isTrue();
     }
 
+    @Test
+    void replacementTokenMarksOldActiveTokenForSameGameInactive() {
+        LiveActivityToken oldActivity = new LiveActivityToken(
+                UUID.fromString("33333333-3333-3333-3333-333333333333"),
+                "old-activity",
+                "ios",
+                "sandbox",
+                "old-activity-token",
+                "install-1",
+                "hanwha",
+                "20260605-LOT-HAN",
+                "20260605HHLT0",
+                "22222222-2222-2222-2222-222222222222",
+                "provider:20260605HHLT0",
+                OffsetDateTime.parse("2026-06-05T18:00:00+09:00")
+        );
+        when(repository.findRegistrationMatches(any(), any(), any(), any(), any(), any())).thenReturn(List.of());
+        when(repository.findByActiveTrueAndEnvironmentAndInstallationId(eq("sandbox"), eq("install-1")))
+                .thenReturn(List.of(oldActivity));
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+
+        service.register(command("new-activity-token"));
+
+        assertThat(oldActivity.isActive()).isFalse();
+        verify(repository).saveAll(any());
+    }
+
     private LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command(String activityToken) {
         return new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
                 "new-activity",
