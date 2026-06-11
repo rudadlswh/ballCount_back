@@ -97,19 +97,28 @@ class BaseRunnerNameResolver {
         List<String> sources = new ArrayList<>();
         if (clean(current.firstBaseRunnerName()) != null
                 || clean(current.secondBaseRunnerName()) != null
-                || clean(current.thirdBaseRunnerName()) != null) {
-            sources.add("official");
+                || clean(current.thirdBaseRunnerName()) != null
+                || clean(current.firstBaseRunnerId()) != null
+                || clean(current.secondBaseRunnerId()) != null
+                || clean(current.thirdBaseRunnerId()) != null) {
+            sources.add(hasBaseBattingOrder(current) ? "payload/order" : "payload");
         }
         if (carried) {
-            sources.add("carryForward");
+            sources.add("cache");
         }
         if (inference.reason() != null) {
-            sources.add(inference.reason());
+            sources.add("event:" + inference.reason());
         }
         if (inference.ambiguous()) {
-            sources.add("ambiguous");
+            sources.add("event:ambiguous");
         }
         return sources.isEmpty() ? "none" : String.join("+", sources);
+    }
+
+    private boolean hasBaseBattingOrder(ParsedGameDetail current) {
+        return current.firstBaseBattingOrder() != null && current.firstBaseBattingOrder() > 0
+                || current.secondBaseBattingOrder() != null && current.secondBaseBattingOrder() > 0
+                || current.thirdBaseBattingOrder() != null && current.thirdBaseBattingOrder() > 0;
     }
 
     private Runner resolveBase(

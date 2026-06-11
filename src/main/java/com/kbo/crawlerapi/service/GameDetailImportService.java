@@ -887,7 +887,10 @@ public class GameDetailImportService {
                 && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()))
                 && Objects.equals(clean(snapshot.getFirstBaseRunnerName()), clean(resolvedBaseRunners.firstBaseRunnerName()))
                 && Objects.equals(clean(snapshot.getSecondBaseRunnerName()), clean(resolvedBaseRunners.secondBaseRunnerName()))
-                && Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolvedBaseRunners.thirdBaseRunnerName()));
+                && Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolvedBaseRunners.thirdBaseRunnerName()))
+                && Objects.equals(clean(snapshot.getFirstBaseRunnerId()), clean(resolvedBaseRunners.firstBaseRunnerId()))
+                && Objects.equals(clean(snapshot.getSecondBaseRunnerId()), clean(resolvedBaseRunners.secondBaseRunnerId()))
+                && Objects.equals(clean(snapshot.getThirdBaseRunnerId()), clean(resolvedBaseRunners.thirdBaseRunnerId()));
     }
 
     private String displayName(String value) {
@@ -902,22 +905,51 @@ public class GameDetailImportService {
             BaseRunnerNameResolver.ResolvedBaseRunners resolved
     ) {
         log.debug(
-                "[BaseRunners] resolution game_id={} previous inning={}/{} current inning={}/{} previous occupancy={} current occupancy={} previous names first={} second={} third={} resolved names first={} second={} third={} source={}",
+                "[BaseRunners] payload occupancy first={} second={} third={}",
+                current.runnerOnFirst(),
+                current.runnerOnSecond(),
+                current.runnerOnThird()
+        );
+        log.debug(
+                "[BaseRunners] payload names first={} second={} third={}",
+                displayName(current.firstBaseRunnerName()),
+                displayName(current.secondBaseRunnerName()),
+                displayName(current.thirdBaseRunnerName())
+        );
+        log.debug(
+                "[BaseRunners] resolved names first={} second={} third={} source={} game_id={} previous inning={}/{} current inning={}/{} previous occupancy={} current occupancy={}",
+                displayName(resolved.firstBaseRunnerName()),
+                displayName(resolved.secondBaseRunnerName()),
+                displayName(resolved.thirdBaseRunnerName()),
+                resolved.source(),
                 game.getPublicGameId(),
                 previous == null ? null : previous.getInning(),
                 previous == null ? null : previous.getInningHalf(),
                 current.inning(),
                 current.inningHalf(),
                 previous == null ? "---" : baseKey(previous),
-                baseKey(current),
-                displayName(previous == null ? null : previous.getFirstBaseRunnerName()),
-                displayName(previous == null ? null : previous.getSecondBaseRunnerName()),
-                displayName(previous == null ? null : previous.getThirdBaseRunnerName()),
-                displayName(resolved.firstBaseRunnerName()),
-                displayName(resolved.secondBaseRunnerName()),
-                displayName(resolved.thirdBaseRunnerName()),
-                resolved.source()
+                baseKey(current)
         );
+        logUnresolvedBase("first", current.runnerOnFirst(), resolved.firstBaseRunnerName());
+        logUnresolvedBase("second", current.runnerOnSecond(), resolved.secondBaseRunnerName());
+        logUnresolvedBase("third", current.runnerOnThird(), resolved.thirdBaseRunnerName());
+        if (previous != null) {
+            logClearedBase("first", previous.isRunnerOnFirst(), current.runnerOnFirst());
+            logClearedBase("second", previous.isRunnerOnSecond(), current.runnerOnSecond());
+            logClearedBase("third", previous.isRunnerOnThird(), current.runnerOnThird());
+        }
+    }
+
+    private void logUnresolvedBase(String base, boolean occupied, String resolvedName) {
+        if (occupied && clean(resolvedName) == null) {
+            log.debug("[BaseRunners] unresolved base={} reason=missingPayloadName", base);
+        }
+    }
+
+    private void logClearedBase(String base, boolean previouslyOccupied, boolean occupied) {
+        if (previouslyOccupied && !occupied) {
+            log.debug("[BaseRunners] cleared base={} reason=baseEmpty", base);
+        }
     }
 
     private String baseKey(GameSnapshot snapshot) {

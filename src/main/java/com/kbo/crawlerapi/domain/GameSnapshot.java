@@ -351,12 +351,12 @@ public class GameSnapshot {
         this.runnerOnFirst = runnerOnFirst;
         this.runnerOnSecond = runnerOnSecond;
         this.runnerOnThird = runnerOnThird;
-        this.firstBaseRunnerName = firstBaseRunnerName;
-        this.secondBaseRunnerName = secondBaseRunnerName;
-        this.thirdBaseRunnerName = thirdBaseRunnerName;
-        this.firstBaseRunnerId = firstBaseRunnerId;
-        this.secondBaseRunnerId = secondBaseRunnerId;
-        this.thirdBaseRunnerId = thirdBaseRunnerId;
+        this.firstBaseRunnerName = runnerOnFirst ? clean(firstBaseRunnerName) : null;
+        this.secondBaseRunnerName = runnerOnSecond ? clean(secondBaseRunnerName) : null;
+        this.thirdBaseRunnerName = runnerOnThird ? clean(thirdBaseRunnerName) : null;
+        this.firstBaseRunnerId = runnerOnFirst ? clean(firstBaseRunnerId) : null;
+        this.secondBaseRunnerId = runnerOnSecond ? clean(secondBaseRunnerId) : null;
+        this.thirdBaseRunnerId = runnerOnThird ? clean(thirdBaseRunnerId) : null;
         this.currentPitcherName = currentPitcherName;
         this.currentBatterName = currentBatterName;
         this.homeScore = homeScore;
@@ -375,6 +375,10 @@ public class GameSnapshot {
         this.lastCompletedPitcherName = lastCompletedPitcherName;
         this.lastCompletedPlayResult = lastCompletedPlayResult;
         this.lastCompletedPlayKey = lastCompletedPlayKey;       
+    }
+
+    private static String clean(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     public Integer getInning() {

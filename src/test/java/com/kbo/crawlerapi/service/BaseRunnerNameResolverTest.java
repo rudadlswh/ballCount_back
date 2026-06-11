@@ -33,6 +33,7 @@ class BaseRunnerNameResolverTest {
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
         assertThat(result.firstBaseRunnerName()).isEqualTo("전민재");
+        assertThat(result.source()).contains("cache");
     }
 
     @Test
@@ -45,6 +46,9 @@ class BaseRunnerNameResolverTest {
         assertThat(result.firstBaseRunnerName()).isNull();
         assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
+        assertThat(result.firstBaseRunnerId()).isNull();
+        assertThat(result.secondBaseRunnerId()).isNull();
+        assertThat(result.thirdBaseRunnerId()).isNull();
     }
 
     @Test
@@ -69,7 +73,7 @@ class BaseRunnerNameResolverTest {
         assertThat(result.firstBaseRunnerName()).isEqualTo("손성빈");
         assertThat(result.secondBaseRunnerName()).isEqualTo("전민재");
         assertThat(result.thirdBaseRunnerName()).isNull();
-        assertThat(result.source()).contains("onBaseBatterToFirst", "advanceFirstToSecond");
+        assertThat(result.source()).contains("event", "onBaseBatterToFirst", "advanceFirstToSecond");
     }
 
     @Test
@@ -115,6 +119,7 @@ class BaseRunnerNameResolverTest {
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
         assertThat(result.firstBaseRunnerName()).isEqualTo("공식주자");
+        assertThat(result.source()).contains("payload");
     }
 
     @Test
