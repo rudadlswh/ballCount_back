@@ -73,7 +73,6 @@ class ApnsPushServiceTest {
         LiveActivityToken token = liveActivityToken();
 
         HttpRequest request = service.buildLiveActivityUpdateRequest(
-                event(),
                 token,
                 Map.of(
                         "isPreGame", false,

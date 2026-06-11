@@ -114,7 +114,13 @@ public class KboGameDetailParser {
                 String secondBaseRunnerId = runnerId(row, "B2");
                 String thirdBaseRunnerId = runnerId(row, "B3");
                 log.debug(
-                        "[BaseRunners] snapshot runners first={} second={} third={}",
+                        "[BaseRunners] payload occupancy first={} second={} third={}",
+                        firstBaseBattingOrder != null && firstBaseBattingOrder > 0,
+                        secondBaseBattingOrder != null && secondBaseBattingOrder > 0,
+                        thirdBaseBattingOrder != null && thirdBaseBattingOrder > 0
+                );
+                log.debug(
+                        "[BaseRunners] payload names first={} second={} third={}",
                         displayName(firstBaseRunnerName),
                         displayName(secondBaseRunnerName),
                         displayName(thirdBaseRunnerName)
@@ -266,7 +272,7 @@ public class KboGameDetailParser {
         }
 
         log.debug(
-                "[BaseRunners] source=officialLineup mapped first={} second={} third={}",
+                "[BaseRunners] resolved names first={} second={} third={} source=order",
                 displayName(first),
                 displayName(second),
                 displayName(third)

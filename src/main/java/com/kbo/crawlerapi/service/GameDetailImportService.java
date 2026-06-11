@@ -70,6 +70,7 @@ public class GameDetailImportService {
     private final KboLiveTextParser kboLiveTextParser;
     private final GameBoxscoreRecordService gameBoxscoreRecordService;
     private final GameLiveTextRecordService gameLiveTextRecordService;
+    private final LiveActivityUpdateService liveActivityUpdateService;
     private final CrawlJobTrackingService crawlJobTrackingService;
     private final BaseRunnerNameResolver baseRunnerNameResolver;
     private final ObjectMapper objectMapper;
@@ -98,6 +99,40 @@ public class GameDetailImportService {
                 null,
                 gameBoxscoreRecordService,
                 null,
+                null,
+                crawlJobTrackingService,
+                baseRunnerNameResolver
+        );
+    }
+
+    public GameDetailImportService(
+            GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
+            LineScoreRepository lineScoreRepository,
+            KboGameDetailClient kboGameDetailClient,
+            KboGameDetailParser kboGameDetailParser,
+            KboLineScoreParser kboLineScoreParser,
+            KboBoxscoreParser kboBoxscoreParser,
+            KboLiveTextClient kboLiveTextClient,
+            KboLiveTextParser kboLiveTextParser,
+            GameBoxscoreRecordService gameBoxscoreRecordService,
+            GameLiveTextRecordService gameLiveTextRecordService,
+            CrawlJobTrackingService crawlJobTrackingService,
+            BaseRunnerNameResolver baseRunnerNameResolver
+    ) {
+        this(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                kboLiveTextClient,
+                kboLiveTextParser,
+                gameBoxscoreRecordService,
+                gameLiveTextRecordService,
+                null,
                 crawlJobTrackingService,
                 baseRunnerNameResolver
         );
@@ -116,6 +151,7 @@ public class GameDetailImportService {
             KboLiveTextParser kboLiveTextParser,
             GameBoxscoreRecordService gameBoxscoreRecordService,
             GameLiveTextRecordService gameLiveTextRecordService,
+            LiveActivityUpdateService liveActivityUpdateService,
             CrawlJobTrackingService crawlJobTrackingService,
             BaseRunnerNameResolver baseRunnerNameResolver
     ) {
@@ -130,6 +166,7 @@ public class GameDetailImportService {
         this.kboLiveTextParser = kboLiveTextParser;
         this.gameBoxscoreRecordService = gameBoxscoreRecordService;
         this.gameLiveTextRecordService = gameLiveTextRecordService;
+        this.liveActivityUpdateService = liveActivityUpdateService;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.baseRunnerNameResolver = baseRunnerNameResolver;
         this.objectMapper = new ObjectMapper();
@@ -224,6 +261,7 @@ public class GameDetailImportService {
                     boxscoreFetchResult
             );
             markDetailImportJob(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size(), parsedDetail, boxscoreImportResult);
+            deliverLiveActivityUpdateIfNeeded(game, parsedDetail);
 
             return new GameDetailImportResult(
                     game.getPublicGameId(),
@@ -295,6 +333,42 @@ public class GameDetailImportService {
                     exception.getMessage()
             );
             return LiveTextImportResult.skipped("error:" + exception.getMessage());
+        }
+    }
+
+    private void deliverLiveActivityUpdateIfNeeded(Game game, ParsedGameDetail parsedDetail) {
+        if (liveActivityUpdateService == null) {
+            return;
+        }
+        if (!isLiveLike(parsedDetail.status())) {
+            log.debug(
+                    "[LiveActivity] update skipped publicGameId={} providerGameId={} databaseId={} reason=non_live_status status={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    parsedDetail.status()
+            );
+            return;
+        }
+        try {
+            LiveActivityUpdateService.LiveActivityDeliveryResult result = liveActivityUpdateService.deliverUpdate(game);
+            log.info(
+                    "[LiveActivity] state-driven update completed publicGameId={} providerGameId={} databaseId={} sent={} skipped={} failed={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    result.sentCount(),
+                    result.skippedCount(),
+                    result.failedCount()
+            );
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[LiveActivity] state-driven update failed publicGameId={} providerGameId={} databaseId={} reason={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    exception.getMessage()
+            );
         }
     }
 
@@ -813,7 +887,10 @@ public class GameDetailImportService {
                 && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()))
                 && Objects.equals(clean(snapshot.getFirstBaseRunnerName()), clean(resolvedBaseRunners.firstBaseRunnerName()))
                 && Objects.equals(clean(snapshot.getSecondBaseRunnerName()), clean(resolvedBaseRunners.secondBaseRunnerName()))
-                && Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolvedBaseRunners.thirdBaseRunnerName()));
+                && Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolvedBaseRunners.thirdBaseRunnerName()))
+                && Objects.equals(clean(snapshot.getFirstBaseRunnerId()), clean(resolvedBaseRunners.firstBaseRunnerId()))
+                && Objects.equals(clean(snapshot.getSecondBaseRunnerId()), clean(resolvedBaseRunners.secondBaseRunnerId()))
+                && Objects.equals(clean(snapshot.getThirdBaseRunnerId()), clean(resolvedBaseRunners.thirdBaseRunnerId()));
     }
 
     private String displayName(String value) {
@@ -828,22 +905,51 @@ public class GameDetailImportService {
             BaseRunnerNameResolver.ResolvedBaseRunners resolved
     ) {
         log.debug(
-                "[BaseRunners] resolution game_id={} previous inning={}/{} current inning={}/{} previous occupancy={} current occupancy={} previous names first={} second={} third={} resolved names first={} second={} third={} source={}",
+                "[BaseRunners] payload occupancy first={} second={} third={}",
+                current.runnerOnFirst(),
+                current.runnerOnSecond(),
+                current.runnerOnThird()
+        );
+        log.debug(
+                "[BaseRunners] payload names first={} second={} third={}",
+                displayName(current.firstBaseRunnerName()),
+                displayName(current.secondBaseRunnerName()),
+                displayName(current.thirdBaseRunnerName())
+        );
+        log.debug(
+                "[BaseRunners] resolved names first={} second={} third={} source={} game_id={} previous inning={}/{} current inning={}/{} previous occupancy={} current occupancy={}",
+                displayName(resolved.firstBaseRunnerName()),
+                displayName(resolved.secondBaseRunnerName()),
+                displayName(resolved.thirdBaseRunnerName()),
+                resolved.source(),
                 game.getPublicGameId(),
                 previous == null ? null : previous.getInning(),
                 previous == null ? null : previous.getInningHalf(),
                 current.inning(),
                 current.inningHalf(),
                 previous == null ? "---" : baseKey(previous),
-                baseKey(current),
-                displayName(previous == null ? null : previous.getFirstBaseRunnerName()),
-                displayName(previous == null ? null : previous.getSecondBaseRunnerName()),
-                displayName(previous == null ? null : previous.getThirdBaseRunnerName()),
-                displayName(resolved.firstBaseRunnerName()),
-                displayName(resolved.secondBaseRunnerName()),
-                displayName(resolved.thirdBaseRunnerName()),
-                resolved.source()
+                baseKey(current)
         );
+        logUnresolvedBase("first", current.runnerOnFirst(), resolved.firstBaseRunnerName());
+        logUnresolvedBase("second", current.runnerOnSecond(), resolved.secondBaseRunnerName());
+        logUnresolvedBase("third", current.runnerOnThird(), resolved.thirdBaseRunnerName());
+        if (previous != null) {
+            logClearedBase("first", previous.isRunnerOnFirst(), current.runnerOnFirst());
+            logClearedBase("second", previous.isRunnerOnSecond(), current.runnerOnSecond());
+            logClearedBase("third", previous.isRunnerOnThird(), current.runnerOnThird());
+        }
+    }
+
+    private void logUnresolvedBase(String base, boolean occupied, String resolvedName) {
+        if (occupied && clean(resolvedName) == null) {
+            log.debug("[BaseRunners] unresolved base={} reason=missingPayloadName", base);
+        }
+    }
+
+    private void logClearedBase(String base, boolean previouslyOccupied, boolean occupied) {
+        if (previouslyOccupied && !occupied) {
+            log.debug("[BaseRunners] cleared base={} reason=baseEmpty", base);
+        }
     }
 
     private String baseKey(GameSnapshot snapshot) {
