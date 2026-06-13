@@ -10,6 +10,7 @@ import com.kbo.crawlerapi.repository.GameEventReadRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
+import com.kbo.crawlerapi.service.ScoringPlayDetailExtractor.ScoringPlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayNotificationFormatter.NotificationText;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -617,15 +618,10 @@ public class LiveGameSyncService {
         String pitcherName = before.currentPitcherName();
         String result = liveEventResult(game, "득점");
         String eventTeamId = scoringTeamId(game, before, after);
-        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, after, runCount, eventTeamId);
+        ScoringPlayContext scoringContext = scoringPlayContext(game, before, after, eventTeamId);
+        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, scoringContext);
         NotificationText detailedText = ScoringPlayNotificationFormatter.scoreChangeText(scoringPlayDetail).orElse(null);
-
-        String fallbackTitle = "%s %d : %d %s".formatted(
-                teamShortName(game, game.getAwayTeam().getTeamCode()),
-                game.getAwayScore(),
-                game.getHomeScore(),
-                teamShortName(game, game.getHomeTeam().getTeamCode())
-        );
+        NotificationText fallbackText = scoringFallbackText(scoringContext);
 
         NotificationEventDraft draft = liveDraft(
                 game,
@@ -635,8 +631,8 @@ public class LiveGameSyncService {
                         game.getAwayScore(),
                         game.getHomeScore()
                 ),
-                detailedText == null ? fallbackTitle : detailedText.title(),
-                detailedText == null ? scoringBody(game, eventTeamId, runCount) : detailedText.body(),
+                detailedText == null ? fallbackText.title() : detailedText.title(),
+                detailedText == null ? fallbackText.body() : detailedText.body(),
                 batterName,
                 pitcherName,
                 result,
@@ -729,27 +725,19 @@ public class LiveGameSyncService {
     }
 
     private NotificationEventDraft leadChangeDraft(Game game, GameState before, GameState after, String eventTeamId) {
-        String leadingTeamName = teamShortName(game, eventTeamId);
         boolean tied = nullSafe(after.awayScore()) == nullSafe(after.homeScore());
-        int runCount = Math.max(
-                1,
-                Math.max(0, nullSafe(after.awayScore()) - nullSafe(before.awayScore()))
-                        + Math.max(0, nullSafe(after.homeScore()) - nullSafe(before.homeScore()))
-        );
-        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, after, runCount, eventTeamId);
+        ScoringPlayContext scoringContext = scoringPlayContext(game, before, after, eventTeamId);
+        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, scoringContext);
         NotificationText detailedText = ScoringPlayNotificationFormatter
                 .leadChangeText(scoringPlayDetail, before.awayScore(), before.homeScore())
                 .orElse(null);
+        NotificationText fallbackText = leadChangeFallbackText(scoringContext, before.awayScore(), before.homeScore());
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_LEAD_CHANGED,
                 "game:%s:lead-change:%s:%d-%d".formatted(game.getId(), eventTeamId, nullSafe(after.awayScore()), nullSafe(after.homeScore())),
-                detailedText == null ? "리드 변경" : detailedText.title(),
-                detailedText == null
-                        ? tied
-                        ? "%s가 동점을 만들었습니다.".formatted(leadingTeamName)
-                        : "%s가 리드를 잡았습니다.".formatted(leadingTeamName)
-                        : detailedText.body()
+                detailedText == null ? fallbackText.title() : detailedText.title(),
+                detailedText == null ? fallbackText.body() : detailedText.body()
         );
         draft.payload().put("previousAwayScore", before.awayScore());
         draft.payload().put("previousHomeScore", before.homeScore());
@@ -763,22 +751,14 @@ public class LiveGameSyncService {
         return draft;
     }
 
-    private ScoringPlayDetail scoringPlayDetail(Game game, GameState after, Integer runCount, String eventTeamId) {
-        if (gameEventReadRepository == null || eventTeamId == null || game == null || game.getId() == null) {
+    private ScoringPlayDetail scoringPlayDetail(Game game, ScoringPlayContext context) {
+        if (gameEventReadRepository == null || context == null || context.battingTeamId() == null || game == null || game.getId() == null) {
             return null;
         }
         try {
             return ScoringPlayDetailExtractor.extract(
                     gameEventReadRepository.findRecentByGameId(game.getId(), 30),
-                    runCount,
-                    after.inning(),
-                    after.inningHalf(),
-                    eventTeamId,
-                    teamShortName(game, eventTeamId),
-                    after.awayScore(),
-                    after.homeScore(),
-                    teamShortName(game, game.getAwayTeam().getTeamCode()),
-                    teamShortName(game, game.getHomeTeam().getTeamCode())
+                    context
             ).orElse(null);
         } catch (RuntimeException exception) {
             log.debug(
@@ -788,6 +768,30 @@ public class LiveGameSyncService {
             );
             return null;
         }
+    }
+
+    private ScoringPlayContext scoringPlayContext(Game game, GameState before, GameState after, String eventTeamId) {
+        if (game == null || before == null || after == null || eventTeamId == null) {
+            return null;
+        }
+        return new ScoringPlayContext(
+                before.currentBatterName(),
+                before.inning() == null ? after.inning() : before.inning(),
+                before.inningHalf() == null ? after.inningHalf() : before.inningHalf(),
+                before.runnerOnFirst(),
+                before.runnerOnSecond(),
+                before.runnerOnThird(),
+                eventTeamId,
+                teamShortName(game, eventTeamId),
+                game.getAwayTeam().getTeamCode(),
+                game.getHomeTeam().getTeamCode(),
+                before.awayScore(),
+                before.homeScore(),
+                after.awayScore(),
+                after.homeScore(),
+                teamShortName(game, game.getAwayTeam().getTeamCode()),
+                teamShortName(game, game.getHomeTeam().getTeamCode())
+        );
     }
 
     private void addScoringPlayPayload(NotificationEventDraft draft, ScoringPlayDetail detail) {
@@ -974,10 +978,104 @@ public class LiveGameSyncService {
         return "%s 출루".formatted(teamName);
     }
 
-    private String scoringBody(Game game, String eventTeamId, Integer runCount) {
-        String teamName = teamShortName(game, eventTeamId);
-        int runs = Math.max(1, nullSafe(runCount));
-        return runs == 1 ? "%s 득점".formatted(teamName) : "%s %d득점".formatted(teamName, runs);
+    private NotificationText scoringFallbackText(ScoringPlayContext context) {
+        if (context == null) {
+            return new NotificationText("득점", "득점 상황 발생");
+        }
+        return new NotificationText(
+                "%s 득점".formatted(context.battingTeamName()),
+                scoringFallbackBody(context)
+        );
+    }
+
+    private NotificationText leadChangeFallbackText(
+            ScoringPlayContext context,
+            Integer previousAwayScore,
+            Integer previousHomeScore
+    ) {
+        if (context == null) {
+            return new NotificationText("리드 변경", "득점 상황 발생");
+        }
+        return new NotificationText(
+                leadChangeFallbackTitle(context, previousAwayScore, previousHomeScore),
+                scoringFallbackBody(context)
+        );
+    }
+
+    private String leadChangeFallbackTitle(
+            ScoringPlayContext context,
+            Integer previousAwayScore,
+            Integer previousHomeScore
+    ) {
+        int away = nullSafe(context.awayScoreAfter());
+        int home = nullSafe(context.homeScoreAfter());
+        if (away == home) {
+            return "동점";
+        }
+        String currentLeaderTeamId = away > home ? context.awayTeamId() : context.homeTeamId();
+        if (currentLeaderTeamId != null
+                && context.battingTeamId() != null
+                && currentLeaderTeamId.equalsIgnoreCase(context.battingTeamId())) {
+            int previousAway = nullSafe(previousAwayScore);
+            int previousHome = nullSafe(previousHomeScore);
+            if ((previousAway <= previousHome && away > home) || (previousHome <= previousAway && home > away)) {
+                return "%s 역전".formatted(context.battingTeamName());
+            }
+        }
+        return "리드 변경";
+    }
+
+    private String scoringFallbackBody(ScoringPlayContext context) {
+        String actor = hasText(context.previousBatterName())
+                ? context.previousBatterName().trim()
+                : context.battingTeamName();
+        String playText = "%s %s".formatted(actor, runsText(context.scoreDelta()));
+        String inningText = scoringInningText(context.inning(), context.inningHalf());
+        if (hasText(inningText)) {
+            return "%s %s · %s".formatted(inningText, playText, scoringScoreText(context));
+        }
+        return "%s · %s".formatted(playText, scoringScoreText(context));
+    }
+
+    private String scoringInningText(Integer inning, String inningHalf) {
+        if (inning == null) {
+            return null;
+        }
+        String half = switch (normalizeHalf(inningHalf)) {
+            case "top" -> "초";
+            case "bottom" -> "말";
+            default -> "";
+        };
+        return "%d회%s".formatted(inning, half);
+    }
+
+    private String runsText(Integer runsScored) {
+        return "%d득점".formatted(Math.max(1, nullSafe(runsScored)));
+    }
+
+    private String scoringScoreText(ScoringPlayContext context) {
+        if (context.battingTeamId() != null && context.battingTeamId().equalsIgnoreCase(context.awayTeamId())) {
+            return "%s %d-%d %s".formatted(
+                    context.awayTeamName(),
+                    nullSafe(context.awayScoreAfter()),
+                    nullSafe(context.homeScoreAfter()),
+                    context.homeTeamName()
+            );
+        }
+        if (context.battingTeamId() != null && context.battingTeamId().equalsIgnoreCase(context.homeTeamId())) {
+            return "%s %d-%d %s".formatted(
+                    context.homeTeamName(),
+                    nullSafe(context.homeScoreAfter()),
+                    nullSafe(context.awayScoreAfter()),
+                    context.awayTeamName()
+            );
+        }
+        return "%s %d-%d %s".formatted(
+                context.awayTeamName(),
+                nullSafe(context.awayScoreAfter()),
+                nullSafe(context.homeScoreAfter()),
+                context.homeTeamName()
+        );
     }
 
     private String leadingTeamId(Game game, Integer awayScore, Integer homeScore) {
@@ -1145,6 +1243,10 @@ public class LiveGameSyncService {
 
     private String safeKey(String value) {
         return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String normalizedInterruptionReason(Game game) {

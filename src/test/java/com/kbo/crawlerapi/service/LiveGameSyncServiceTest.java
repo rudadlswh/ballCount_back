@@ -321,9 +321,9 @@ class LiveGameSyncServiceTest {
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("SCORE_CHANGED");
         assertThat(notificationEventService.drafts.get(0).title())
-                .isEqualTo("KIA 2 : 0 LG");
-        assertThat(notificationEventService.drafts.get(0).body())
                 .isEqualTo("KIA 득점");
+        assertThat(notificationEventService.drafts.get(0).body())
+                .isEqualTo("3회초 KIA 1득점 · KIA 2-0 LG");
         assertThat(notificationEventService.drafts.get(0).eventKey())
                 .isEqualTo("game:%s:score:2-0".formatted(after.getId()))
                 .doesNotContain("inning:", "batter:", "pitcher:", "result:");
@@ -333,7 +333,7 @@ class LiveGameSyncServiceTest {
     void liveScoreChangeUsesParsedScoringPlayDetailWithoutChangingDedupeKey() {
         Game before = fixtureGame(GameStatus.LIVE, 2, 2);
         Game after = fixtureGame(GameStatus.LIVE, 4, 2);
-        GameSnapshot beforeSnapshot = snapshot(before, "레이예스", "홈투수", 0, false, true, false, 0, 0, 7, "top", "Top 7");
+        GameSnapshot beforeSnapshot = snapshot(before, "레이예스", "홈투수", 0, true, true, false, 0, 0, 7, "top", "Top 7");
         GameSnapshot afterSnapshot = snapshot(after, "후속타자", "홈투수", 0, false, false, false, 0, 0, 7, "top", "Top 7");
         StubGameEventReadRepository gameEventReadRepository = new StubGameEventReadRepository(List.of(
                 new GameEventRow(20, 7, "top", "HIT", "레이예스 : 좌익수 왼쪽 2루타"),
@@ -370,6 +370,93 @@ class LiveGameSyncServiceTest {
                 .containsEntry("scoringResultText", "2루타")
                 .containsEntry("scoringRunsScored", 2)
                 .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "kia");
+    }
+
+    @Test
+    void staleParsedScoringPlayBatterIsRejectedForPreviousBatterFallback() {
+        NotificationEventDraft draft = scoreChangeDraftForLotteLg(
+                0,
+                5,
+                2,
+                5,
+                "레이예스",
+                "나승엽",
+                List.of(new GameEventRow(30, 3, "top", "OUT", "황성빈 : 2루수 땅볼"))
+        );
+
+        assertThat(draft.title()).isEqualTo("롯데 득점");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).doesNotContain("황성빈", "땅볼");
+        assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
+    }
+
+    @Test
+    void matchingPreviousBatterHomeRunDetailIsUsedForTwoRunScoreChange() {
+        NotificationEventDraft draft = scoreChangeDraftForLotteLg(
+                0,
+                5,
+                2,
+                5,
+                "레이예스",
+                "나승엽",
+                List.of(new GameEventRow(30, 3, "top", "HOME_RUN", "레이예스 : 좌월 홈런"))
+        );
+
+        assertThat(draft.title()).isEqualTo("롯데 득점");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 홈런, 2득점 · 롯데 2-5 LG");
+        assertThat(draft.payload())
+                .containsEntry("scoringBatterName", "레이예스")
+                .containsEntry("scoringResultText", "홈런")
+                .containsEntry("scoringRunsScored", 2);
+    }
+
+    @Test
+    void parsedScoringPlayWithRunCountMismatchIsRejected() {
+        NotificationEventDraft draft = scoreChangeDraftForLotteLg(
+                0,
+                5,
+                2,
+                5,
+                "레이예스",
+                "나승엽",
+                List.of(new GameEventRow(30, 3, "top", "HOME_RUN", "레이예스 : 좌월 홈런, 1득점"))
+        );
+
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 2득점 · 롯데 2-5 LG");
+        assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
+    }
+
+    @Test
+    void parsedScoringPlayWithScoreAfterMismatchIsRejected() {
+        NotificationEventDraft draft = scoreChangeDraftForLotteLg(
+                0,
+                5,
+                2,
+                5,
+                "레이예스",
+                "나승엽",
+                List.of(new GameEventRow(30, 3, "top", "HOME_RUN", "레이예스 : 좌월 홈런 · 롯데 1-5 LG"))
+        );
+
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 2득점 · 롯데 2-5 LG");
+        assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
+    }
+
+    @Test
+    void missingPreviousBatterRejectsBatterSpecificUnreliableEventForGenericFallback() {
+        NotificationEventDraft draft = scoreChangeDraftForLotteLg(
+                0,
+                5,
+                2,
+                5,
+                null,
+                "나승엽",
+                List.of(new GameEventRow(30, 3, "top", "OUT", "황성빈 : 2루수 땅볼"))
+        );
+
+        assertThat(draft.title()).isEqualTo("롯데 득점");
+        assertThat(draft.body()).isEqualTo("3회초 롯데 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).doesNotContain("황성빈", "땅볼");
     }
 
     @Test
@@ -1181,7 +1268,8 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly(NotificationEventService.EVENT_LEAD_CHANGED, NotificationEventService.EVENT_SCORE_CHANGED);
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("LG가 동점을 만들었습니다.");
+        assertThat(notificationEventService.drafts.get(0).title()).isEqualTo("동점");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("3회초 김타자 2득점 · LG 3-3 KIA");
         assertThat(notificationEventService.drafts.get(0).payload())
                 .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "lg")
                 .containsEntry("leadChangeReason", "TIED_GAME");
@@ -1297,6 +1385,64 @@ class LiveGameSyncServiceTest {
         );
     }
 
+    private NotificationEventDraft scoreChangeDraftForLotteLg(
+            int awayScoreBefore,
+            int homeScoreBefore,
+            int awayScoreAfter,
+            int homeScoreAfter,
+            String previousBatter,
+            String currentBatterAfter,
+            List<GameEventRow> events
+    ) {
+        Game before = fixtureGameWithTeams(
+                GameStatus.LIVE,
+                awayScoreBefore,
+                homeScoreBefore,
+                "Top 3",
+                "lotte",
+                "롯데 자이언츠",
+                "롯데",
+                "lg",
+                "LG 트윈스",
+                "LG"
+        );
+        Game after = fixtureGameWithTeams(
+                GameStatus.LIVE,
+                awayScoreAfter,
+                homeScoreAfter,
+                "Top 3",
+                "lotte",
+                "롯데 자이언츠",
+                "롯데",
+                "lg",
+                "LG 트윈스",
+                "LG"
+        );
+        GameSnapshot beforeSnapshot = snapshot(before, previousBatter, "홈투수", 0, true, false, false, 0, 0, 3, "top", "Top 3");
+        GameSnapshot afterSnapshot = snapshot(after, currentBatterAfter, "홈투수", 0, false, false, false, 0, 0, 3, "top", "Top 3");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                new StubGameDetailImportService(),
+                notificationEventService,
+                new StubGameEventReadRepository(events)
+        );
+
+        service.sync(before.getGameDate(), false);
+
+        return notificationEventService.drafts.stream()
+                .filter(candidate -> NotificationEventService.EVENT_SCORE_CHANGED.equals(candidate.eventType()))
+                .findFirst()
+                .orElseThrow();
+    }
+
     private Game fixtureGame(GameStatus status, Integer awayScore, Integer homeScore) {
         return fixtureGame(status, awayScore, homeScore, null);
     }
@@ -1385,6 +1531,42 @@ class LiveGameSyncServiceTest {
                 isPostponed,
                 cancelReason,
                 rawCancelText,
+                null
+        );
+    }
+
+    private Game fixtureGameWithTeams(
+            GameStatus status,
+            Integer awayScore,
+            Integer homeScore,
+            String inningState,
+            String awayTeamCode,
+            String awayTeamName,
+            String awayTeamShortName,
+            String homeTeamCode,
+            String homeTeamName,
+            String homeTeamShortName
+    ) {
+        Team homeTeam = new Team(UUID.randomUUID(), homeTeamCode, homeTeamName, homeTeamShortName, homeTeamName, null);
+        Team awayTeam = new Team(UUID.randomUUID(), awayTeamCode, awayTeamName, awayTeamShortName, awayTeamName, null);
+        return new Game(
+                UUID.randomUUID(),
+                "20260409-%s-%s".formatted(homeTeamCode.toUpperCase(), awayTeamCode.toUpperCase()),
+                "kbo",
+                "20260409%s%s0".formatted(awayTeamCode.toUpperCase(), homeTeamCode.toUpperCase()),
+                LocalDate.of(2026, 4, 9),
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                status,
+                homeTeam,
+                awayTeam,
+                homeScore,
+                awayScore,
+                inningState,
+                false,
+                false,
+                null,
+                null,
                 null
         );
     }

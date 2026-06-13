@@ -104,15 +104,7 @@ class ScoringPlayNotificationFormatterTest {
                         event(11, "RUN_SCORED", "2루주자 고승민 : 홈인"),
                         event(12, "RUN_SCORED", "1루주자 손성빈 : 홈인")
                 ),
-                2,
-                7,
-                "top",
-                "lotte",
-                "롯데",
-                4,
-                2,
-                "롯데",
-                "한화"
+                context("레이예스", 2, 2, 4, 2)
         ).orElseThrow();
 
         assertThat(detail.batterName()).isEqualTo("레이예스");
@@ -126,6 +118,33 @@ class ScoringPlayNotificationFormatterTest {
 
     private GameEventRow event(int sequence, String type, String text) {
         return new GameEventRow(sequence, 7, "top", type, text);
+    }
+
+    private ScoringPlayDetailExtractor.ScoringPlayContext context(
+            String previousBatterName,
+            Integer awayScoreBefore,
+            Integer homeScoreBefore,
+            Integer awayScoreAfter,
+            Integer homeScoreAfter
+    ) {
+        return new ScoringPlayDetailExtractor.ScoringPlayContext(
+                previousBatterName,
+                7,
+                "top",
+                true,
+                true,
+                false,
+                "lotte",
+                "롯데",
+                "lotte",
+                "hanwha",
+                awayScoreBefore,
+                homeScoreBefore,
+                awayScoreAfter,
+                homeScoreAfter,
+                "롯데",
+                "한화"
+        );
     }
 
     private ScoringPlayDetail detail(String batterName, String resultText, Integer hitBaseCount, Integer runsScored) {

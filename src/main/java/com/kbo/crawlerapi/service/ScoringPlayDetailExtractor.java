@@ -5,31 +5,28 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class ScoringPlayDetailExtractor {
 
     private ScoringPlayDetailExtractor() {
     }
 
+    private static final Pattern RUNS_SCORED_PATTERN = Pattern.compile("(\\d+)\\s*득점");
+    private static final Pattern SCORE_PATTERN = Pattern.compile("(?<!\\d)(\\d+)\\s*[-:]\\s*(\\d+)(?!\\d)");
+
     public static Optional<ScoringPlayDetail> extract(
             List<GameEventRow> recentEvents,
-            Integer runsScored,
-            Integer inning,
-            String inningHalf,
-            String battingTeamId,
-            String battingTeamName,
-            Integer awayScoreAfter,
-            Integer homeScoreAfter,
-            String awayTeamName,
-            String homeTeamName
+            ScoringPlayContext context
     ) {
-        if (recentEvents == null || recentEvents.isEmpty() || runsScored == null || runsScored <= 0) {
+        if (recentEvents == null || recentEvents.isEmpty() || context == null || context.scoreDelta() <= 0) {
             return Optional.empty();
         }
 
         List<GameEventRow> events = recentEvents.stream()
                 .filter(event -> event != null && hasText(event.eventText()))
-                .filter(event -> sameInningHalf(event, inning, inningHalf))
+                .filter(event -> sameInningHalf(event, context.inning(), context.inningHalf()))
                 .sorted(Comparator.comparingInt(GameEventRow::sequenceNumber))
                 .toList();
         if (events.isEmpty()) {
@@ -60,7 +57,7 @@ public final class ScoringPlayDetailExtractor {
             }
         }
 
-        if (parsed == null || parsed.resultText() == null) {
+        if (parsed == null || parsed.resultText() == null || !isReliable(parsed, context)) {
             return Optional.empty();
         }
 
@@ -69,16 +66,16 @@ public final class ScoringPlayDetailExtractor {
                 parsed.batterName(),
                 parsed.resultText(),
                 parsed.hitBaseCount(),
-                runsScored,
-                runsScored,
-                source.inning() == null ? inning : source.inning(),
-                clean(source.inningHalf()) == null ? normalizeHalf(inningHalf) : normalizeHalf(source.inningHalf()),
-                battingTeamId,
-                battingTeamName,
-                awayScoreAfter,
-                homeScoreAfter,
-                awayTeamName,
-                homeTeamName
+                context.scoreDelta(),
+                context.scoreDelta(),
+                source.inning() == null ? context.inning() : source.inning(),
+                clean(source.inningHalf()) == null ? normalizeHalf(context.inningHalf()) : normalizeHalf(source.inningHalf()),
+                context.battingTeamId(),
+                context.battingTeamName(),
+                context.awayScoreAfter(),
+                context.homeScoreAfter(),
+                context.awayTeamName(),
+                context.homeTeamName()
         ));
     }
 
@@ -94,42 +91,103 @@ public final class ScoringPlayDetailExtractor {
             return Optional.empty();
         }
         if (normalized.contains("홈런")) {
-            return Optional.of(new ParsedPlay(batterName, "홈런", null, true));
+            return Optional.of(parsed(text, batterName, "홈런", null, true));
         }
         if (normalized.contains("3루타")) {
-            return Optional.of(new ParsedPlay(batterName, "3루타", 3, true));
+            return Optional.of(parsed(text, batterName, "3루타", 3, true));
         }
         if (normalized.contains("2루타")) {
-            return Optional.of(new ParsedPlay(batterName, "2루타", 2, true));
+            return Optional.of(parsed(text, batterName, "2루타", 2, true));
         }
         if (normalized.contains("1루타") || normalized.contains("안타")) {
-            return Optional.of(new ParsedPlay(batterName, "안타", 1, true));
+            return Optional.of(parsed(text, batterName, "안타", 1, true));
         }
         if (normalized.contains("볼넷") || normalized.contains("4구")) {
-            return Optional.of(new ParsedPlay(batterName, "밀어내기 볼넷", null, true));
+            return Optional.of(parsed(text, batterName, "밀어내기 볼넷", null, true));
         }
         if (normalized.contains("사구") || normalized.contains("몸에맞")) {
-            return Optional.of(new ParsedPlay(batterName, "밀어내기 사구", null, true));
+            return Optional.of(parsed(text, batterName, "밀어내기 사구", null, true));
         }
         if (normalized.contains("희생플라이") || normalized.contains("희플")) {
-            return Optional.of(new ParsedPlay(batterName, "희생플라이", null, true));
+            return Optional.of(parsed(text, batterName, "희생플라이", null, true));
         }
         if (normalized.contains("실책")) {
-            return Optional.of(new ParsedPlay(batterName, "상대 실책", null, true));
+            return Optional.of(parsed(text, batterName, "상대 실책", null, true));
         }
         if (normalized.contains("폭투")) {
-            return Optional.of(new ParsedPlay(null, "폭투", null, true));
+            return Optional.of(parsed(text, null, "폭투", null, true));
         }
         if (normalized.contains("포일")) {
-            return Optional.of(new ParsedPlay(null, "포일", null, true));
+            return Optional.of(parsed(text, null, "포일", null, true));
         }
         if (normalized.contains("보크")) {
-            return Optional.of(new ParsedPlay(null, "보크", null, true));
+            return Optional.of(parsed(text, null, "보크", null, true));
         }
         if (normalized.contains("땅볼")) {
-            return Optional.of(new ParsedPlay(batterName, "땅볼", null, true));
+            return Optional.of(parsed(text, batterName, "땅볼", null, true));
         }
         return Optional.empty();
+    }
+
+    private static ParsedPlay parsed(
+            String text,
+            String batterName,
+            String resultText,
+            Integer hitBaseCount,
+            boolean directScoringCandidate
+    ) {
+        ScoreAfter scoreAfter = explicitScoreAfter(text);
+        return new ParsedPlay(
+                batterName,
+                resultText,
+                hitBaseCount,
+                directScoringCandidate,
+                explicitRunsScored(text),
+                scoreAfter == null ? null : scoreAfter.awayScoreAfter(),
+                scoreAfter == null ? null : scoreAfter.homeScoreAfter()
+        );
+    }
+
+    private static boolean isReliable(ParsedPlay parsed, ScoringPlayContext context) {
+        if (!context.battingTeamMatchesInningHalf()) {
+            return false;
+        }
+        String previousBatter = clean(context.previousBatterName());
+        String parsedBatter = clean(parsed.batterName());
+        if (previousBatter != null) {
+            if (parsedBatter == null || !previousBatter.equals(parsedBatter)) {
+                return false;
+            }
+        } else if (parsedBatter != null) {
+            return false;
+        }
+        if (parsed.explicitRunsScored() != null && parsed.explicitRunsScored() != context.scoreDelta()) {
+            return false;
+        }
+        if (parsed.explicitAwayScoreAfter() != null && parsed.explicitHomeScoreAfter() != null
+                && (!parsed.explicitAwayScoreAfter().equals(context.awayScoreAfter())
+                || !parsed.explicitHomeScoreAfter().equals(context.homeScoreAfter()))) {
+            return false;
+        }
+        if (!baseOccupancyAllowsRuns(parsed, context)) {
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean baseOccupancyAllowsRuns(ParsedPlay parsed, ScoringPlayContext context) {
+        int occupiedBases = context.occupiedBaseCount();
+        int runs = context.scoreDelta();
+        if (runs <= 0) {
+            return false;
+        }
+        if ("홈런".equals(parsed.resultText())) {
+            return runs <= occupiedBases + 1;
+        }
+        if ("밀어내기 볼넷".equals(parsed.resultText()) || "밀어내기 사구".equals(parsed.resultText())) {
+            return occupiedBases == 3 && runs == 1;
+        }
+        return runs <= occupiedBases;
     }
 
     private static Integer latestRunMarkerIndex(List<GameEventRow> events) {
@@ -156,6 +214,24 @@ public final class ScoringPlayDetailExtractor {
                 || normalized.contains("폭투")
                 || normalized.contains("포일")
                 || normalized.contains("보크");
+    }
+
+    private static Integer explicitRunsScored(String text) {
+        Matcher matcher = RUNS_SCORED_PATTERN.matcher(text);
+        Integer latest = null;
+        while (matcher.find()) {
+            latest = Integer.parseInt(matcher.group(1));
+        }
+        return latest;
+    }
+
+    private static ScoreAfter explicitScoreAfter(String text) {
+        Matcher matcher = SCORE_PATTERN.matcher(text);
+        ScoreAfter scoreAfter = null;
+        while (matcher.find()) {
+            scoreAfter = new ScoreAfter(Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2)));
+        }
+        return scoreAfter;
     }
 
     private static String batterName(String text) {
@@ -196,11 +272,63 @@ public final class ScoringPlayDetailExtractor {
         return value != null && !value.isBlank();
     }
 
+    private static int nullSafe(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    public record ScoringPlayContext(
+            String previousBatterName,
+            Integer inning,
+            String inningHalf,
+            boolean runnerOnFirst,
+            boolean runnerOnSecond,
+            boolean runnerOnThird,
+            String battingTeamId,
+            String battingTeamName,
+            String awayTeamId,
+            String homeTeamId,
+            Integer awayScoreBefore,
+            Integer homeScoreBefore,
+            Integer awayScoreAfter,
+            Integer homeScoreAfter,
+            String awayTeamName,
+            String homeTeamName
+    ) {
+        int scoreDelta() {
+            return Math.max(0, nullSafe(awayScoreAfter) - nullSafe(awayScoreBefore))
+                    + Math.max(0, nullSafe(homeScoreAfter) - nullSafe(homeScoreBefore));
+        }
+
+        int occupiedBaseCount() {
+            return (runnerOnFirst ? 1 : 0) + (runnerOnSecond ? 1 : 0) + (runnerOnThird ? 1 : 0);
+        }
+
+        boolean battingTeamMatchesInningHalf() {
+            String normalizedHalf = normalizeHalf(inningHalf);
+            if ("top".equals(normalizedHalf)) {
+                return hasText(battingTeamId) && hasText(awayTeamId) && battingTeamId.equalsIgnoreCase(awayTeamId);
+            }
+            if ("bottom".equals(normalizedHalf)) {
+                return hasText(battingTeamId) && hasText(homeTeamId) && battingTeamId.equalsIgnoreCase(homeTeamId);
+            }
+            return true;
+        }
+    }
+
     record ParsedPlay(
             String batterName,
             String resultText,
             Integer hitBaseCount,
-            boolean directScoringCandidate
+            boolean directScoringCandidate,
+            Integer explicitRunsScored,
+            Integer explicitAwayScoreAfter,
+            Integer explicitHomeScoreAfter
+    ) {
+    }
+
+    private record ScoreAfter(
+            Integer awayScoreAfter,
+            Integer homeScoreAfter
     ) {
     }
 }
