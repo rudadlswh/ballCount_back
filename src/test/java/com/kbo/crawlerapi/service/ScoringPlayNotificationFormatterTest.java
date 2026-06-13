@@ -1,0 +1,159 @@
+package com.kbo.crawlerapi.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.kbo.crawlerapi.repository.GameEventReadRepository.GameEventRow;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+
+class ScoringPlayNotificationFormatterTest {
+
+    @Test
+    void formatsSingleWithOneRun() {
+        var detail = detail("고승민", "안타", 1, 1);
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.title()).isEqualTo("롯데 득점");
+        assertThat(text.body()).isEqualTo("7회초 고승민 안타, 1득점 · 롯데 3-2 한화");
+    }
+
+    @Test
+    void formatsDoubleWithTwoRuns() {
+        var detail = detail("레이예스", "2루타", 2, 2, 4, 2);
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 레이예스 2루타, 2득점 · 롯데 4-2 한화");
+    }
+
+    @Test
+    void formatsHomeRunWithOneRun() {
+        var detail = detail("전준우", "홈런", null, 1, 4, 2);
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 1득점 · 롯데 4-2 한화");
+    }
+
+    @Test
+    void formatsHomeRunWithThreeRuns() {
+        var detail = detail("전준우", "홈런", null, 3, 6, 4);
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 3득점 · 롯데 6-4 한화");
+    }
+
+    @Test
+    void formatsErrorScoringPlay() {
+        var detail = detail(null, "상대 실책", null, 1, 5, 5);
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 상대 실책으로 1득점 · 롯데 5-5 한화");
+    }
+
+    @Test
+    void extractsWalkHitByPitchAndSacrificeFly() {
+        assertThat(extractResult("김민성 : 볼넷")).isEqualTo("밀어내기 볼넷");
+        assertThat(extractResult("박승욱 : 몸에 맞는 공")).isEqualTo("밀어내기 사구");
+        assertThat(extractResult("나승엽 : 좌익수 희생플라이 아웃")).isEqualTo("희생플라이");
+    }
+
+    @Test
+    void formatsMissingBatterFallbackWhenResultIsKnown() {
+        var detail = detail(null, "안타", 1, 1, 3, 2);
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 안타로 1득점 · 롯데 3-2 한화");
+    }
+
+    @Test
+    void missingPlayDetailFallsBackToEmptyFormatterResult() {
+        var detail = detail(null, null, null, 1, 3, 2);
+
+        assertThat(ScoringPlayNotificationFormatter.scoreChangeText(detail)).isEmpty();
+    }
+
+    @Test
+    void formatsLeadChangeTitleAndBody() {
+        var detail = detail("전준우", "홈런", null, 3, 6, 4);
+
+        var text = ScoringPlayNotificationFormatter.leadChangeText(detail, 3, 4).orElseThrow();
+
+        assertThat(text.title()).isEqualTo("롯데 역전");
+        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 3득점 · 롯데 6-4 한화");
+    }
+
+    @Test
+    void formatsTieLeadChangeTitle() {
+        var detail = detail(null, "상대 실책", null, 1, 5, 5);
+
+        var text = ScoringPlayNotificationFormatter.leadChangeText(detail, 4, 5).orElseThrow();
+
+        assertThat(text.title()).isEqualTo("동점");
+    }
+
+    @Test
+    void extractsBatterResultBeforeRunMarkerFromLiveTextEvents() {
+        var detail = ScoringPlayDetailExtractor.extract(
+                List.of(
+                        event(10, "HIT", "레이예스 : 좌익수 왼쪽 2루타"),
+                        event(11, "RUN_SCORED", "2루주자 고승민 : 홈인"),
+                        event(12, "RUN_SCORED", "1루주자 손성빈 : 홈인")
+                ),
+                2,
+                7,
+                "top",
+                "lotte",
+                "롯데",
+                4,
+                2,
+                "롯데",
+                "한화"
+        ).orElseThrow();
+
+        assertThat(detail.batterName()).isEqualTo("레이예스");
+        assertThat(detail.resultText()).isEqualTo("2루타");
+        assertThat(detail.runsScored()).isEqualTo(2);
+    }
+
+    private String extractResult(String eventText) {
+        return ScoringPlayDetailExtractor.parse(eventText).orElseThrow().resultText();
+    }
+
+    private GameEventRow event(int sequence, String type, String text) {
+        return new GameEventRow(sequence, 7, "top", type, text);
+    }
+
+    private ScoringPlayDetail detail(String batterName, String resultText, Integer hitBaseCount, Integer runsScored) {
+        return detail(batterName, resultText, hitBaseCount, runsScored, 3, 2);
+    }
+
+    private ScoringPlayDetail detail(
+            String batterName,
+            String resultText,
+            Integer hitBaseCount,
+            Integer runsScored,
+            Integer awayScoreAfter,
+            Integer homeScoreAfter
+    ) {
+        return new ScoringPlayDetail(
+                batterName,
+                resultText,
+                hitBaseCount,
+                runsScored,
+                runsScored,
+                7,
+                "top",
+                "lotte",
+                "롯데",
+                awayScoreAfter,
+                homeScoreAfter,
+                "롯데",
+                "한화"
+        );
+    }
+}
