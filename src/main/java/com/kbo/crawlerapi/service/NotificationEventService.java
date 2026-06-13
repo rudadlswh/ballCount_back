@@ -8,6 +8,8 @@ import com.kbo.crawlerapi.domain.NotificationEvent;
 import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
 import com.kbo.crawlerapi.repository.NotificationEventRepository;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -123,6 +125,15 @@ public class NotificationEventService {
         int skipped = 0;
         int failed = 0;
         String lastFailure = null;
+        Instant apnsSendRequestedAt = Instant.now(applicationClock);
+        log.info(
+                "[Notifications] APNs send requested at={} eventId={} eventKey={} eventType={} deliverableDeviceCount={}",
+                apnsSendRequestedAt,
+                event.getId(),
+                draft.eventKey(),
+                draft.eventType(),
+                deliverableDevices.size()
+        );
         for (NotificationDevice device : deliverableDevices) {
             ApnsPushService.ApnsSendResult result = apnsPushService.send(event, device);
             if (result.sent()) {
@@ -147,6 +158,19 @@ public class NotificationEventService {
                 ? "failed"
                 : "skipped";
         event.markDelivery(status, OffsetDateTime.now(applicationClock), lastFailure);
+        Instant apnsResultAt = Instant.now(applicationClock);
+        log.info(
+                "[Notifications] APNs result at={} eventId={} eventKey={} eventType={} status={} sent={} skipped={} failed={} durationMs={}",
+                apnsResultAt,
+                event.getId(),
+                draft.eventKey(),
+                draft.eventType(),
+                status,
+                sent,
+                skipped,
+                failed,
+                Math.max(0, Duration.between(apnsSendRequestedAt, apnsResultAt).toMillis())
+        );
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
     }
 

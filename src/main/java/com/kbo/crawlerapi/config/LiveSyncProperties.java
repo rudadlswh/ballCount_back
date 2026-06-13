@@ -22,6 +22,7 @@ public class LiveSyncProperties {
     private Duration pregameTtl = Duration.ofMinutes(3);
     private Duration liveTtl = Duration.ofSeconds(30);
     private Duration finalConfirmationTtl = Duration.ofMinutes(2);
+    private Duration detailExtractionTimeout = Duration.ofMillis(100);
 
     public boolean isEnabled() {
         return enabled;
@@ -69,5 +70,13 @@ public class LiveSyncProperties {
 
     public void setFinalConfirmationTtl(Duration finalConfirmationTtl) {
         this.finalConfirmationTtl = finalConfirmationTtl;
+    }
+
+    public Duration getDetailExtractionTimeout() {
+        return detailExtractionTimeout;
+    }
+
+    public void setDetailExtractionTimeout(Duration detailExtractionTimeout) {
+        this.detailExtractionTimeout = detailExtractionTimeout;
     }
 }

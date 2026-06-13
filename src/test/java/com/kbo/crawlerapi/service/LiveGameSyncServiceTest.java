@@ -19,6 +19,7 @@ import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -1032,6 +1033,112 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void onBaseUsesOfficialDoubleWhenPreviousBatterReachesSecond() {
+        NotificationEventDraft draft = onBaseDraftForLotteLg(
+                "전준우",
+                null,
+                "전준우",
+                null,
+                List.of(new GameEventRow(30, 4, "top", "HIT", "전준우 : 좌익수 왼쪽 2루타")),
+                new LiveSyncProperties()
+        );
+
+        assertThat(draft.eventKey()).contains("on-base:").doesNotContain("detail:");
+        assertThat(draft.title()).isEqualTo("롯데 출루");
+        assertThat(draft.body()).isEqualTo("4회초 전준우 2루타 · 롯데 2-5 LG");
+        assertThat(draft.payload())
+                .containsEntry("onBaseBatterName", "전준우")
+                .containsEntry("onBaseResultText", "2루타")
+                .containsEntry("onBaseReachedBase", 2)
+                .containsEntry("onBaseDetailSource", "officialText");
+    }
+
+    @Test
+    void onBaseFallsBackToSecondBaseReachedWhenOfficialTextMissing() {
+        NotificationEventDraft draft = onBaseDraftForLotteLg(
+                "전준우",
+                null,
+                "전준우",
+                null,
+                List.of(),
+                new LiveSyncProperties()
+        );
+
+        assertThat(draft.title()).isEqualTo("롯데 출루");
+        assertThat(draft.body()).isEqualTo("4회초 전준우 2루 도달 · 롯데 2-5 LG");
+        assertThat(draft.payload())
+                .containsEntry("onBaseResultText", null)
+                .containsEntry("onBaseReachedBase", 2)
+                .containsEntry("onBaseDetailSource", "snapshotDiff");
+    }
+
+    @Test
+    void onBaseUsesOfficialSingleWhenPreviousBatterReachesFirst() {
+        NotificationEventDraft draft = onBaseDraftForLotteLg(
+                "전준우",
+                "전준우",
+                null,
+                null,
+                List.of(new GameEventRow(30, 4, "top", "HIT", "전준우 : 중전 안타")),
+                new LiveSyncProperties()
+        );
+
+        assertThat(draft.body()).isEqualTo("4회초 전준우 1루타 · 롯데 2-5 LG");
+        assertThat(draft.payload()).containsEntry("onBaseResultText", "1루타");
+    }
+
+    @Test
+    void onBaseUsesOfficialWalkWhenPreviousBatterReachesFirst() {
+        NotificationEventDraft draft = onBaseDraftForLotteLg(
+                "전준우",
+                "전준우",
+                null,
+                null,
+                List.of(new GameEventRow(30, 4, "top", "WALK", "전준우 : 볼넷")),
+                new LiveSyncProperties()
+        );
+
+        assertThat(draft.body()).isEqualTo("4회초 전준우 볼넷 · 롯데 2-5 LG");
+        assertThat(draft.payload()).containsEntry("onBaseResultText", "볼넷");
+    }
+
+    @Test
+    void onBaseRejectsOfficialTextForDifferentBatter() {
+        NotificationEventDraft draft = onBaseDraftForLotteLg(
+                "전준우",
+                null,
+                "전준우",
+                null,
+                List.of(new GameEventRow(30, 4, "top", "HIT", "황성빈 : 좌익수 왼쪽 2루타")),
+                new LiveSyncProperties()
+        );
+
+        assertThat(draft.body()).isEqualTo("4회초 전준우 2루 도달 · 롯데 2-5 LG");
+        assertThat(draft.body()).doesNotContain("황성빈");
+        assertThat(draft.payload()).containsEntry("onBaseDetailSource", "snapshotDiff");
+    }
+
+    @Test
+    void onBaseDetailTimeoutSendsSnapshotDiffFallback() {
+        LiveSyncProperties properties = new LiveSyncProperties();
+        properties.setDetailExtractionTimeout(Duration.ofMillis(25));
+        NotificationEventDraft draft = onBaseDraftForLotteLg(
+                "전준우",
+                null,
+                "전준우",
+                null,
+                new SlowGameEventReadRepository(
+                        List.of(new GameEventRow(30, 4, "top", "HIT", "전준우 : 좌익수 왼쪽 2루타")),
+                        200
+                ),
+                properties
+        );
+
+        assertThat(draft.body()).isEqualTo("4회초 전준우 2루 도달 · 롯데 2-5 LG");
+        assertThat(draft.payload()).containsEntry("onBaseDetailSource", "snapshotDiff");
+    }
+
+    @Test
     void onBaseDraftUsesFallbackTextWhenPlayerDetailsAreUnavailable() {
         Game before = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
         Game after = fixtureGame(GameStatus.LIVE, 1, 0, "Top 3");
@@ -1353,6 +1460,16 @@ class LiveGameSyncServiceTest {
             StubNotificationEventService notificationEventService,
             GameEventReadRepository gameEventReadRepository
     ) {
+        return service(clock, importService, notificationEventService, gameEventReadRepository, new LiveSyncProperties());
+    }
+
+    private LiveGameSyncService service(
+            Clock clock,
+            StubGameDetailImportService importService,
+            StubNotificationEventService notificationEventService,
+            GameEventReadRepository gameEventReadRepository,
+            LiveSyncProperties properties
+    ) {
         return new LiveGameSyncService(
                 gameRepository,
                 gameSnapshotRepository,
@@ -1361,7 +1478,7 @@ class LiveGameSyncServiceTest {
                 new StubScheduleImportService(),
                 notificationEventService,
                 new StubTeamRankService(false),
-                new LiveSyncProperties(),
+                properties,
                 clock
         );
     }
@@ -1439,6 +1556,104 @@ class LiveGameSyncServiceTest {
 
         return notificationEventService.drafts.stream()
                 .filter(candidate -> NotificationEventService.EVENT_SCORE_CHANGED.equals(candidate.eventType()))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private NotificationEventDraft onBaseDraftForLotteLg(
+            String previousBatter,
+            String firstBaseRunnerAfter,
+            String secondBaseRunnerAfter,
+            String thirdBaseRunnerAfter,
+            List<GameEventRow> events,
+            LiveSyncProperties properties
+    ) {
+        return onBaseDraftForLotteLg(
+                previousBatter,
+                firstBaseRunnerAfter,
+                secondBaseRunnerAfter,
+                thirdBaseRunnerAfter,
+                new StubGameEventReadRepository(events),
+                properties
+        );
+    }
+
+    private NotificationEventDraft onBaseDraftForLotteLg(
+            String previousBatter,
+            String firstBaseRunnerAfter,
+            String secondBaseRunnerAfter,
+            String thirdBaseRunnerAfter,
+            GameEventReadRepository gameEventReadRepository,
+            LiveSyncProperties properties
+    ) {
+        Game before = fixtureGameWithTeams(
+                GameStatus.LIVE,
+                2,
+                5,
+                "Top 4",
+                "lotte",
+                "롯데 자이언츠",
+                "롯데",
+                "lg",
+                "LG 트윈스",
+                "LG"
+        );
+        Game after = fixtureGameWithTeams(
+                GameStatus.LIVE,
+                2,
+                5,
+                "Top 4",
+                "lotte",
+                "롯데 자이언츠",
+                "롯데",
+                "lg",
+                "LG 트윈스",
+                "LG"
+        );
+        GameSnapshot beforeSnapshot = snapshotWithRunners(
+                before,
+                previousBatter,
+                "홈투수",
+                0,
+                null,
+                null,
+                null,
+                4,
+                "top",
+                "Top 4"
+        );
+        GameSnapshot afterSnapshot = snapshotWithRunners(
+                after,
+                "다음타자",
+                "홈투수",
+                0,
+                firstBaseRunnerAfter,
+                secondBaseRunnerAfter,
+                thirdBaseRunnerAfter,
+                4,
+                "top",
+                "Top 4"
+        );
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                new StubGameDetailImportService(),
+                notificationEventService,
+                gameEventReadRepository,
+                properties
+        );
+
+        service.sync(before.getGameDate(), false);
+
+        return notificationEventService.drafts.stream()
+                .filter(candidate -> NotificationEventService.EVENT_ON_BASE.equals(candidate.eventType()))
                 .findFirst()
                 .orElseThrow();
     }
@@ -1671,6 +1886,60 @@ class LiveGameSyncServiceTest {
         );
     }
 
+    private GameSnapshot snapshotWithRunners(
+            Game game,
+            String batter,
+            String pitcher,
+            Integer outs,
+            String firstBaseRunnerName,
+            String secondBaseRunnerName,
+            String thirdBaseRunnerName,
+            Integer inning,
+            String inningHalf,
+            String inningLabel
+    ) {
+        boolean runnerOnFirst = firstBaseRunnerName != null;
+        boolean runnerOnSecond = secondBaseRunnerName != null;
+        boolean runnerOnThird = thirdBaseRunnerName != null;
+        return new GameSnapshot(
+                UUID.randomUUID(),
+                game,
+                inning,
+                inningHalf,
+                inningLabel,
+                0,
+                0,
+                outs,
+                runnerOnFirst,
+                runnerOnSecond,
+                runnerOnThird,
+                firstBaseRunnerName,
+                secondBaseRunnerName,
+                thirdBaseRunnerName,
+                runnerOnFirst ? "runner-1" : null,
+                runnerOnSecond ? "runner-2" : null,
+                runnerOnThird ? "runner-3" : null,
+                pitcher,
+                batter,
+                game.getHomeScore(),
+                game.getAwayScore(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.now(ACTIVE_KST_CLOCK),
+                OffsetDateTime.now(ACTIVE_KST_CLOCK)
+        );
+    }
+
     private static final class StubGameDetailImportService extends GameDetailImportService {
 
         private final List<String> importedGameIds = new ArrayList<>();
@@ -1735,6 +2004,27 @@ class LiveGameSyncServiceTest {
 
         @Override
         public List<GameEventRow> findRecentByGameId(UUID gameId, int limit) {
+            return events;
+        }
+    }
+
+    private static final class SlowGameEventReadRepository implements GameEventReadRepository {
+
+        private final List<GameEventRow> events;
+        private final long sleepMillis;
+
+        private SlowGameEventReadRepository(List<GameEventRow> events, long sleepMillis) {
+            this.events = events;
+            this.sleepMillis = sleepMillis;
+        }
+
+        @Override
+        public List<GameEventRow> findRecentByGameId(UUID gameId, int limit) {
+            try {
+                Thread.sleep(sleepMillis);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
             return events;
         }
     }

@@ -59,7 +59,7 @@ public class LiveGameSyncScheduler {
         this.applicationClock = applicationClock;
     }
 
-    @Scheduled(fixedDelayString = "${app.live-sync.scheduler-interval:PT10S}")
+    @Scheduled(fixedDelayString = "${app.live-sync.scheduler-interval:PT5S}")
     public void runTick() {
         if (!properties.isEnabled()) {
             log.info("[LiveGameSync] skipped disabled");
@@ -84,7 +84,7 @@ public class LiveGameSyncScheduler {
             }
 
             if (todaysGames.stream().anyMatch(this::isLiveGame)) {
-                log.info("[LiveGameSync] running live-game 10-second sync");
+                log.info("[LiveGameSync] running live-game sync interval={}", properties.getSchedulerInterval());
                 liveGameSyncService.syncToday();
                 return;
             }

@@ -10,6 +10,7 @@ import com.kbo.crawlerapi.repository.GameEventReadRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
+import com.kbo.crawlerapi.service.OnBasePlayDetailExtractor.OnBasePlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayDetailExtractor.ScoringPlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayNotificationFormatter.NotificationText;
 import java.nio.charset.StandardCharsets;
@@ -28,7 +29,10 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -127,7 +131,11 @@ public class LiveGameSyncService {
             beforeScheduleStates.put(game.getPublicGameId(), GameState.from(game, latestSnapshot(game)));
         }
 
-        refreshScheduleBeforeDetailImport(targetDate);
+        if (gamesBeforeScheduleRefresh.stream().anyMatch(game -> isLiveLike(game.getStatus()))) {
+            log.debug("[LiveGameSync] skipped schedule refresh before detail import because live games are already present date={}", targetDate);
+        } else {
+            refreshScheduleBeforeDetailImport(targetDate);
+        }
 
         List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
         List<Game> candidates = new ArrayList<>();
@@ -227,6 +235,13 @@ public class LiveGameSyncService {
                     updatedGames.add(after.getPublicGameId());
                 }
                 for (NotificationEventDraft draft : drafts) {
+                    log.info(
+                            "[Notifications] notification built at={} eventType={} eventKey={} publicGameId={}",
+                            Instant.now(applicationClock),
+                            draft.eventType(),
+                            draft.eventKey(),
+                            after.getPublicGameId()
+                    );
                     EventDeliveryResult delivery = notificationEventService.createAndDeliver(after, draft);
                     if (delivery.eventCreated()) {
                         eventCreatedCount++;
@@ -644,12 +659,17 @@ public class LiveGameSyncService {
     }
 
     private NotificationEventDraft onBaseDraft(Game game, GameState before, GameState after) {
+        Instant detectedAt = Instant.now(applicationClock);
         String inning = game.getInningState() == null ? "경기" : game.getInningState();
 
         String batterName = before.currentBatterName();
         String pitcherName = before.currentPitcherName();
         String result = liveEventResult(game, "출루");
         String eventTeamId = battingTeamId(game);
+        OnBasePlayContext onBaseContext = onBasePlayContext(game, before, after, eventTeamId);
+        OnBaseDetailResolution onBaseDetailResolution = onBaseDetail(game, onBaseContext);
+        NotificationText onBaseText = OnBaseNotificationFormatter.text(onBaseDetailResolution.detail()).orElse(null);
+        Instant builtAt = Instant.now(applicationClock);
 
         NotificationEventDraft draft = liveDraft(
                 game,
@@ -662,14 +682,15 @@ public class LiveGameSyncService {
                         safeKey(pitcherName),
                         safeKey(result)
                 ),
-                "출루",
-                onBaseBody(game, batterName, result),
+                onBaseText == null ? "출루" : onBaseText.title(),
+                onBaseText == null ? onBaseBody(game, batterName, result) : onBaseText.body(),
                 batterName,
                 pitcherName,
                 result,
                 null,
                 eventTeamId
         );
+        addOnBaseDetailPayload(draft, onBaseDetailResolution);
         log.debug(
                 "[LiveGameSync] ON_BASE diagnostics gameId={} eventKey={} previous inning={}/{} batter={} pitcher={} bases={} current inning={}/{} batter={} pitcher={} bases={} eventBatter={} eventPitcher={} eventResult={} eventTeamId={}",
                 game.getPublicGameId(),
@@ -688,6 +709,16 @@ public class LiveGameSyncService {
                 pitcherName,
                 result,
                 eventTeamId
+        );
+        log.info(
+                "[Notifications] event detected at={} notification built at={} eventType={} eventKey={} publicGameId={} detailSource={} detailExtractionDurationMs={}",
+                detectedAt,
+                builtAt,
+                draft.eventType(),
+                draft.eventKey(),
+                game.getPublicGameId(),
+                onBaseDetailResolution.detailSource(),
+                onBaseDetailResolution.durationMs()
         );
         return draft;
     }
@@ -794,6 +825,109 @@ public class LiveGameSyncService {
         );
     }
 
+    private OnBasePlayContext onBasePlayContext(Game game, GameState before, GameState after, String eventTeamId) {
+        if (game == null || before == null || after == null || eventTeamId == null || !hasText(before.currentBatterName())) {
+            return null;
+        }
+        Integer reachedBase = reachedBaseByRunnerName(before.currentBatterName(), after);
+        if (reachedBase == null) {
+            return null;
+        }
+        return new OnBasePlayContext(
+                before.currentBatterName(),
+                reachedBase,
+                before.inning() == null ? after.inning() : before.inning(),
+                before.inningHalf() == null ? after.inningHalf() : before.inningHalf(),
+                eventTeamId,
+                teamShortName(game, eventTeamId),
+                game.getAwayTeam().getTeamCode(),
+                game.getHomeTeam().getTeamCode(),
+                after.awayScore(),
+                after.homeScore(),
+                teamShortName(game, game.getAwayTeam().getTeamCode()),
+                teamShortName(game, game.getHomeTeam().getTeamCode())
+        );
+    }
+
+    private OnBaseDetailResolution onBaseDetail(Game game, OnBasePlayContext context) {
+        Instant startedAt = Instant.now(applicationClock);
+        OnBasePlayDetail fallback = snapshotOnBaseDetail(context);
+        if (gameEventReadRepository == null || game == null || game.getId() == null || context == null) {
+            return new OnBaseDetailResolution(fallback, "snapshotDiff", elapsedMillis(startedAt));
+        }
+        try {
+            OnBasePlayDetail officialDetail = CompletableFuture
+                    .supplyAsync(() -> OnBasePlayDetailExtractor.extract(
+                            gameEventReadRepository.findRecentByGameId(game.getId(), 20),
+                            context
+                    ).orElse(null))
+                    .get(detailExtractionTimeoutMillis(), TimeUnit.MILLISECONDS);
+            long durationMs = elapsedMillis(startedAt);
+            if (officialDetail != null) {
+                return new OnBaseDetailResolution(officialDetail, "officialText", durationMs);
+            }
+            return new OnBaseDetailResolution(fallback, "snapshotDiff", durationMs);
+        } catch (TimeoutException exception) {
+            return new OnBaseDetailResolution(fallback, "snapshotDiff", elapsedMillis(startedAt));
+        } catch (Exception exception) {
+            log.debug(
+                    "[LiveGameSync] on-base play detail unavailable game={} reason={}",
+                    game.getPublicGameId(),
+                    exception.getMessage()
+            );
+            return new OnBaseDetailResolution(fallback, "snapshotDiff", elapsedMillis(startedAt));
+        }
+    }
+
+    private OnBasePlayDetail snapshotOnBaseDetail(OnBasePlayContext context) {
+        if (context == null) {
+            return null;
+        }
+        return new OnBasePlayDetail(
+                context.previousBatterName(),
+                null,
+                context.reachedBase(),
+                context.inning(),
+                context.inningHalf(),
+                context.battingTeamId(),
+                context.battingTeamName(),
+                context.awayScore(),
+                context.homeScore(),
+                context.awayTeamName(),
+                context.homeTeamName(),
+                "snapshotDiff"
+        );
+    }
+
+    private Integer reachedBaseByRunnerName(String runnerName, GameState after) {
+        String cleaned = cleanText(runnerName);
+        if (cleaned == null || after == null) {
+            return null;
+        }
+        if (cleaned.equals(cleanText(after.thirdBaseRunnerName()))) {
+            return 3;
+        }
+        if (cleaned.equals(cleanText(after.secondBaseRunnerName()))) {
+            return 2;
+        }
+        if (cleaned.equals(cleanText(after.firstBaseRunnerName()))) {
+            return 1;
+        }
+        return null;
+    }
+
+    private long detailExtractionTimeoutMillis() {
+        Duration timeout = properties == null ? null : properties.getDetailExtractionTimeout();
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            return 100;
+        }
+        return Math.max(1, timeout.toMillis());
+    }
+
+    private long elapsedMillis(Instant startedAt) {
+        return Math.max(0, Duration.between(startedAt, Instant.now(applicationClock)).toMillis());
+    }
+
     private void addScoringPlayPayload(NotificationEventDraft draft, ScoringPlayDetail detail) {
         if (detail == null) {
             return;
@@ -809,6 +943,22 @@ public class LiveGameSyncService {
         draft.payload().put("scoringBattingTeamName", detail.battingTeamName());
         draft.payload().put("scoringAwayScoreAfter", detail.awayScoreAfter());
         draft.payload().put("scoringHomeScoreAfter", detail.homeScoreAfter());
+    }
+
+    private void addOnBaseDetailPayload(NotificationEventDraft draft, OnBaseDetailResolution resolution) {
+        if (resolution == null || resolution.detail() == null) {
+            return;
+        }
+        OnBasePlayDetail detail = resolution.detail();
+        draft.payload().put("onBaseBatterName", detail.batterName());
+        draft.payload().put("onBaseResultText", detail.resultText());
+        draft.payload().put("onBaseReachedBase", detail.reachedBase());
+        draft.payload().put("onBaseInning", detail.inning());
+        draft.payload().put("onBaseInningHalf", detail.inningHalf());
+        draft.payload().put("onBaseBattingTeamId", detail.battingTeamId());
+        draft.payload().put("onBaseBattingTeamName", detail.battingTeamName());
+        draft.payload().put("onBaseDetailSource", resolution.detailSource());
+        draft.payload().put("onBaseDetailExtractionDurationMs", resolution.durationMs());
     }
 
     private NotificationEventDraft draft(Game game, String eventType, String eventKey, String title, String body) {
@@ -1249,6 +1399,10 @@ public class LiveGameSyncService {
         return value != null && !value.isBlank();
     }
 
+    private String cleanText(String value) {
+        return value == null || value.isBlank() ? null : value.trim().replaceAll("\\s+", " ");
+    }
+
     private String normalizedInterruptionReason(Game game) {
         String reason = game.getStatusReason();
         if (reason == null || reason.isBlank()) {
@@ -1302,6 +1456,9 @@ public class LiveGameSyncService {
             boolean runnerOnFirst,
             boolean runnerOnSecond,
             boolean runnerOnThird,
+            String firstBaseRunnerName,
+            String secondBaseRunnerName,
+            String thirdBaseRunnerName,
             String currentPitcherName,
             String currentBatterName
     ) {
@@ -1324,6 +1481,9 @@ public class LiveGameSyncService {
                     snapshot != null && snapshot.isRunnerOnFirst(),
                     snapshot != null && snapshot.isRunnerOnSecond(),
                     snapshot != null && snapshot.isRunnerOnThird(),
+                    clean(snapshot == null ? null : snapshot.getFirstBaseRunnerName()),
+                    clean(snapshot == null ? null : snapshot.getSecondBaseRunnerName()),
+                    clean(snapshot == null ? null : snapshot.getThirdBaseRunnerName()),
                     clean(snapshot == null ? null : snapshot.getCurrentPitcherName()),
                     clean(snapshot == null ? null : snapshot.getCurrentBatterName())
             );
@@ -1339,6 +1499,13 @@ public class LiveGameSyncService {
         boolean cancelledOrPostponed() {
             return isCancelled || isPostponed || status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
         }
+    }
+
+    private record OnBaseDetailResolution(
+            OnBasePlayDetail detail,
+            String detailSource,
+            long durationMs
+    ) {
     }
 
     public record LiveSyncSummary(
