@@ -12,6 +12,8 @@ import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.repository.GameEventReadRepository;
+import com.kbo.crawlerapi.repository.GameEventReadRepository.GameEventRow;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
@@ -325,6 +327,49 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts.get(0).eventKey())
                 .isEqualTo("game:%s:score:2-0".formatted(after.getId()))
                 .doesNotContain("inning:", "batter:", "pitcher:", "result:");
+    }
+
+    @Test
+    void liveScoreChangeUsesParsedScoringPlayDetailWithoutChangingDedupeKey() {
+        Game before = fixtureGame(GameStatus.LIVE, 2, 2);
+        Game after = fixtureGame(GameStatus.LIVE, 4, 2);
+        GameSnapshot beforeSnapshot = snapshot(before, "레이예스", "홈투수", 0, false, true, false, 0, 0, 7, "top", "Top 7");
+        GameSnapshot afterSnapshot = snapshot(after, "후속타자", "홈투수", 0, false, false, false, 0, 0, 7, "top", "Top 7");
+        StubGameEventReadRepository gameEventReadRepository = new StubGameEventReadRepository(List.of(
+                new GameEventRow(20, 7, "top", "HIT", "레이예스 : 좌익수 왼쪽 2루타"),
+                new GameEventRow(21, 7, "top", "RUN_SCORED", "2루주자 최항 : 홈인"),
+                new GameEventRow(22, 7, "top", "RUN_SCORED", "1루주자 손성빈 : 홈인")
+        ));
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.of(beforeSnapshot));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(afterSnapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                new StubGameDetailImportService(),
+                notificationEventService,
+                gameEventReadRepository
+        );
+
+        service.sync(before.getGameDate(), false);
+
+        NotificationEventDraft draft = notificationEventService.drafts.stream()
+                .filter(candidate -> NotificationEventService.EVENT_SCORE_CHANGED.equals(candidate.eventType()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_SCORE_CHANGED);
+        assertThat(draft.eventKey()).isEqualTo("game:%s:score:4-2".formatted(after.getId()));
+        assertThat(draft.title()).isEqualTo("KIA 득점");
+        assertThat(draft.body()).isEqualTo("7회초 레이예스 2루타, 2득점 · KIA 4-2 LG");
+        assertThat(draft.payload())
+                .containsEntry("scoringBatterName", "레이예스")
+                .containsEntry("scoringResultText", "2루타")
+                .containsEntry("scoringRunsScored", 2)
+                .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "kia");
     }
 
     @Test
@@ -1217,6 +1262,25 @@ class LiveGameSyncServiceTest {
     private LiveGameSyncService service(
             Clock clock,
             StubGameDetailImportService importService,
+            StubNotificationEventService notificationEventService,
+            GameEventReadRepository gameEventReadRepository
+    ) {
+        return new LiveGameSyncService(
+                gameRepository,
+                gameSnapshotRepository,
+                gameEventReadRepository,
+                importService,
+                new StubScheduleImportService(),
+                notificationEventService,
+                new StubTeamRankService(false),
+                new LiveSyncProperties(),
+                clock
+        );
+    }
+
+    private LiveGameSyncService service(
+            Clock clock,
+            StubGameDetailImportService importService,
             StubScheduleImportService scheduleImportService,
             StubNotificationEventService notificationEventService,
             StubTeamRankService teamRankService
@@ -1476,6 +1540,20 @@ class LiveGameSyncServiceTest {
         public EventDeliveryResult createAndDeliver(Game game, NotificationEventDraft draft) {
             drafts.add(draft);
             return new EventDeliveryResult(UUID.randomUUID(), draft.eventKey(), true, 1, 0, 0);
+        }
+    }
+
+    private static final class StubGameEventReadRepository implements GameEventReadRepository {
+
+        private final List<GameEventRow> events;
+
+        private StubGameEventReadRepository(List<GameEventRow> events) {
+            this.events = events;
+        }
+
+        @Override
+        public List<GameEventRow> findRecentByGameId(UUID gameId, int limit) {
+            return events;
         }
     }
 
