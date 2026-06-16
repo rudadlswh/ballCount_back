@@ -15,6 +15,7 @@ public final class ScoringPlayDetailExtractor {
 
     private static final Pattern RUNS_SCORED_PATTERN = Pattern.compile("(\\d+)\\s*득점");
     private static final Pattern SCORE_PATTERN = Pattern.compile("(?<!\\d)(\\d+)\\s*[-:]\\s*(\\d+)(?!\\d)");
+    private static final int RUN_SEQUENCE_WINDOW = 8;
 
     public static Optional<ScoringPlayDetail> extract(
             List<GameEventRow> recentEvents,
@@ -33,35 +34,14 @@ public final class ScoringPlayDetailExtractor {
             return Optional.empty();
         }
 
-        Integer runMarkerIndex = latestRunMarkerIndex(events);
-        ParsedPlay parsed = null;
-        if (runMarkerIndex != null) {
-            parsed = parse(events.get(runMarkerIndex).eventText()).orElse(null);
-            if (parsed == null || parsed.resultText() == null) {
-                int lowerBound = Math.max(0, runMarkerIndex - 8);
-                for (int index = runMarkerIndex - 1; index >= lowerBound; index--) {
-                    parsed = parse(events.get(index).eventText()).orElse(null);
-                    if (parsed != null && parsed.resultText() != null) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (parsed == null || parsed.resultText() == null) {
-            for (int index = events.size() - 1; index >= 0; index--) {
-                parsed = parse(events.get(index).eventText()).orElse(null);
-                if (parsed != null && parsed.resultText() != null && parsed.directScoringCandidate()) {
-                    break;
-                }
-            }
-        }
-
-        if (parsed == null || parsed.resultText() == null || !isReliable(parsed, context)) {
+        int runScoredEventCount = runScoredEventCount(events);
+        ScoringCause cause = selectScoringCause(events, context).orElse(null);
+        if (cause == null || !isReliable(cause.parsed(), context)) {
             return Optional.empty();
         }
 
-        GameEventRow source = runMarkerIndex == null ? events.get(events.size() - 1) : events.get(runMarkerIndex);
+        GameEventRow source = cause.event();
+        ParsedPlay parsed = cause.parsed();
         return Optional.of(new ScoringPlayDetail(
                 parsed.batterName(),
                 parsed.resultText(),
@@ -75,7 +55,10 @@ public final class ScoringPlayDetailExtractor {
                 context.awayScoreAfter(),
                 context.homeScoreAfter(),
                 context.awayTeamName(),
-                context.homeTeamName()
+                context.homeTeamName(),
+                source.eventType(),
+                trimOnly(source.eventText()),
+                runScoredEventCount
         ));
     }
 
@@ -152,15 +135,6 @@ public final class ScoringPlayDetailExtractor {
         if (!context.battingTeamMatchesInningHalf()) {
             return false;
         }
-        String previousBatter = clean(context.previousBatterName());
-        String parsedBatter = clean(parsed.batterName());
-        if (previousBatter != null) {
-            if (parsedBatter == null || !previousBatter.equals(parsedBatter)) {
-                return false;
-            }
-        } else if (parsedBatter != null) {
-            return false;
-        }
         if (parsed.explicitRunsScored() != null && parsed.explicitRunsScored() != context.scoreDelta()) {
             return false;
         }
@@ -190,14 +164,105 @@ public final class ScoringPlayDetailExtractor {
         return runs <= occupiedBases;
     }
 
-    private static Integer latestRunMarkerIndex(List<GameEventRow> events) {
-        for (int index = events.size() - 1; index >= 0; index--) {
-            String text = events.get(index).eventText();
-            if (text != null && (text.contains("홈인") || text.contains("득점"))) {
-                return index;
+    private static Optional<ScoringCause> selectScoringCause(List<GameEventRow> events, ScoringPlayContext context) {
+        SequenceRange runRange = runScoredSequenceRange(events);
+        return events.stream()
+                .filter(event -> !isRunScoredEvent(event))
+                .filter(event -> inRunSequenceWindow(event, runRange))
+                .map(event -> parse(event.eventText())
+                        .map(parsed -> new ScoringCause(event, parsed, causePriority(event, parsed), distanceFromRunEvents(event, runRange)))
+                        .orElse(null))
+                .filter(cause -> cause != null && cause.priority() != null && cause.parsed().directScoringCandidate())
+                .filter(cause -> isReliable(cause.parsed(), context))
+                .min(Comparator
+                        .comparingInt((ScoringCause cause) -> cause.priority())
+                        .thenComparingInt(ScoringCause::runDistance)
+                        .thenComparing((ScoringCause cause) -> cause.event().sequenceNumber(), Comparator.reverseOrder()));
+    }
+
+    public static int runScoredEventCount(List<GameEventRow> events) {
+        if (events == null) {
+            return 0;
+        }
+        return (int) events.stream().filter(ScoringPlayDetailExtractor::isRunScoredEvent).count();
+    }
+
+    private static SequenceRange runScoredSequenceRange(List<GameEventRow> events) {
+        Integer min = null;
+        Integer max = null;
+        for (GameEventRow event : events) {
+            if (!isRunScoredEvent(event)) {
+                continue;
             }
+            int sequence = event.sequenceNumber();
+            min = min == null ? sequence : Math.min(min, sequence);
+            max = max == null ? sequence : Math.max(max, sequence);
+        }
+        return min == null ? null : new SequenceRange(min, max);
+    }
+
+    private static boolean inRunSequenceWindow(GameEventRow event, SequenceRange runRange) {
+        if (runRange == null) {
+            return true;
+        }
+        int sequence = event.sequenceNumber();
+        return sequence >= runRange.minSequence() - RUN_SEQUENCE_WINDOW
+                && sequence <= runRange.maxSequence() + RUN_SEQUENCE_WINDOW;
+    }
+
+    private static int distanceFromRunEvents(GameEventRow event, SequenceRange runRange) {
+        if (runRange == null) {
+            return 0;
+        }
+        int sequence = event.sequenceNumber();
+        if (sequence < runRange.minSequence()) {
+            return runRange.minSequence() - sequence;
+        }
+        if (sequence > runRange.maxSequence()) {
+            return sequence - runRange.maxSequence();
+        }
+        return 0;
+    }
+
+    private static Integer causePriority(GameEventRow event, ParsedPlay parsed) {
+        String eventType = normalizeEventType(event.eventType());
+        String result = parsed.resultText();
+        if ("HOME_RUN".equals(eventType) || "홈런".equals(result)) {
+            return 0;
+        }
+        if ("HIT".equals(eventType) || "안타".equals(result) || "2루타".equals(result) || "3루타".equals(result)) {
+            return 1;
+        }
+        if ("ERROR".equals(eventType) || "상대 실책".equals(result)) {
+            return 2;
+        }
+        if ("WALK".equals(eventType) || "밀어내기 볼넷".equals(result)) {
+            return 3;
+        }
+        if ("HIT_BY_PITCH".equals(eventType) || "밀어내기 사구".equals(result)) {
+            return 4;
+        }
+        if ("SACRIFICE".equals(eventType) || "희생플라이".equals(result)) {
+            return 5;
+        }
+        if ("OUT".equals(eventType) || "DOUBLE_PLAY".equals(eventType) || "땅볼".equals(result)) {
+            return 6;
         }
         return null;
+    }
+
+    private static boolean isRunScoredEvent(GameEventRow event) {
+        if (event == null) {
+            return false;
+        }
+        String eventType = normalizeEventType(event.eventType());
+        String text = event.eventText();
+        return "RUN_SCORED".equals(eventType)
+                || (text != null && text.contains("홈인"));
+    }
+
+    private static String normalizeEventType(String eventType) {
+        return eventType == null ? "" : eventType.trim().toUpperCase(Locale.ROOT);
     }
 
     private static boolean sameInningHalf(GameEventRow event, Integer inning, String inningHalf) {
@@ -275,6 +340,10 @@ public final class ScoringPlayDetailExtractor {
         return value == null || value.isBlank() ? null : value.trim().replaceAll("\\s+", " ");
     }
 
+    private static String trimOnly(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
@@ -330,6 +399,20 @@ public final class ScoringPlayDetailExtractor {
             Integer explicitRunsScored,
             Integer explicitAwayScoreAfter,
             Integer explicitHomeScoreAfter
+    ) {
+    }
+
+    private record ScoringCause(
+            GameEventRow event,
+            ParsedPlay parsed,
+            Integer priority,
+            int runDistance
+    ) {
+    }
+
+    private record SequenceRange(
+            int minSequence,
+            int maxSequence
     ) {
     }
 

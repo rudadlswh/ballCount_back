@@ -8,8 +8,6 @@ import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameEventReadRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
-import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
-import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.BatterRecordReadRow;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
 import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraft;
 import com.kbo.crawlerapi.service.OnBasePlayDetailExtractor.OnBasePlayContext;
@@ -62,7 +60,6 @@ public class LiveGameSyncService {
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
     private final GameEventReadRepository gameEventReadRepository;
-    private final GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository;
     private final GameDetailImportService gameDetailImportService;
     private final KboScheduleImportService kboScheduleImportService;
     private final NotificationEventService notificationEventService;
@@ -85,7 +82,6 @@ public class LiveGameSyncService {
                 gameRepository,
                 gameSnapshotRepository,
                 null,
-                null,
                 gameDetailImportService,
                 kboScheduleImportService,
                 notificationEventService,
@@ -100,7 +96,6 @@ public class LiveGameSyncService {
             GameRepository gameRepository,
             GameSnapshotRepository gameSnapshotRepository,
             GameEventReadRepository gameEventReadRepository,
-            GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository,
             GameDetailImportService gameDetailImportService,
             KboScheduleImportService kboScheduleImportService,
             NotificationEventService notificationEventService,
@@ -111,38 +106,12 @@ public class LiveGameSyncService {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
         this.gameEventReadRepository = gameEventReadRepository;
-        this.gameBoxscoreRecordReadRepository = gameBoxscoreRecordReadRepository;
         this.gameDetailImportService = gameDetailImportService;
         this.kboScheduleImportService = kboScheduleImportService;
         this.notificationEventService = notificationEventService;
         this.teamRankService = teamRankService;
         this.properties = properties;
         this.applicationClock = applicationClock;
-    }
-
-    public LiveGameSyncService(
-            GameRepository gameRepository,
-            GameSnapshotRepository gameSnapshotRepository,
-            GameEventReadRepository gameEventReadRepository,
-            GameDetailImportService gameDetailImportService,
-            KboScheduleImportService kboScheduleImportService,
-            NotificationEventService notificationEventService,
-            TeamRankService teamRankService,
-            LiveSyncProperties properties,
-            Clock applicationClock
-    ) {
-        this(
-                gameRepository,
-                gameSnapshotRepository,
-                gameEventReadRepository,
-                null,
-                gameDetailImportService,
-                kboScheduleImportService,
-                notificationEventService,
-                teamRankService,
-                properties,
-                applicationClock
-        );
     }
 
     public LocalDate todayKst() {
@@ -233,7 +202,6 @@ public class LiveGameSyncService {
             if (before == null) {
                 before = GameState.from(candidate, latestSnapshot(candidate));
             }
-            List<BatterRecordReadRow> batterRecordsBefore = batterRecords(candidate);
             try {
                 try {
                     gameDetailImportService.importGameDetail(candidate.getPublicGameId());
@@ -261,13 +229,10 @@ public class LiveGameSyncService {
                     teamRankService.refreshSeasonRankingsSafely(after.getGameDate().getYear());
                 }
 
-                List<BatterRecordReadRow> batterRecordsAfter = batterRecords(after);
                 List<NotificationEventDraft> drafts = detectChanges(
                         before,
                         GameState.from(after, latestSnapshot(after)),
-                        after,
-                        batterRecordsBefore,
-                        batterRecordsAfter
+                        after
                 );
                 if (!drafts.isEmpty()) {
                     updatedCount++;
@@ -566,9 +531,7 @@ public class LiveGameSyncService {
     private List<NotificationEventDraft> detectChanges(
             GameState before,
             GameState after,
-            Game game,
-            List<BatterRecordReadRow> batterRecordsBefore,
-            List<BatterRecordReadRow> batterRecordsAfter
+            Game game
     ) {
         List<NotificationEventDraft> drafts = new ArrayList<>();
         if (before.status() != GameStatus.FINAL && !isLiveLike(before.status()) && isLiveLike(after.status())) {
@@ -591,13 +554,13 @@ public class LiveGameSyncService {
         }
         String leadChangeEventTeamId = leadChangeEventTeamId(game, before, after);
         if (leadChangeEventTeamId != null) {
-            drafts.add(leadChangeDraft(game, before, after, leadChangeEventTeamId, batterRecordsBefore, batterRecordsAfter));
+            drafts.add(leadChangeDraft(game, before, after, leadChangeEventTeamId));
         }
         if (after.status() == GameStatus.LIVE
                 && after.awayScore() != null
                 && after.homeScore() != null
                 && scoreIncreased(before, after)) {
-            drafts.add(scoreDraft(game, before, after, batterRecordsBefore, batterRecordsAfter));
+            drafts.add(scoreDraft(game, before, after));
         }
         if (after.status() == GameStatus.LIVE
                 && baseCount(after) > baseCount(before)
@@ -667,13 +630,7 @@ public class LiveGameSyncService {
         return draft(game, NotificationEventService.EVENT_GAME_START, "game:%s:game-start".formatted(game.getId()), title, "경기가 시작되었습니다.");
     }
 
-    private NotificationEventDraft scoreDraft(
-            Game game,
-            GameState before,
-            GameState after,
-            List<BatterRecordReadRow> batterRecordsBefore,
-            List<BatterRecordReadRow> batterRecordsAfter
-    ) {
+    private NotificationEventDraft scoreDraft(Game game, GameState before, GameState after) {
         int runCount = Math.max(
                 1,
                 Math.max(0, nullSafe(after.awayScore()) - nullSafe(before.awayScore()))
@@ -685,9 +642,12 @@ public class LiveGameSyncService {
         String result = liveEventResult(game, "득점");
         String eventTeamId = scoringTeamId(game, before, after);
         ScoringPlayContext scoringContext = scoringPlayContext(game, before, after, eventTeamId);
-        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, scoringContext, batterRecordsBefore, batterRecordsAfter);
+        ScoringPlayResolution scoringPlayResolution = scoringPlayResolution(game, scoringContext);
+        ScoringPlayDetail scoringPlayDetail = scoringPlayResolution.detail();
         NotificationText detailedText = ScoringPlayNotificationFormatter.scoreChangeText(scoringPlayDetail).orElse(null);
         NotificationText fallbackText = scoringFallbackText(scoringContext);
+        String formattedMessage = detailedText == null ? fallbackText.body() : detailedText.body();
+        boolean fallbackUsed = detailedText == null;
 
         NotificationEventDraft draft = liveDraft(
                 game,
@@ -698,7 +658,7 @@ public class LiveGameSyncService {
                         game.getHomeScore()
                 ),
                 detailedText == null ? fallbackText.title() : detailedText.title(),
-                detailedText == null ? fallbackText.body() : detailedText.body(),
+                formattedMessage,
                 batterName,
                 pitcherName,
                 result,
@@ -706,6 +666,18 @@ public class LiveGameSyncService {
                 eventTeamId
         );
         addScoringPlayPayload(draft, scoringPlayDetail);
+        log.info(
+                "[ScoringFormatter] gameId={} inning={} inningHalf={} scoreDelta={} selectedEventType={} selectedEventText={} runScoredEventCount={} formattedMessage={} fallbackUsed={}",
+                game.getPublicGameId(),
+                scoringContext == null ? null : scoringContext.inning(),
+                scoringContext == null ? null : scoringContext.inningHalf(),
+                scoringContext == null ? runCount : scoringContext.scoreDelta(),
+                scoringPlayDetail == null ? null : scoringPlayDetail.selectedEventType(),
+                scoringPlayDetail == null ? null : scoringPlayDetail.selectedEventText(),
+                scoringPlayResolution.runScoredEventCount(),
+                formattedMessage,
+                fallbackUsed
+        );
         return draft;
     }
 
@@ -806,17 +778,10 @@ public class LiveGameSyncService {
         return draft;
     }
 
-    private NotificationEventDraft leadChangeDraft(
-            Game game,
-            GameState before,
-            GameState after,
-            String eventTeamId,
-            List<BatterRecordReadRow> batterRecordsBefore,
-            List<BatterRecordReadRow> batterRecordsAfter
-    ) {
+    private NotificationEventDraft leadChangeDraft(Game game, GameState before, GameState after, String eventTeamId) {
         boolean tied = nullSafe(after.awayScore()) == nullSafe(after.homeScore());
         ScoringPlayContext scoringContext = scoringPlayContext(game, before, after, eventTeamId);
-        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, scoringContext, batterRecordsBefore, batterRecordsAfter);
+        ScoringPlayDetail scoringPlayDetail = scoringPlayResolution(game, scoringContext).detail();
         NotificationText detailedText = ScoringPlayNotificationFormatter
                 .leadChangeText(scoringPlayDetail, before.awayScore(), before.homeScore())
                 .orElse(null);
@@ -840,79 +805,25 @@ public class LiveGameSyncService {
         return draft;
     }
 
-    private ScoringPlayDetail scoringPlayDetail(
-            Game game,
-            ScoringPlayContext context,
-            List<BatterRecordReadRow> batterRecordsBefore,
-            List<BatterRecordReadRow> batterRecordsAfter
-    ) {
+    private ScoringPlayResolution scoringPlayResolution(Game game, ScoringPlayContext context) {
         if (gameEventReadRepository == null || context == null || context.battingTeamId() == null || game == null || game.getId() == null) {
-            return null;
+            return new ScoringPlayResolution(null, 0);
         }
         try {
+            List<GameEventReadRepository.GameEventRow> recentEvents = gameEventReadRepository.findRecentByGameId(game.getId(), 30);
             ScoringPlayDetail detail = ScoringPlayDetailExtractor.extract(
-                    gameEventReadRepository.findRecentByGameId(game.getId(), 30),
+                    recentEvents,
                     context
             ).orElse(null);
-            if (isHomeRunDetail(detail) && !homeRunConfirmedByBatterRecord(detail, batterRecordsBefore, batterRecordsAfter)) {
-                log.debug(
-                        "[LiveGameSync] home run detail rejected game={} batter={} reason=home-runs-not-increased",
-                        game.getPublicGameId(),
-                        detail.batterName()
-                );
-                return null;
-            }
-            return detail;
+            return new ScoringPlayResolution(detail, ScoringPlayDetailExtractor.runScoredEventCount(recentEvents));
         } catch (RuntimeException exception) {
             log.debug(
                     "[LiveGameSync] scoring play detail unavailable game={} reason={}",
                     game.getPublicGameId(),
                     exception.getMessage()
             );
-            return null;
+            return new ScoringPlayResolution(null, 0);
         }
-    }
-
-    private List<BatterRecordReadRow> batterRecords(Game game) {
-        if (gameBoxscoreRecordReadRepository == null || game == null || game.getId() == null) {
-            return List.of();
-        }
-        try {
-            return gameBoxscoreRecordReadRepository.findBatterRecords(game.getId());
-        } catch (RuntimeException exception) {
-            log.debug(
-                    "[LiveGameSync] batter records unavailable game={} reason={}",
-                    game.getPublicGameId(),
-                    exception.getMessage()
-            );
-            return List.of();
-        }
-    }
-
-    private boolean isHomeRunDetail(ScoringPlayDetail detail) {
-        return detail != null && "홈런".equals(detail.resultText());
-    }
-
-    private boolean homeRunConfirmedByBatterRecord(
-            ScoringPlayDetail detail,
-            List<BatterRecordReadRow> batterRecordsBefore,
-            List<BatterRecordReadRow> batterRecordsAfter
-    ) {
-        String batterName = cleanText(detail.batterName());
-        if (batterName == null || batterRecordsBefore == null || batterRecordsAfter == null) {
-            return false;
-        }
-        Integer beforeHomeRuns = batterRecordsBefore.stream()
-                .filter(row -> batterName.equals(cleanText(row.playerName())))
-                .map(BatterRecordReadRow::homeRuns)
-                .filter(java.util.Objects::nonNull)
-                .max(Integer::compareTo)
-                .orElse(0);
-        return batterRecordsAfter.stream()
-                .filter(row -> batterName.equals(cleanText(row.playerName())))
-                .map(BatterRecordReadRow::homeRuns)
-                .filter(java.util.Objects::nonNull)
-                .anyMatch(afterHomeRuns -> afterHomeRuns > beforeHomeRuns);
     }
 
     private ScoringPlayContext scoringPlayContext(Game game, GameState before, GameState after, String eventTeamId) {
@@ -1057,6 +968,9 @@ public class LiveGameSyncService {
         draft.payload().put("scoringBattingTeamName", detail.battingTeamName());
         draft.payload().put("scoringAwayScoreAfter", detail.awayScoreAfter());
         draft.payload().put("scoringHomeScoreAfter", detail.homeScoreAfter());
+        draft.payload().put("scoringSelectedEventType", detail.selectedEventType());
+        draft.payload().put("scoringSelectedEventText", detail.selectedEventText());
+        draft.payload().put("scoringRunScoredEventCount", detail.runScoredEventCount());
     }
 
     private void addOnBaseDetailPayload(NotificationEventDraft draft, OnBaseDetailResolution resolution) {
@@ -1290,10 +1204,7 @@ public class LiveGameSyncService {
     }
 
     private String scoringFallbackBody(ScoringPlayContext context) {
-        String actor = hasText(context.previousBatterName())
-                ? context.previousBatterName().trim()
-                : context.battingTeamName();
-        String playText = "%s %s".formatted(actor, runsText(context.scoreDelta()));
+        String playText = "%s %s".formatted(context.battingTeamName(), runsText(context.scoreDelta()));
         String inningText = scoringInningText(context.inning(), context.inningHalf());
         if (hasText(inningText)) {
             return "%s %s · %s".formatted(inningText, playText, scoringScoreText(context));
@@ -1619,6 +1530,12 @@ public class LiveGameSyncService {
             OnBasePlayDetail detail,
             String detailSource,
             long durationMs
+    ) {
+    }
+
+    private record ScoringPlayResolution(
+            ScoringPlayDetail detail,
+            int runScoredEventCount
     ) {
     }
 

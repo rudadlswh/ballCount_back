@@ -13,7 +13,7 @@ public final class ScoringPlayNotificationFormatter {
         }
         return Optional.of(new NotificationText(
                 "%s 득점".formatted(detail.battingTeamName()),
-                body(detail)
+                scoreChangeBody(detail)
         ));
     }
 
@@ -62,6 +62,13 @@ public final class ScoringPlayNotificationFormatter {
                 playAndRunsText(detail),
                 scoreText(detail)
         );
+    }
+
+    private static String scoreChangeBody(ScoringPlayDetail detail) {
+        if (hasText(detail.selectedEventText())) {
+            return "%s, %s".formatted(detail.selectedEventText().trim(), runsText(detail.runsScored()));
+        }
+        return playAndRunsText(detail);
     }
 
     private static String playAndRunsText(ScoringPlayDetail detail) {
