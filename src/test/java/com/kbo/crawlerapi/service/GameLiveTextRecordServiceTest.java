@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
+import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupPlayer;
 import com.kbo.crawlerapi.parser.KboLiveTextParser;
 import com.kbo.crawlerapi.repository.GameBoxscoreRecordWriteRepository;
 import com.kbo.crawlerapi.repository.GameBoxscoreRecordWriteRepository.BatterRecordWriteRow;
@@ -88,6 +90,85 @@ class GameLiveTextRecordServiceTest {
         assertThat(eventRepository.eventRows).hasSize(2);
     }
 
+    @Test
+    void fillsMissingLiveTextBattingOrderFromSourceOrder() {
+        var parsed = new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, null, null, "박승욱", 4, 1, 2, 1, 0, 1, 0, 1, 0, 0, 0, 3)),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+
+        service.saveLiveText(liveGame, parsed, OffsetDateTime.now());
+
+        BatterRecordWriteRow saved = boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 3));
+        assertThat(saved.battingOrder()).isEqualTo(4);
+        assertThat(saved.position()).isNull();
+    }
+
+    @Test
+    void mergesLineupPositionIntoLiveTextBatterRecords() {
+        var parsed = new KboLiveTextParser.ParsedLiveText(
+                List.of(
+                        new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, null, "순번매칭", 4, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0),
+                        new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, null, null, "김 이름", 3, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 4),
+                        new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, null, null, "소스순서매칭", 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+                ),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        var lineupData = new ParsedLineupData(
+                List.of(
+                        new ParsedLineupPlayer("1", "CF", "라인업1"),
+                        new ParsedLineupPlayer("8", "SS", "라인업2"),
+                        new ParsedLineupPlayer("7", "RF", "김이름")
+                ),
+                List.of(),
+                "lineup-hash"
+        );
+
+        service.saveLiveText(liveGame, parsed, OffsetDateTime.now(), lineupData);
+
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 0)).position()).isEqualTo("CF");
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 4)).position()).isEqualTo("RF");
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 1)).position()).isEqualTo("SS");
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 4)).battingOrder()).isEqualTo(5);
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 1)).battingOrder()).isEqualTo(2);
+    }
+
+    @Test
+    void keepsExistingLiveTextPositionAndDoesNotOverwriteStoredPositionWithNull() {
+        var initial = new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, "LF", "박승욱", 4, 1, 2, 1, 0, 1, 0, 1, 0, 0, 0, 0)),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        var withoutPosition = new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, null, "박승욱", 5, 2, 3, 2, 1, 0, 1, 0, 0, 0, 0, 0)),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+
+        service.saveLiveText(liveGame, initial, OffsetDateTime.now());
+        service.saveLiveText(liveGame, withoutPosition, OffsetDateTime.now());
+
+        BatterRecordWriteRow saved = boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 0));
+        assertThat(saved.position()).isEqualTo("LF");
+        assertThat(saved.atBats()).isEqualTo(5);
+        assertThat(saved.runs()).isEqualTo(2);
+        assertThat(saved.hits()).isEqualTo(3);
+        assertThat(saved.rbi()).isEqualTo(2);
+        assertThat(saved.homeRuns()).isEqualTo(1);
+        assertThat(saved.strikeouts()).isEqualTo(1);
+    }
+
     private KboLiveTextParser.ParsedLiveText parsedLiveText() {
         return new KboLiveTextParser.ParsedLiveText(
                 List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, "유", "박승욱", 4, 1, 2, 1, 0, 1, 0, 1, 0, 0, 0, 0)),
@@ -131,8 +212,37 @@ class GameLiveTextRecordServiceTest {
 
         @Override
         public int upsertBatterRecords(List<BatterRecordWriteRow> rows) {
-            rows.forEach(row -> batterRows.put(new RowKey(row.gameId(), row.teamId(), row.sourceOrder()), row));
+            rows.forEach(row -> {
+                RowKey key = new RowKey(row.gameId(), row.teamId(), row.sourceOrder());
+                BatterRecordWriteRow existing = batterRows.get(key);
+                batterRows.put(key, merge(existing, row));
+            });
             return rows.size();
+        }
+
+        private BatterRecordWriteRow merge(BatterRecordWriteRow existing, BatterRecordWriteRow incoming) {
+            if (existing == null) {
+                return incoming;
+            }
+            return new BatterRecordWriteRow(
+                    incoming.gameId(),
+                    incoming.teamId(),
+                    incoming.sourceOrder(),
+                    incoming.battingOrder() == null ? existing.battingOrder() : incoming.battingOrder(),
+                    incoming.position() == null || incoming.position().isBlank() ? existing.position() : incoming.position(),
+                    incoming.playerName(),
+                    incoming.atBats(),
+                    incoming.runs(),
+                    incoming.hits(),
+                    incoming.rbi(),
+                    incoming.homeRuns(),
+                    incoming.walks(),
+                    incoming.strikeouts(),
+                    incoming.stolenBases(),
+                    incoming.groundedIntoDoublePlay(),
+                    incoming.errors(),
+                    incoming.battingAverage()
+            );
         }
 
         @Override

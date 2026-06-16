@@ -32,8 +32,8 @@ public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecord
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
             ON CONFLICT (game_id, team_id, source_order) DO UPDATE SET
-                batting_order = excluded.batting_order,
-                position = excluded.position,
+                batting_order = COALESCE(excluded.batting_order, game_batter_records.batting_order),
+                position = COALESCE(NULLIF(excluded.position, ''), game_batter_records.position),
                 player_name = excluded.player_name,
                 at_bats = excluded.at_bats,
                 runs = excluded.runs,
