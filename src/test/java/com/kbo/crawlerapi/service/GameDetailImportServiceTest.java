@@ -1864,6 +1864,7 @@ class GameDetailImportServiceTest {
 
         private Game savedGame;
         private KboLiveTextParser.ParsedLiveText savedLiveText;
+        private KboGameDetailParser.ParsedLineupData savedLineupData;
         private OffsetDateTime sourceUpdatedAt;
 
         private StubGameLiveTextRecordService() {
@@ -1876,8 +1877,19 @@ class GameDetailImportServiceTest {
                 KboLiveTextParser.ParsedLiveText parsedLiveText,
                 OffsetDateTime sourceUpdatedAt
         ) {
+            return saveLiveText(game, parsedLiveText, sourceUpdatedAt, null);
+        }
+
+        @Override
+        public GameLiveTextRecordSaveResult saveLiveText(
+                Game game,
+                KboLiveTextParser.ParsedLiveText parsedLiveText,
+                OffsetDateTime sourceUpdatedAt,
+                KboGameDetailParser.ParsedLineupData lineupData
+        ) {
             this.savedGame = game;
             this.savedLiveText = parsedLiveText;
+            this.savedLineupData = lineupData;
             this.sourceUpdatedAt = sourceUpdatedAt;
             int batterCount = parsedLiveText.awayBatters().size() + parsedLiveText.homeBatters().size();
             int pitcherCount = parsedLiveText.awayPitchers().size() + parsedLiveText.homePitchers().size();

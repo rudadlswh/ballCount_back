@@ -253,7 +253,7 @@ public class GameDetailImportService {
                     parsedDetail.statusReason(),
                     parsedDetail.sourceUpdatedAt()
             );
-            importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, fetchedAt);
+            importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineupData, fetchedAt);
             BoxscoreImportResult boxscoreImportResult = saveBoxscoreRecordsIfAvailable(
                     game,
                     resolvedOfficialDetail.providerGameId(),
@@ -289,6 +289,7 @@ public class GameDetailImportService {
             Game game,
             String providerGameId,
             ParsedGameDetail parsedDetail,
+            ParsedLineupData lineupData,
             OffsetDateTime fetchedAt
     ) {
         if (kboLiveTextClient == null || kboLiveTextParser == null || gameLiveTextRecordService == null) {
@@ -313,7 +314,7 @@ public class GameDetailImportService {
                 );
                 return LiveTextImportResult.skipped("empty");
             }
-            var result = gameLiveTextRecordService.saveLiveText(game, parsedLiveText, fetchedAt);
+            var result = gameLiveTextRecordService.saveLiveText(game, parsedLiveText, fetchedAt, lineupData);
             log.info(
                     "[KboLiveText] imported gameId={} providerGameId={} status={} batters={} pitchers={} events={}",
                     game.getPublicGameId(),
