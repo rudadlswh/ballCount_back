@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupPlayer;
 import com.kbo.crawlerapi.parser.KboLiveTextParser.ParsedLiveText;
@@ -59,7 +60,7 @@ public class GameLiveTextRecordService {
         if (parsedLiveText.hasRecords() && game.getStatus() != GameStatus.FINAL) {
             var result = gameBoxscoreRecordService.saveBoxscoreRecords(
                     game,
-                    enrichBatterRecords(parsedLiveText, lineupData).toParsedBoxscore()
+                    enrichBatterRecords(game, parsedLiveText, lineupData).toParsedBoxscore()
             );
             batterCount = result.batterRecordCount();
             pitcherCount = result.pitcherRecordCount();
@@ -113,12 +114,12 @@ public class GameLiveTextRecordService {
         return new GameLiveTextRecordSaveResult(batterCount, pitcherCount, parsedEventCount, eventWriteCount, null);
     }
 
-    private ParsedLiveText enrichBatterRecords(ParsedLiveText parsedLiveText, ParsedLineupData lineupData) {
-        List<ParsedLineupPlayer> awayLineup = lineupData == null ? List.of() : lineupData.away();
-        List<ParsedLineupPlayer> homeLineup = lineupData == null ? List.of() : lineupData.home();
+    private ParsedLiveText enrichBatterRecords(Game game, ParsedLiveText parsedLiveText, ParsedLineupData lineupData) {
+        List<ParsedLineupPlayer> awayLineup = lineupForTeam(lineupData, game.getAwayTeam(), true);
+        List<ParsedLineupPlayer> homeLineup = lineupForTeam(lineupData, game.getHomeTeam(), false);
         return new ParsedLiveText(
-                enrichBatterRecords(parsedLiveText.awayBatters(), awayLineup),
-                enrichBatterRecords(parsedLiveText.homeBatters(), homeLineup),
+                enrichBatterRecords(game, game.getAwayTeam(), parsedLiveText.awayBatters(), awayLineup),
+                enrichBatterRecords(game, game.getHomeTeam(), parsedLiveText.homeBatters(), homeLineup),
                 parsedLiveText.awayPitchers(),
                 parsedLiveText.homePitchers(),
                 parsedLiveText.events(),
@@ -127,7 +128,28 @@ public class GameLiveTextRecordService {
         );
     }
 
+    private List<ParsedLineupPlayer> lineupForTeam(ParsedLineupData lineupData, Team team, boolean awayFallback) {
+        if (lineupData == null || !lineupData.hasLineups()) {
+            return List.of();
+        }
+        String normalizedTeam = normalizeTeamIdentity(team);
+        List<ParsedLineupPlayer> all = new ArrayList<>();
+        all.addAll(lineupData.away());
+        all.addAll(lineupData.home());
+        if (normalizedTeam != null) {
+            List<ParsedLineupPlayer> matched = all.stream()
+                    .filter(player -> normalizedTeam.equals(normalizeTeamCode(player.teamCode())))
+                    .toList();
+            if (!matched.isEmpty()) {
+                return matched;
+            }
+        }
+        return awayFallback ? lineupData.away() : lineupData.home();
+    }
+
     private List<ParsedLiveTextBatterRecord> enrichBatterRecords(
+            Game game,
+            Team team,
             List<ParsedLiveTextBatterRecord> records,
             List<ParsedLineupPlayer> lineup
     ) {
@@ -138,9 +160,24 @@ public class GameLiveTextRecordService {
         List<ParsedLiveTextBatterRecord> enriched = new ArrayList<>(records.size());
         for (ParsedLiveTextBatterRecord record : records) {
             Integer battingOrder = record.battingOrder() == null ? record.sourceOrder() + 1 : record.battingOrder();
+            String beforePosition = record.position();
             String position = hasText(record.position())
                     ? record.position().trim()
                     : resolver.resolve(record, battingOrder);
+            log.info(
+                    "[KboLiveTextPositionMerge] gameId={} publicGameId={} teamId={} teamCode={} normalizedTeam={} playerName={} sourceOrder={} battingOrder={} beforePosition={} mergedPosition={} lineupCandidateCount={}",
+                    game.getId(),
+                    game.getPublicGameId(),
+                    team == null ? null : team.getId(),
+                    team == null ? null : team.getTeamCode(),
+                    normalizeTeamIdentity(team),
+                    record.playerName(),
+                    record.sourceOrder(),
+                    battingOrder,
+                    beforePosition,
+                    position,
+                    lineup.size()
+            );
             enriched.add(new ParsedLiveTextBatterRecord(
                     record.teamSide(),
                     record.sourceGroupIndex(),
@@ -235,6 +272,43 @@ public class GameLiveTextRecordService {
                 .trim()
                 .toLowerCase(Locale.ROOT);
         return normalized.isBlank() ? null : normalized;
+    }
+
+    private static String normalizeTeamIdentity(Team team) {
+        if (team == null) {
+            return null;
+        }
+        String byCode = normalizeTeamCode(team.getTeamCode());
+        if (byCode != null) {
+            return byCode;
+        }
+        String byName = normalizeTeamCode(team.getShortName());
+        if (byName != null) {
+            return byName;
+        }
+        return normalizeTeamCode(team.getName());
+    }
+
+    private static String normalizeTeamCode(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String normalized = value.replaceAll("\\s+", "")
+                .replace("-", "")
+                .toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "lt", "lot", "lotte", "롯데", "롯데자이언츠" -> "lotte";
+            case "sk", "ssg", "ssg랜더스" -> "ssg";
+            case "ob", "doosan", "두산", "두산베어스" -> "doosan";
+            case "hh", "hanwha", "한화", "한화이글스" -> "hanwha";
+            case "ht", "kia", "기아", "kia타이거즈", "기아타이거즈" -> "kia";
+            case "wo", "kiwoom", "키움", "키움히어로즈" -> "kiwoom";
+            case "kt", "kt위즈" -> "kt";
+            case "lg", "lg트윈스" -> "lg";
+            case "nc", "nc다이노스" -> "nc";
+            case "ss", "samsung", "삼성", "삼성라이온즈" -> "samsung";
+            default -> normalized.isBlank() ? null : normalized;
+        };
     }
 
     private String providerEventId(int sequenceNumber, String eventText) {

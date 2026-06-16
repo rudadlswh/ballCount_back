@@ -90,7 +90,7 @@ public final class ScoringPlayDetailExtractor {
         if (normalized.contains("홈인") && !containsRunCause(normalized)) {
             return Optional.empty();
         }
-        if (normalized.contains("홈런")) {
+        if (containsHomeRunText(normalized)) {
             return Optional.of(parsed(text, batterName, "홈런", null, true));
         }
         if (normalized.contains("3루타")) {
@@ -214,6 +214,13 @@ public final class ScoringPlayDetailExtractor {
                 || normalized.contains("폭투")
                 || normalized.contains("포일")
                 || normalized.contains("보크");
+    }
+
+    private static boolean containsHomeRunText(String normalized) {
+        return normalized.contains("홈런")
+                || normalized.contains("투런")
+                || normalized.contains("쓰리런")
+                || normalized.contains("만루홈런");
     }
 
     private static Integer explicitRunsScored(String text) {

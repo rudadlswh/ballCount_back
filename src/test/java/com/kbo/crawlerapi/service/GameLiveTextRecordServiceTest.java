@@ -169,6 +169,55 @@ class GameLiveTextRecordServiceTest {
         assertThat(saved.strikeouts()).isEqualTo(1);
     }
 
+    @Test
+    void mergesPositionWhenOfficialTeamIdsDifferFromDatabaseTeamCodes() {
+        Team ssgTeam = new Team(UUID.randomUUID(), "ssg", "SSG 랜더스", "SSG", "SSG Landers", null);
+        Game lotteAtSsg = game(GameStatus.LIVE, ssgTeam, awayTeam);
+        var parsed = new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, null, "황성빈", 1, 1, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0)),
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("home", 1, 1, null, "박성한", 2, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0)),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        var lineupData = new ParsedLineupData(
+                List.of(new ParsedLineupPlayer("1", "CF", "황성빈", "LT")),
+                List.of(new ParsedLineupPlayer("1", "SS", "박성한", "SK")),
+                "lineup-hash",
+                "LT",
+                "SK"
+        );
+
+        service.saveLiveText(lotteAtSsg, parsed, OffsetDateTime.now(), lineupData);
+
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(lotteAtSsg.getId(), awayTeam.getId(), 0)).position()).isEqualTo("CF");
+        assertThat(boxscoreRepository.batterRows.get(new RowKey(lotteAtSsg.getId(), ssgTeam.getId(), 0)).position()).isEqualTo("SS");
+    }
+
+    @Test
+    void updatesPreviouslyNullPositionWhenMergedPositionIsNonNull() {
+        var initial = new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, null, "황성빈", 1, 1, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0)),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        var lineupData = new ParsedLineupData(
+                List.of(new ParsedLineupPlayer("1", "CF", "황성빈", "LT")),
+                List.of(),
+                "lineup-hash",
+                "LT",
+                null
+        );
+
+        service.saveLiveText(liveGame, initial, OffsetDateTime.now());
+        service.saveLiveText(liveGame, initial, OffsetDateTime.now(), lineupData);
+
+        BatterRecordWriteRow saved = boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 0));
+        assertThat(saved.position()).isEqualTo("CF");
+    }
+
     private KboLiveTextParser.ParsedLiveText parsedLiveText() {
         return new KboLiveTextParser.ParsedLiveText(
                 List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, "유", "박승욱", 4, 1, 2, 1, 0, 1, 0, 1, 0, 0, 0, 0)),
@@ -183,6 +232,10 @@ class GameLiveTextRecordServiceTest {
     }
 
     private Game game(GameStatus status) {
+        return game(status, homeTeam, awayTeam);
+    }
+
+    private Game game(GameStatus status, Team homeTeam, Team awayTeam) {
         return new Game(
                 UUID.randomUUID(),
                 "20260529-LOT-NC",

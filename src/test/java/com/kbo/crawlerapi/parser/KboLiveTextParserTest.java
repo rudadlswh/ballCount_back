@@ -18,6 +18,7 @@ class KboLiveTextParserTest {
         assertThat(result.awayBatters().get(0).runs()).isEqualTo(1);
         assertThat(result.awayBatters().get(0).hits()).isEqualTo(2);
         assertThat(result.awayBatters().get(0).rbi()).isEqualTo(1);
+        assertThat(result.awayBatters().get(0).position()).isEqualTo("SS");
         assertThat(result.awayBatters()).extracting(KboLiveTextParser.ParsedLiveTextBatterRecord::playerName)
                 .doesNotContain("요약타자");
     }
@@ -34,6 +35,17 @@ class KboLiveTextParserTest {
         assertThat(batter.strikeouts()).isEqualTo(1);
         assertThat(batter.groundedIntoDoublePlay()).isEqualTo(1);
         assertThat(batter.errors()).isEqualTo(1);
+        assertThat(batter.position()).isEqualTo("SS");
+    }
+
+    @Test
+    void mergesPositionsFromLiveTextSummaryLineupTablesIntoDetailedBatterRecords() {
+        var result = parser.parse(liveTextWithSeparateLineupAndDetailTables());
+
+        assertThat(result.awayBatters()).extracting(KboLiveTextParser.ParsedLiveTextBatterRecord::position)
+                .containsExactly("CF", "2B", "RF", "DH", "1B", "SS", "LF", "C", "3B");
+        assertThat(result.homeBatters()).extracting(KboLiveTextParser.ParsedLiveTextBatterRecord::position)
+                .containsExactly("SS", "2B", "DH");
     }
 
     @Test
@@ -165,6 +177,51 @@ class KboLiveTextParserTest {
                       <span id="rptLiveText1_spanLiveText_9" class="blue">패전투수: 전사민<br /></span>
                       <span id="rptLiveText1_spanLiveText_10" class="blue">승리투수: 최준용<br /></span>
                     </div>
+                  </body>
+                </html>
+                """;
+    }
+
+    private String liveTextWithSeparateLineupAndDetailTables() {
+        return """
+                <html>
+                  <body>
+                    <table>
+                      <tr><th colspan="3">롯데 타자</th><th>타수</th><th>득점</th><th>안타</th><th>타점</th></tr>
+                      <tr><th>1</th><td>8</td><td>황성빈</td><td>1</td><td>1</td><td>0</td><td>0</td></tr>
+                      <tr><th>2</th><td>4</td><td>고승민</td><td>3</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><th>3</th><td>9</td><td>레이예스</td><td>2</td><td>1</td><td>1</td><td>1</td></tr>
+                      <tr><th>4</th><td>D</td><td>한동희</td><td>2</td><td>1</td><td>1</td><td>0</td></tr>
+                      <tr><th>5</th><td>3</td><td>나승엽</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><th>6</th><td>6</td><td>전민재</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><th>7</th><td>7</td><td>박승욱</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><th>8</th><td>2</td><td>손성빈</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><th>9</th><td>5</td><td>장두성</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                    </table>
+                    <table>
+                      <tr><th>타자</th><th>타수</th><th>득점</th><th>안타</th><th>홈런</th><th>타점</th><th>도루</th><th>희타</th><th>볼넷</th><th>삼진</th><th>병살</th><th>실책</th></tr>
+                      <tr><td>황성빈</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>1</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>고승민</td><td>3</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>레이예스</td><td>2</td><td>1</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>한동희</td><td>2</td><td>1</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>나승엽</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>전민재</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>박승욱</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>손성빈</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>장두성</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                    </table>
+                    <table>
+                      <tr><th colspan="3">SSG 타자</th><th>타수</th><th>득점</th><th>안타</th><th>타점</th></tr>
+                      <tr><th>1</th><td>6</td><td>박성한</td><td>2</td><td>1</td><td>1</td><td>0</td></tr>
+                      <tr><th>2</th><td>4</td><td>정준재</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><th>3</th><td>D</td><td>최정</td><td>2</td><td>1</td><td>1</td><td>2</td></tr>
+                    </table>
+                    <table>
+                      <tr><th>타자</th><th>타수</th><th>득점</th><th>안타</th><th>홈런</th><th>타점</th><th>도루</th><th>희타</th><th>볼넷</th><th>삼진</th><th>병살</th><th>실책</th></tr>
+                      <tr><td>박성한</td><td>2</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>1</td><td>0</td><td>0</td></tr>
+                      <tr><td>정준재</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+                      <tr><td>최정</td><td>2</td><td>1</td><td>1</td><td>1</td><td>2</td><td>0</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+                    </table>
                   </body>
                 </html>
                 """;

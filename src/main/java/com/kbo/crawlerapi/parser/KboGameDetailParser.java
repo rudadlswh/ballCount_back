@@ -37,18 +37,20 @@ public class KboGameDetailParser {
                 return ParsedLineupData.empty(hash(responseBody));
             }
 
-            List<ParsedLineupPlayer> away = parseLineupGroup(groups.get(0));
-            List<ParsedLineupPlayer> home = parseLineupGroup(groups.get(1));
+            String awayTeamCode = officialTeamCode(root, "AWAY_ID", "T_ID", "AWAY_TEAM_ID");
+            String homeTeamCode = officialTeamCode(root, "HOME_ID", "B_ID", "HOME_TEAM_ID");
+            List<ParsedLineupPlayer> away = parseLineupGroup(groups.get(0), awayTeamCode);
+            List<ParsedLineupPlayer> home = parseLineupGroup(groups.get(1), homeTeamCode);
             if (away.isEmpty() && home.isEmpty()) {
                 return ParsedLineupData.empty(hash(responseBody));
             }
-            return new ParsedLineupData(away, home, hash(responseBody));
+            return new ParsedLineupData(away, home, hash(responseBody), awayTeamCode, homeTeamCode);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse KBO lineup response", exception);
         }
     }
 
-    private List<ParsedLineupPlayer> parseLineupGroup(JsonNode group) throws IOException {
+    private List<ParsedLineupPlayer> parseLineupGroup(JsonNode group, String teamCode) throws IOException {
         String orderTableRaw = text(group, "table1");
         if (orderTableRaw == null) {
             return List.of();
@@ -71,9 +73,19 @@ public class KboGameDetailParser {
             if (name == null) {
                 continue;
             }
-            players.add(new ParsedLineupPlayer(battingOrder, position, name));
+            players.add(new ParsedLineupPlayer(battingOrder, normalizePosition(position), name, teamCode));
         }
         return players;
+    }
+
+    private String officialTeamCode(JsonNode root, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            String value = text(root, fieldName);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     public List<ParsedGameDetail> parseGameList(String responseBody) {
@@ -1096,10 +1108,16 @@ public class KboGameDetailParser {
     public record ParsedLineupData(
             List<ParsedLineupPlayer> away,
             List<ParsedLineupPlayer> home,
-            String rawHash
+            String rawHash,
+            String awayTeamCode,
+            String homeTeamCode
     ) {
+        public ParsedLineupData(List<ParsedLineupPlayer> away, List<ParsedLineupPlayer> home, String rawHash) {
+            this(away, home, rawHash, null, null);
+        }
+
         public static ParsedLineupData empty(String rawHash) {
-            return new ParsedLineupData(List.of(), List.of(), rawHash);
+            return new ParsedLineupData(List.of(), List.of(), rawHash, null, null);
         }
 
         public boolean hasLineups() {
@@ -1110,7 +1128,31 @@ public class KboGameDetailParser {
     public record ParsedLineupPlayer(
             String battingOrder,
             String position,
-            String name
+            String name,
+            String teamCode
     ) {
+        public ParsedLineupPlayer(String battingOrder, String position, String name) {
+            this(battingOrder, position, name, null);
+        }
+    }
+
+    private static String normalizePosition(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim().replace(" ", "").toUpperCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "1", "P", "투", "投", "투수" -> "P";
+            case "2", "C", "포", "捕", "포수" -> "C";
+            case "3", "1B", "一", "1루", "1루수", "일" -> "1B";
+            case "4", "2B", "二", "2루", "2루수", "이" -> "2B";
+            case "5", "3B", "三", "3루", "3루수", "삼" -> "3B";
+            case "6", "SS", "유", "遊", "유격", "유격수" -> "SS";
+            case "7", "LF", "좌", "左", "좌익", "좌익수" -> "LF";
+            case "8", "CF", "중", "中", "중견", "중견수" -> "CF";
+            case "9", "RF", "우", "右", "우익", "우익수" -> "RF";
+            case "D", "DH", "지", "지명", "지명타자" -> "DH";
+            default -> value.trim();
+        };
     }
 }

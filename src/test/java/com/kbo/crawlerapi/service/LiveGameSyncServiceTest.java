@@ -14,6 +14,8 @@ import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameEventReadRepository;
 import com.kbo.crawlerapi.repository.GameEventReadRepository.GameEventRow;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.BatterRecordReadRow;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.service.NotificationEventService.EventDeliveryResult;
@@ -392,7 +394,7 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
-    void matchingPreviousBatterHomeRunDetailIsUsedForTwoRunScoreChange() {
+    void homeRunTextWithoutBatterHomeRunIncreaseFallsBackToScoreChangeText() {
         NotificationEventDraft draft = scoreChangeDraftForLotteLg(
                 0,
                 5,
@@ -404,7 +406,28 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(draft.title()).isEqualTo("롯데 득점");
-        assertThat(draft.body()).isEqualTo("3회초 레이예스 홈런, 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 2득점 · 롯데 2-5 LG");
+        assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
+    }
+
+    @Test
+    void matchingPreviousBatterHomeRunDetailIsUsedWhenBatterHomeRunsIncrease() {
+        NotificationEventDraft draft = scoreChangeDraftForLotteLg(
+                0,
+                5,
+                2,
+                5,
+                "레이예스",
+                "나승엽",
+                List.of(new GameEventRow(30, 3, "top", "HOME_RUN", "레이예스 : 좌월 홈런")),
+                new StubGameBoxscoreRecordReadRepository(
+                        List.of(batterRecord("레이예스", 0)),
+                        List.of(batterRecord("레이예스", 1))
+                )
+        );
+
+        assertThat(draft.title()).isEqualTo("롯데 득점");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 투런 홈런, 2득점 · 롯데 2-5 LG");
         assertThat(draft.payload())
                 .containsEntry("scoringBatterName", "레이예스")
                 .containsEntry("scoringResultText", "홈런")
@@ -1468,6 +1491,27 @@ class LiveGameSyncServiceTest {
             StubGameDetailImportService importService,
             StubNotificationEventService notificationEventService,
             GameEventReadRepository gameEventReadRepository,
+            GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository
+    ) {
+        return new LiveGameSyncService(
+                gameRepository,
+                gameSnapshotRepository,
+                gameEventReadRepository,
+                gameBoxscoreRecordReadRepository,
+                importService,
+                new StubScheduleImportService(),
+                notificationEventService,
+                new StubTeamRankService(false),
+                new LiveSyncProperties(),
+                clock
+        );
+    }
+
+    private LiveGameSyncService service(
+            Clock clock,
+            StubGameDetailImportService importService,
+            StubNotificationEventService notificationEventService,
+            GameEventReadRepository gameEventReadRepository,
             LiveSyncProperties properties
     ) {
         return new LiveGameSyncService(
@@ -1511,6 +1555,28 @@ class LiveGameSyncServiceTest {
             String currentBatterAfter,
             List<GameEventRow> events
     ) {
+        return scoreChangeDraftForLotteLg(
+                awayScoreBefore,
+                homeScoreBefore,
+                awayScoreAfter,
+                homeScoreAfter,
+                previousBatter,
+                currentBatterAfter,
+                events,
+                null
+        );
+    }
+
+    private NotificationEventDraft scoreChangeDraftForLotteLg(
+            int awayScoreBefore,
+            int homeScoreBefore,
+            int awayScoreAfter,
+            int homeScoreAfter,
+            String previousBatter,
+            String currentBatterAfter,
+            List<GameEventRow> events,
+            GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository
+    ) {
         Game before = fixtureGameWithTeams(
                 GameStatus.LIVE,
                 awayScoreBefore,
@@ -1549,7 +1615,8 @@ class LiveGameSyncServiceTest {
                 ACTIVE_KST_CLOCK,
                 new StubGameDetailImportService(),
                 notificationEventService,
-                new StubGameEventReadRepository(events)
+                new StubGameEventReadRepository(events),
+                gameBoxscoreRecordReadRepository
         );
 
         service.sync(before.getGameDate(), false);
@@ -1558,6 +1625,28 @@ class LiveGameSyncServiceTest {
                 .filter(candidate -> NotificationEventService.EVENT_SCORE_CHANGED.equals(candidate.eventType()))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    private BatterRecordReadRow batterRecord(String playerName, Integer homeRuns) {
+        return new BatterRecordReadRow(
+                UUID.randomUUID(),
+                0,
+                1,
+                null,
+                playerName,
+                null,
+                null,
+                null,
+                null,
+                homeRuns,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.now(ACTIVE_KST_CLOCK)
+        );
     }
 
     private NotificationEventDraft onBaseDraftForLotteLg(
@@ -2005,6 +2094,41 @@ class LiveGameSyncServiceTest {
         @Override
         public List<GameEventRow> findRecentByGameId(UUID gameId, int limit) {
             return events;
+        }
+    }
+
+    private static final class StubGameBoxscoreRecordReadRepository implements GameBoxscoreRecordReadRepository {
+
+        private final List<List<BatterRecordReadRow>> batterRecordResponses;
+        private int batterRecordCallCount;
+
+        private StubGameBoxscoreRecordReadRepository(
+                List<BatterRecordReadRow> batterRecordsBefore,
+                List<BatterRecordReadRow> batterRecordsAfter
+        ) {
+            this.batterRecordResponses = List.of(batterRecordsBefore, batterRecordsAfter);
+        }
+
+        @Override
+        public List<BatterRecordReadRow> findBatterRecords(UUID gameId) {
+            int index = Math.min(batterRecordCallCount, batterRecordResponses.size() - 1);
+            batterRecordCallCount++;
+            return batterRecordResponses.get(index);
+        }
+
+        @Override
+        public List<PitcherRecordReadRow> findPitcherRecords(UUID gameId) {
+            return List.of();
+        }
+
+        @Override
+        public long countBatterRecords(UUID gameId) {
+            return 0;
+        }
+
+        @Override
+        public long countPitcherRecords(UUID gameId) {
+            return 0;
         }
     }
 

@@ -42,7 +42,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 3득점 · 롯데 6-4 한화");
+        assertThat(text.body()).isEqualTo("7회초 전준우 쓰리런 홈런, 3득점 · 롯데 6-4 한화");
     }
 
     @Test
@@ -56,6 +56,9 @@ class ScoringPlayNotificationFormatterTest {
 
     @Test
     void extractsWalkHitByPitchAndSacrificeFly() {
+        assertThat(extractResult("김민성 : 우월 투런")).isEqualTo("홈런");
+        assertThat(extractResult("김민성 : 좌중간 쓰리런")).isEqualTo("홈런");
+        assertThat(extractResult("김민성 : 우월 만루홈런")).isEqualTo("홈런");
         assertThat(extractResult("김민성 : 볼넷")).isEqualTo("밀어내기 볼넷");
         assertThat(extractResult("박승욱 : 몸에 맞는 공")).isEqualTo("밀어내기 사구");
         assertThat(extractResult("나승엽 : 좌익수 희생플라이 아웃")).isEqualTo("희생플라이");
@@ -84,7 +87,7 @@ class ScoringPlayNotificationFormatterTest {
         var text = ScoringPlayNotificationFormatter.leadChangeText(detail, 3, 4).orElseThrow();
 
         assertThat(text.title()).isEqualTo("롯데 역전");
-        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 3득점 · 롯데 6-4 한화");
+        assertThat(text.body()).isEqualTo("7회초 전준우 쓰리런 홈런, 3득점 · 롯데 6-4 한화");
     }
 
     @Test

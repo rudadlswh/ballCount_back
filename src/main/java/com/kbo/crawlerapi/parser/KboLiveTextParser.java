@@ -32,6 +32,7 @@ public class KboLiveTextParser {
         List<ParsedLiveTextBatterRecord> homeBatters = new ArrayList<>();
         List<ParsedLiveTextPitcherRecord> awayPitchers = new ArrayList<>();
         List<ParsedLiveTextPitcherRecord> homePitchers = new ArrayList<>();
+        List<List<BatterLineupHint>> batterLineupHints = parseBatterLineupHints(document);
         int batterTableIndex = 0;
         int pitcherTableIndex = 0;
 
@@ -39,7 +40,10 @@ public class KboLiveTextParser {
             List<String> headers = headers(table);
             if (containsAllHeaders(headers, REQUIRED_BATTER_HEADERS)) {
                 String teamSide = batterTableIndex == 0 ? "away" : "home";
-                List<ParsedLiveTextBatterRecord> records = parseBatterTable(table, headers, teamSide, batterTableIndex);
+                List<BatterLineupHint> lineupHints = batterLineupHints.size() > batterTableIndex
+                        ? batterLineupHints.get(batterTableIndex)
+                        : List.of();
+                List<ParsedLiveTextBatterRecord> records = parseBatterTable(table, headers, teamSide, batterTableIndex, lineupHints);
                 if ("away".equals(teamSide)) {
                     awayBatters.addAll(records);
                 } else {
@@ -70,7 +74,58 @@ public class KboLiveTextParser {
         );
     }
 
-    private List<ParsedLiveTextBatterRecord> parseBatterTable(Element table, List<String> headers, String teamSide, int sourceGroupIndex) {
+    private List<List<BatterLineupHint>> parseBatterLineupHints(Document document) {
+        List<List<BatterLineupHint>> groups = new ArrayList<>();
+        for (Element table : document.select("table")) {
+            List<String> headers = headers(table);
+            if (!isSummaryBatterLineupTable(table, headers)) {
+                continue;
+            }
+            List<BatterLineupHint> hints = new ArrayList<>();
+            List<Element> rows = dataRows(table);
+            for (int index = 0; index < rows.size(); index++) {
+                List<String> cells = rowCells(rows.get(index));
+                if (cells.size() < 3) {
+                    continue;
+                }
+                String playerName = emptyToNull(cells.get(2));
+                if (!hasText(playerName)) {
+                    continue;
+                }
+                hints.add(new BatterLineupHint(
+                        parseInteger(cells.get(0)),
+                        normalizePosition(cells.get(1)),
+                        playerName,
+                        index
+                ));
+            }
+            if (!hints.isEmpty()) {
+                groups.add(hints);
+            }
+        }
+        return groups;
+    }
+
+    private boolean isSummaryBatterLineupTable(Element table, List<String> headers) {
+        if (headers.isEmpty() || containsAllHeaders(headers, REQUIRED_BATTER_HEADERS)) {
+            return false;
+        }
+        String firstHeader = headers.get(0);
+        if (firstHeader == null || !firstHeader.contains("타자")) {
+            return false;
+        }
+        return dataRows(table).stream()
+                .map(this::rowCells)
+                .anyMatch(cells -> cells.size() >= 3 && parseInteger(cells.get(0)) != null && hasText(cells.get(1)) && hasText(cells.get(2)));
+    }
+
+    private List<ParsedLiveTextBatterRecord> parseBatterTable(
+            Element table,
+            List<String> headers,
+            String teamSide,
+            int sourceGroupIndex,
+            List<BatterLineupHint> lineupHints
+    ) {
         List<ParsedLiveTextBatterRecord> records = new ArrayList<>();
         List<Element> rows = dataRows(table);
         for (int index = 0; index < rows.size(); index++) {
@@ -84,7 +139,7 @@ public class KboLiveTextParser {
                     teamSide,
                     sourceGroupIndex,
                     parseInteger(firstByHeader(headers, cells, "타순", "순번", "순")),
-                    firstByHeader(headers, cells, "포지션", "위치", "수비"),
+                    resolveBatterPosition(headers, cells, lineupHints, index, playerName),
                     playerName,
                     parseInteger(valueByHeader(headers, cells, "타수")),
                     parseInteger(valueByHeader(headers, cells, "득점")),
@@ -101,6 +156,49 @@ public class KboLiveTextParser {
             ));
         }
         return records;
+    }
+
+    private String resolveBatterPosition(
+            List<String> headers,
+            List<String> cells,
+            List<BatterLineupHint> lineupHints,
+            int sourceOrder,
+            String playerName
+    ) {
+        String direct = normalizePosition(firstByHeader(headers, cells, "포지션", "위치", "수비"));
+        if (hasText(direct)) {
+            return direct;
+        }
+        Integer battingOrder = parseInteger(firstByHeader(headers, cells, "타순", "순번", "순"));
+        if (battingOrder != null) {
+            String byOrder = lineupHints.stream()
+                    .filter(hint -> battingOrder.equals(hint.battingOrder()))
+                    .map(BatterLineupHint::position)
+                    .filter(this::hasText)
+                    .findFirst()
+                    .orElse(null);
+            if (hasText(byOrder)) {
+                return byOrder;
+            }
+        }
+        String normalizedPlayerName = normalizePlayerName(playerName);
+        if (normalizedPlayerName != null) {
+            String byName = lineupHints.stream()
+                    .filter(hint -> normalizedPlayerName.equals(normalizePlayerName(hint.playerName())))
+                    .map(BatterLineupHint::position)
+                    .filter(this::hasText)
+                    .findFirst()
+                    .orElse(null);
+            if (hasText(byName)) {
+                return byName;
+            }
+        }
+        return lineupHints.stream()
+                .filter(hint -> hint.sourceOrder() == sourceOrder)
+                .map(BatterLineupHint::position)
+                .filter(this::hasText)
+                .findFirst()
+                .orElse(null);
     }
 
     private List<ParsedLiveTextPitcherRecord> parsePitcherTable(Element table, List<String> headers, String teamSide, int sourceGroupIndex) {
@@ -357,6 +455,46 @@ public class KboLiveTextParser {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private String normalizePlayerName(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String normalized = value.replaceAll("\\s+", "")
+                .replace("·", "")
+                .replace(".", "")
+                .trim()
+                .toLowerCase(java.util.Locale.ROOT);
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private String normalizePosition(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().replace(" ", "").toUpperCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "1", "P", "투", "投", "투수" -> "P";
+            case "2", "C", "포", "捕", "포수" -> "C";
+            case "3", "1B", "一", "1루", "1루수", "일" -> "1B";
+            case "4", "2B", "二", "2루", "2루수", "이" -> "2B";
+            case "5", "3B", "三", "3루", "3루수", "삼" -> "3B";
+            case "6", "SS", "유", "遊", "유격", "유격수" -> "SS";
+            case "7", "LF", "좌", "左", "좌익", "좌익수" -> "LF";
+            case "8", "CF", "중", "中", "중견", "중견수" -> "CF";
+            case "9", "RF", "우", "右", "우익", "우익수" -> "RF";
+            case "D", "DH", "지", "지명", "지명타자" -> "DH";
+            default -> value.trim();
+        };
+    }
+
+    private record BatterLineupHint(
+            Integer battingOrder,
+            String position,
+            String playerName,
+            int sourceOrder
+    ) {
     }
 
     private record ParsedEventResult(
