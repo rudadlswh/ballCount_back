@@ -623,6 +623,43 @@ class KboGameDetailParserTest {
         assertThat(detail.thirdBaseBattingOrder()).isEqualTo(4);
     }
 
+    @Test
+    void parsesOfficialLineupPositionsAsEnglishCodes() {
+        String payload = """
+                {
+                  "AWAY_ID": "LT",
+                  "HOME_ID": "SK",
+                  "arrHitter": [
+                    { "table1": "%s" },
+                    { "table1": "%s" }
+                  ]
+                }
+                """.formatted(
+                        escapedLineupTable(
+                                row("1", "8", "황성빈"),
+                                row("2", "4", "고승민"),
+                                row("3", "9", "레이예스"),
+                                row("4", "5", "한동희"),
+                                row("5", "3", "나승엽")
+                        ),
+                        escapedLineupTable(
+                                row("1", "6", "박성한"),
+                                row("2", "7", "에레디아"),
+                                row("3", "2", "조형우"),
+                                row("4", "D", "최정")
+                        )
+                );
+
+        var lineup = parser.parseLineupData(payload);
+
+        assertThat(lineup.awayTeamCode()).isEqualTo("LT");
+        assertThat(lineup.homeTeamCode()).isEqualTo("SK");
+        assertThat(lineup.away()).extracting(KboGameDetailParser.ParsedLineupPlayer::position)
+                .containsExactly("CF", "2B", "RF", "3B", "1B");
+        assertThat(lineup.home()).extracting(KboGameDetailParser.ParsedLineupPlayer::position)
+                .containsExactly("SS", "LF", "C", "DH");
+    }
+
     private KboGameDetailParser.ParsedGameDetail parseRunnerState(String officialHalf, int firstOrder, int secondOrder, int thirdOrder) {
         String payload = """
                 {
@@ -640,6 +677,32 @@ class KboGameDetailParserTest {
                 }
                 """.formatted(officialHalf, firstOrder, secondOrder, thirdOrder);
         return parser.parseGameList(payload).get(0);
+    }
+
+    private String row(String battingOrder, String position, String name) {
+        return """
+                {
+                  "row": [
+                    { "Text": "%s" },
+                    { "Text": "%s" },
+                    { "Text": "%s" }
+                  ]
+                }
+                """.formatted(battingOrder, position, name);
+    }
+
+    private String escapedLineupTable(String... rows) {
+        String table = """
+                {
+                  "rows": [
+                    %s
+                  ]
+                }
+                """.formatted(String.join(",", rows));
+        return table.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\r\\n");
     }
 
     private KboGameDetailParser.ParsedLineupData lineupData() {

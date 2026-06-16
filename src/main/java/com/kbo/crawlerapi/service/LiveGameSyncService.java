@@ -229,7 +229,11 @@ public class LiveGameSyncService {
                     teamRankService.refreshSeasonRankingsSafely(after.getGameDate().getYear());
                 }
 
-                List<NotificationEventDraft> drafts = detectChanges(before, GameState.from(after, latestSnapshot(after)), after);
+                List<NotificationEventDraft> drafts = detectChanges(
+                        before,
+                        GameState.from(after, latestSnapshot(after)),
+                        after
+                );
                 if (!drafts.isEmpty()) {
                     updatedCount++;
                     updatedGames.add(after.getPublicGameId());
@@ -524,7 +528,11 @@ public class LiveGameSyncService {
                 && after.getFinalConfirmedAt() != null);
     }
 
-    private List<NotificationEventDraft> detectChanges(GameState before, GameState after, Game game) {
+    private List<NotificationEventDraft> detectChanges(
+            GameState before,
+            GameState after,
+            Game game
+    ) {
         List<NotificationEventDraft> drafts = new ArrayList<>();
         if (before.status() != GameStatus.FINAL && !isLiveLike(before.status()) && isLiveLike(after.status())) {
             drafts.add(startedDraft(game));
@@ -634,9 +642,12 @@ public class LiveGameSyncService {
         String result = liveEventResult(game, "득점");
         String eventTeamId = scoringTeamId(game, before, after);
         ScoringPlayContext scoringContext = scoringPlayContext(game, before, after, eventTeamId);
-        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, scoringContext);
+        ScoringPlayResolution scoringPlayResolution = scoringPlayResolution(game, scoringContext);
+        ScoringPlayDetail scoringPlayDetail = scoringPlayResolution.detail();
         NotificationText detailedText = ScoringPlayNotificationFormatter.scoreChangeText(scoringPlayDetail).orElse(null);
         NotificationText fallbackText = scoringFallbackText(scoringContext);
+        String formattedMessage = detailedText == null ? fallbackText.body() : detailedText.body();
+        boolean fallbackUsed = detailedText == null;
 
         NotificationEventDraft draft = liveDraft(
                 game,
@@ -647,7 +658,7 @@ public class LiveGameSyncService {
                         game.getHomeScore()
                 ),
                 detailedText == null ? fallbackText.title() : detailedText.title(),
-                detailedText == null ? fallbackText.body() : detailedText.body(),
+                formattedMessage,
                 batterName,
                 pitcherName,
                 result,
@@ -655,6 +666,18 @@ public class LiveGameSyncService {
                 eventTeamId
         );
         addScoringPlayPayload(draft, scoringPlayDetail);
+        log.info(
+                "[ScoringFormatter] gameId={} inning={} inningHalf={} scoreDelta={} selectedEventType={} selectedEventText={} runScoredEventCount={} formattedMessage={} fallbackUsed={}",
+                game.getPublicGameId(),
+                scoringContext == null ? null : scoringContext.inning(),
+                scoringContext == null ? null : scoringContext.inningHalf(),
+                scoringContext == null ? runCount : scoringContext.scoreDelta(),
+                scoringPlayDetail == null ? null : scoringPlayDetail.selectedEventType(),
+                scoringPlayDetail == null ? null : scoringPlayDetail.selectedEventText(),
+                scoringPlayResolution.runScoredEventCount(),
+                formattedMessage,
+                fallbackUsed
+        );
         return draft;
     }
 
@@ -758,7 +781,7 @@ public class LiveGameSyncService {
     private NotificationEventDraft leadChangeDraft(Game game, GameState before, GameState after, String eventTeamId) {
         boolean tied = nullSafe(after.awayScore()) == nullSafe(after.homeScore());
         ScoringPlayContext scoringContext = scoringPlayContext(game, before, after, eventTeamId);
-        ScoringPlayDetail scoringPlayDetail = scoringPlayDetail(game, scoringContext);
+        ScoringPlayDetail scoringPlayDetail = scoringPlayResolution(game, scoringContext).detail();
         NotificationText detailedText = ScoringPlayNotificationFormatter
                 .leadChangeText(scoringPlayDetail, before.awayScore(), before.homeScore())
                 .orElse(null);
@@ -782,22 +805,24 @@ public class LiveGameSyncService {
         return draft;
     }
 
-    private ScoringPlayDetail scoringPlayDetail(Game game, ScoringPlayContext context) {
+    private ScoringPlayResolution scoringPlayResolution(Game game, ScoringPlayContext context) {
         if (gameEventReadRepository == null || context == null || context.battingTeamId() == null || game == null || game.getId() == null) {
-            return null;
+            return new ScoringPlayResolution(null, 0);
         }
         try {
-            return ScoringPlayDetailExtractor.extract(
-                    gameEventReadRepository.findRecentByGameId(game.getId(), 30),
+            List<GameEventReadRepository.GameEventRow> recentEvents = gameEventReadRepository.findRecentByGameId(game.getId(), 30);
+            ScoringPlayDetail detail = ScoringPlayDetailExtractor.extract(
+                    recentEvents,
                     context
             ).orElse(null);
+            return new ScoringPlayResolution(detail, ScoringPlayDetailExtractor.runScoredEventCount(recentEvents));
         } catch (RuntimeException exception) {
             log.debug(
                     "[LiveGameSync] scoring play detail unavailable game={} reason={}",
                     game.getPublicGameId(),
                     exception.getMessage()
             );
-            return null;
+            return new ScoringPlayResolution(null, 0);
         }
     }
 
@@ -943,6 +968,9 @@ public class LiveGameSyncService {
         draft.payload().put("scoringBattingTeamName", detail.battingTeamName());
         draft.payload().put("scoringAwayScoreAfter", detail.awayScoreAfter());
         draft.payload().put("scoringHomeScoreAfter", detail.homeScoreAfter());
+        draft.payload().put("scoringSelectedEventType", detail.selectedEventType());
+        draft.payload().put("scoringSelectedEventText", detail.selectedEventText());
+        draft.payload().put("scoringRunScoredEventCount", detail.runScoredEventCount());
     }
 
     private void addOnBaseDetailPayload(NotificationEventDraft draft, OnBaseDetailResolution resolution) {
@@ -1176,10 +1204,7 @@ public class LiveGameSyncService {
     }
 
     private String scoringFallbackBody(ScoringPlayContext context) {
-        String actor = hasText(context.previousBatterName())
-                ? context.previousBatterName().trim()
-                : context.battingTeamName();
-        String playText = "%s %s".formatted(actor, runsText(context.scoreDelta()));
+        String playText = "%s %s".formatted(context.battingTeamName(), runsText(context.scoreDelta()));
         String inningText = scoringInningText(context.inning(), context.inningHalf());
         if (hasText(inningText)) {
             return "%s %s · %s".formatted(inningText, playText, scoringScoreText(context));
@@ -1505,6 +1530,12 @@ public class LiveGameSyncService {
             OnBasePlayDetail detail,
             String detailSource,
             long durationMs
+    ) {
+    }
+
+    private record ScoringPlayResolution(
+            ScoringPlayDetail detail,
+            int runScoredEventCount
     ) {
     }
 

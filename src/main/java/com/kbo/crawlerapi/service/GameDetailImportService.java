@@ -15,6 +15,7 @@ import com.kbo.crawlerapi.parser.KboBoxscoreParser.ParsedBoxscore;
 import com.kbo.crawlerapi.parser.KboGameDetailParser;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedGameDetail;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
+import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupPlayer;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedScoreBoardStatus;
 import com.kbo.crawlerapi.parser.KboLineScoreParser;
 import com.kbo.crawlerapi.parser.KboLineScoreParser.ParsedLineScoreResult;
@@ -314,7 +315,9 @@ public class GameDetailImportService {
                 );
                 return LiveTextImportResult.skipped("empty");
             }
-            var result = gameLiveTextRecordService.saveLiveText(game, parsedLiveText, fetchedAt, lineupData);
+            ParsedLineupData effectiveLineupData = lineupDataForLiveText(game, lineupData, parsedLiveText);
+            logLiveTextLineupTransfer(game, providerGameId, lineupData, effectiveLineupData);
+            var result = gameLiveTextRecordService.saveLiveText(game, parsedLiveText, fetchedAt, effectiveLineupData);
             log.info(
                     "[KboLiveText] imported gameId={} providerGameId={} status={} batters={} pitchers={} events={}",
                     game.getPublicGameId(),
@@ -335,6 +338,80 @@ public class GameDetailImportService {
             );
             return LiveTextImportResult.skipped("error:" + exception.getMessage());
         }
+    }
+
+    private ParsedLineupData lineupDataForLiveText(Game game, ParsedLineupData lineupData, KboLiveTextParser.ParsedLiveText parsedLiveText) {
+        if (lineupData != null && lineupData.hasLineups()) {
+            return lineupData;
+        }
+        List<ParsedLineupPlayer> away = parsedLiveText.awayBatters().stream()
+                .filter(record -> record.position() != null && !record.position().isBlank())
+                .map(record -> new ParsedLineupPlayer(
+                        String.valueOf(record.battingOrder() == null ? record.sourceOrder() + 1 : record.battingOrder()),
+                        record.position(),
+                        record.playerName(),
+                        game.getAwayTeam() == null ? null : game.getAwayTeam().getTeamCode()
+                ))
+                .toList();
+        List<ParsedLineupPlayer> home = parsedLiveText.homeBatters().stream()
+                .filter(record -> record.position() != null && !record.position().isBlank())
+                .map(record -> new ParsedLineupPlayer(
+                        String.valueOf(record.battingOrder() == null ? record.sourceOrder() + 1 : record.battingOrder()),
+                        record.position(),
+                        record.playerName(),
+                        game.getHomeTeam() == null ? null : game.getHomeTeam().getTeamCode()
+                ))
+                .toList();
+        if (away.isEmpty() && home.isEmpty()) {
+            return lineupData == null ? ParsedLineupData.empty(null) : lineupData;
+        }
+        return new ParsedLineupData(
+                away,
+                home,
+                "live-text-lineup-fallback",
+                game.getAwayTeam() == null ? null : game.getAwayTeam().getTeamCode(),
+                game.getHomeTeam() == null ? null : game.getHomeTeam().getTeamCode()
+        );
+    }
+
+    private void logLiveTextLineupTransfer(
+            Game game,
+            String providerGameId,
+            ParsedLineupData originalLineupData,
+            ParsedLineupData effectiveLineupData
+    ) {
+        log.info(
+                "[KboLiveTextLineup] gameId={} publicGameId={} providerGameId={} originalLineupCount={} effectiveLineupCount={} awayTeamId={} homeTeamId={} awayTeamCode={} homeTeamCode={}",
+                game.getId(),
+                game.getPublicGameId(),
+                providerGameId,
+                lineupCount(originalLineupData),
+                lineupCount(effectiveLineupData),
+                game.getAwayTeam() == null ? null : game.getAwayTeam().getId(),
+                game.getHomeTeam() == null ? null : game.getHomeTeam().getId(),
+                game.getAwayTeam() == null ? null : game.getAwayTeam().getTeamCode(),
+                game.getHomeTeam() == null ? null : game.getHomeTeam().getTeamCode()
+        );
+        logLineupSamples(game.getAwayTeam() == null ? null : game.getAwayTeam().getId(), effectiveLineupData == null ? List.of() : effectiveLineupData.away());
+        logLineupSamples(game.getHomeTeam() == null ? null : game.getHomeTeam().getId(), effectiveLineupData == null ? List.of() : effectiveLineupData.home());
+    }
+
+    private int lineupCount(ParsedLineupData lineupData) {
+        if (lineupData == null) {
+            return 0;
+        }
+        return lineupData.away().size() + lineupData.home().size();
+    }
+
+    private void logLineupSamples(UUID teamId, List<ParsedLineupPlayer> lineup) {
+        lineup.stream().limit(3).forEach(player -> log.info(
+                "[KboLiveTextLineupSample] teamId={} teamCode={} battingOrder={} playerName={} position={}",
+                teamId,
+                player.teamCode(),
+                player.battingOrder(),
+                player.name(),
+                player.position()
+        ));
     }
 
     private void deliverLiveActivityUpdateIfNeeded(Game game, ParsedGameDetail parsedDetail) {

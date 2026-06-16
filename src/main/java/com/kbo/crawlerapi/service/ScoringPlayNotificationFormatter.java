@@ -13,7 +13,7 @@ public final class ScoringPlayNotificationFormatter {
         }
         return Optional.of(new NotificationText(
                 "%s 득점".formatted(detail.battingTeamName()),
-                body(detail)
+                scoreChangeBody(detail)
         ));
     }
 
@@ -64,6 +64,13 @@ public final class ScoringPlayNotificationFormatter {
         );
     }
 
+    private static String scoreChangeBody(ScoringPlayDetail detail) {
+        if (hasText(detail.selectedEventText())) {
+            return "%s, %s".formatted(detail.selectedEventText().trim(), runsText(detail.runsScored()));
+        }
+        return playAndRunsText(detail);
+    }
+
     private static String playAndRunsText(ScoringPlayDetail detail) {
         if (hasText(detail.batterName())) {
             return "%s, %s".formatted(playText(detail), runsText(detail.runsScored()));
@@ -72,12 +79,25 @@ public final class ScoringPlayNotificationFormatter {
     }
 
     private static String playText(ScoringPlayDetail detail) {
-        String result = detail.resultText().trim();
+        String result = resultLabel(detail);
         if (hasText(detail.batterName())) {
             return "%s %s".formatted(detail.batterName().trim(), result);
         }
         String suffix = "상대 실책".equals(result) ? "으로" : "로";
         return result + suffix;
+    }
+
+    private static String resultLabel(ScoringPlayDetail detail) {
+        String result = detail.resultText().trim();
+        if (!"홈런".equals(result)) {
+            return result;
+        }
+        return switch (Math.max(1, nullSafe(detail.runsScored()))) {
+            case 2 -> "투런 홈런";
+            case 3 -> "쓰리런 홈런";
+            case 4 -> "만루홈런";
+            default -> "홈런";
+        };
     }
 
     private static String inningText(Integer inning, String inningHalf) {
