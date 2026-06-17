@@ -12,3 +12,6 @@ build/
 .DS_Store
 
 *.p8
+
+# Operational database backups
+backups/
