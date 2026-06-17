@@ -1,5 +1,6 @@
 package com.kbo.crawlerapi.config;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
@@ -14,7 +15,7 @@ class ApnsProductionConfigurationGuardTest {
     }
 
     @Test
-    void productionConfigurationRejectsSandboxEnvironment() {
+    void productionConfigurationRejectsSandboxEnvironmentWhenPushEnabled() {
         ApnsProperties properties = configuredProperties();
         properties.setEnv("sandbox");
 
@@ -24,17 +25,20 @@ class ApnsProductionConfigurationGuardTest {
     }
 
     @Test
-    void productionConfigurationRequiresPushEnabled() {
+    void productionConfigurationAllowsPushDisabled() {
         ApnsProperties properties = configuredProperties();
         properties.setPushEnabled(false);
+        properties.setEnv("sandbox");
+        properties.setTeamId("");
+        properties.setKeyId("");
+        properties.setPrivateKeyPath("");
 
-        assertThatThrownBy(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Production APNs requires KBO_PUSH_ENABLED=true.");
+        assertThatCode(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+                .doesNotThrowAnyException();
     }
 
     @Test
-    void productionConfigurationRequiresPrivateKeyPath() {
+    void productionConfigurationRequiresPrivateKeyPathWhenPushEnabled() {
         ApnsProperties properties = configuredProperties();
         properties.setPrivateKeyPath("");
 

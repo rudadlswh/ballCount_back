@@ -19,8 +19,9 @@ public class ApnsProductionConfigurationGuard {
     @PostConstruct
     public void validateProductionConfiguration() {
         if (!apnsProperties.isPushEnabled()) {
-            throw new IllegalStateException("Production APNs requires KBO_PUSH_ENABLED=true.");
+            return;
         }
+
         if (!"production".equalsIgnoreCase(apnsProperties.getEnv())) {
             throw new IllegalStateException("Production APNs requires APNS_ENV=production.");
         }
