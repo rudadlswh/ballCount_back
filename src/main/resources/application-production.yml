@@ -26,10 +26,10 @@ app:
   live-sync:
     enabled: ${KBO_LIVE_SYNC_ENABLED:false}
   apns:
-    push-enabled: ${KBO_PUSH_ENABLED:true}
-    team-id: ${APNS_TEAM_ID}
-    key-id: ${APNS_KEY_ID}
+    push-enabled: ${KBO_PUSH_ENABLED:false}
+    team-id: ${APNS_TEAM_ID:}
+    key-id: ${APNS_KEY_ID:}
     bundle-id: ${APNS_BUNDLE_ID:com.chogm.kboScore}
-    private-key-path: ${APNS_PRIVATE_KEY_PATH}
+    private-key-path: ${APNS_PRIVATE_KEY_PATH:}
     env: ${APNS_ENV:production}
     test-enabled: ${KBO_APNS_TEST_ENABLED:false}
