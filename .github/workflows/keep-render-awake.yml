@@ -1,0 +1,40 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    # Weekdays Mon-Fri, KST 14:00~22:55 = UTC 05:00~13:55
+    - cron: "*/5 5-13 * * 1-5"
+
+    # Weekends Sat-Sun, KST 10:00~22:55 = UTC 01:00~13:55
+    - cron: "*/5 1-13 * * 6,0"
+
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ping Render backend
+        run: |
+          URL="https://kboscore-back.onrender.com/healthz"
+
+          echo "Ping: $URL"
+
+          status_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$URL")
+          curl_exit_code=$?
+
+          echo "curl exit code: $curl_exit_code"
+          echo "HTTP status: $status_code"
+
+          if [ "$curl_exit_code" -ne 0 ]; then
+            echo "curl failed"
+            exit 1
+          fi
+
+          if [ "$status_code" -ge 500 ]; then
+            echo "server error"
+            exit 1
+          fi
+
+          echo "ping succeeded"
