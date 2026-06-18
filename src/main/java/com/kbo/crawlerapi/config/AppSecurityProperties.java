@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class AppSecurityProperties {
 
     private String adminApiKey;
+    private long registrationRequestMaxBytes = 32 * 1024;
 
     public String getAdminApiKey() {
         return adminApiKey;
@@ -13,5 +14,13 @@ public class AppSecurityProperties {
 
     public void setAdminApiKey(String adminApiKey) {
         this.adminApiKey = adminApiKey;
+    }
+
+    public long getRegistrationRequestMaxBytes() {
+        return registrationRequestMaxBytes;
+    }
+
+    public void setRegistrationRequestMaxBytes(long registrationRequestMaxBytes) {
+        this.registrationRequestMaxBytes = registrationRequestMaxBytes;
     }
 }

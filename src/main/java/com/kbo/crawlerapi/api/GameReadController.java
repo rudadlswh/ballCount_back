@@ -29,6 +29,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @Tag(name = "Games", description = "App-facing read APIs for normalized KBO schedule, detail, and scoreboard data.")
 public class GameReadController {
 
+    private static final int MAX_PUBLIC_GAME_ID_LENGTH = 100;
+
     private final GameReadService gameReadService;
 
     public GameReadController(GameReadService gameReadService) {
@@ -82,6 +84,7 @@ public class GameReadController {
             @Parameter(description = "Public game identifier exposed by the app-facing API.", example = "20260401-LG-KIA")
             @PathVariable String gameId
     ) {
+        validateGameId(gameId);
         return gameReadService.getGameDetail(gameId);
     }
 
@@ -107,6 +110,7 @@ public class GameReadController {
             @Parameter(description = "Public game identifier exposed by the app-facing API.", example = "20260401-LG-KIA")
             @PathVariable String gameId
     ) {
+        validateGameId(gameId);
         return gameReadService.getGameLineScore(gameId);
     }
 
@@ -132,6 +136,7 @@ public class GameReadController {
             @Parameter(description = "Public game identifier exposed by the app-facing API.", example = "20260401-LG-KIA")
             @PathVariable String gameId
     ) {
+        validateGameId(gameId);
         return gameReadService.getGameBoxscore(gameId);
     }
 
@@ -194,5 +199,14 @@ public class GameReadController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date
     ) {
         return gameReadService.getScoreboard(date);
+    }
+
+    private void validateGameId(String gameId) {
+        if (gameId == null || gameId.isBlank()) {
+            throw new InvalidParameterException("gameId is required");
+        }
+        if (gameId.length() > MAX_PUBLIC_GAME_ID_LENGTH) {
+            throw new InvalidParameterException("gameId is too long");
+        }
     }
 }

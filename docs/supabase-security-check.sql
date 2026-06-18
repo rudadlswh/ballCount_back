@@ -27,8 +27,7 @@ where n.nspname = 'kbo_crawler_api'
   and c.relkind in ('r', 'p', 'v', 'm')
 order by c.relname, role_name;
 
--- 3) Tables with RLS disabled. In exposed schemas, every table should have RLS
--- enabled unless there is a documented reason not to expose it through the Data API.
+-- 3) Tables with RLS disabled. Keep RLS enabled on all app-owned tables.
 select
     schemaname,
     tablename,
@@ -39,20 +38,40 @@ where schemaname = 'kbo_crawler_api'
   and rowsecurity = false
 order by tablename;
 
--- 4) Sensitive backend-owned tables: remove anon/authenticated access.
--- These tables should be written/read only by the backend service credentials.
+-- 4) Sensitive/backend-owned and raw tables: remove anon/authenticated access.
+-- The iOS app should read narrow public projection views instead of raw tables
+-- that may contain device identifiers, raw hashes, crawler failures, or internal
+-- operational state.
+revoke all privileges on table kbo_crawler_api.game_snapshots from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.line_scores from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.game_events from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.game_batter_records from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.game_pitcher_records from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.team_ranks from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.notification_devices from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.notification_events from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.live_activity_tokens from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.crawl_jobs from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.crawl_failures from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.crawl_raw_archive from anon, authenticated;
 
+alter table kbo_crawler_api.teams enable row level security;
+alter table kbo_crawler_api.games enable row level security;
+alter table kbo_crawler_api.game_snapshots enable row level security;
+alter table kbo_crawler_api.line_scores enable row level security;
+alter table kbo_crawler_api.game_events enable row level security;
+alter table kbo_crawler_api.game_batter_records enable row level security;
+alter table kbo_crawler_api.game_pitcher_records enable row level security;
+alter table kbo_crawler_api.team_ranks enable row level security;
 alter table kbo_crawler_api.notification_devices enable row level security;
+alter table kbo_crawler_api.notification_events enable row level security;
 alter table kbo_crawler_api.live_activity_tokens enable row level security;
 alter table kbo_crawler_api.crawl_jobs enable row level security;
 alter table kbo_crawler_api.crawl_failures enable row level security;
+alter table kbo_crawler_api.crawl_raw_archive enable row level security;
 
--- 5) Public app read examples. Keep grants narrow: grant only read projections
--- that the iOS app must call directly, not backend-owned raw tables.
+-- 5) Public app read examples. Keep grants narrow: direct SELECT is allowed
+-- only for teams/games plus app-facing projection views.
 grant usage on schema kbo_crawler_api to anon, authenticated;
 
 grant select on table kbo_crawler_api.teams to anon, authenticated;
@@ -69,8 +88,9 @@ revoke insert, update, delete on table kbo_crawler_api.public_latest_game_snapsh
 revoke insert, update, delete on table kbo_crawler_api.public_game_batter_records from anon, authenticated;
 revoke insert, update, delete on table kbo_crawler_api.public_game_pitcher_records from anon, authenticated;
 
--- 6) View safety check. On Postgres 15+, public views should use
--- security_invoker=true so underlying table RLS still applies.
+-- 6) View safety check. Current production policy uses security_invoker=false
+-- for public projection views and treats each view definition as the public
+-- boundary. Verify these views do not include sensitive columns.
 select
     n.nspname as schema_name,
     c.relname as view_name,
@@ -80,3 +100,10 @@ join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'kbo_crawler_api'
   and c.relkind in ('v', 'm')
 order by c.relname;
+
+-- 7) Expected public projection view options. reloptions should show
+-- security_invoker=false where the option is present.
+alter view if exists kbo_crawler_api.public_latest_game_snapshots set (security_invoker = false);
+alter view if exists kbo_crawler_api.public_game_batter_records set (security_invoker = false);
+alter view if exists kbo_crawler_api.public_game_pitcher_records set (security_invoker = false);
+alter view if exists kbo_crawler_api.team_rank_2026 set (security_invoker = false);

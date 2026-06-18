@@ -12,7 +12,7 @@ public class AdminApiKeyFilterConfig {
         FilterRegistrationBean<AdminApiKeyFilter> registration = new FilterRegistrationBean<>(
                 new AdminApiKeyFilter(properties)
         );
-        registration.addUrlPatterns("/admin", "/admin/*");
+        registration.addUrlPatterns("/admin", "/admin/*", "/internal", "/internal/*");
         registration.setOrder(0);
         return registration;
     }

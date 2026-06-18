@@ -133,6 +133,13 @@ class GameReadControllerWebMvcTest {
     }
 
     @Test
+    void getGameBoxscoreRejectsTooLongGameId() throws Exception {
+        mockMvc.perform(get("/api/v1/games/" + "A".repeat(101) + "/boxscore"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+    }
+
+    @Test
     void getGamesByMonthRejectsInvalidMonth() throws Exception {
         mockMvc.perform(get("/api/v1/games/month").param("year", "2026").param("month", "13"))
                 .andExpect(status().isBadRequest())

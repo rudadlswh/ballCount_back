@@ -37,11 +37,11 @@ public class StaleGameReconciliationService {
                 continue;
             }
             try {
-                LiveGameSyncService.LiveSyncSummary summary = liveGameSyncService.sync(date, true);
+                LiveGameSyncService.LiveSyncSummary summary = publicSummary(liveGameSyncService.sync(date, true));
                 summaries.add(summary);
                 dateResults.add(new StaleGameReconciliationDateResult(date, StaleGameReconciliationDateStatus.PROCESSED, null, summary));
             } catch (RuntimeException exception) {
-                dateResults.add(new StaleGameReconciliationDateResult(date, StaleGameReconciliationDateStatus.FAILED, exception.getMessage(), null));
+                dateResults.add(new StaleGameReconciliationDateResult(date, StaleGameReconciliationDateStatus.FAILED, "refresh failed", null));
             } finally {
                 inFlightDates.remove(date);
             }
@@ -60,6 +60,24 @@ public class StaleGameReconciliationService {
                 skippedAlreadyInProgressCount,
                 failedCount,
                 dateResults
+        );
+    }
+
+    private LiveGameSyncService.LiveSyncSummary publicSummary(LiveGameSyncService.LiveSyncSummary summary) {
+        return new LiveGameSyncService.LiveSyncSummary(
+                summary.date(),
+                summary.scannedCount(),
+                summary.candidateCount(),
+                summary.updatedCount(),
+                summary.eventCreatedCount(),
+                summary.notificationSentCount(),
+                summary.notificationSkippedCount(),
+                summary.failedCount(),
+                summary.updatedGames(),
+                List.of(),
+                summary.errors().stream()
+                        .map(error -> "refresh failed")
+                        .toList()
         );
     }
 

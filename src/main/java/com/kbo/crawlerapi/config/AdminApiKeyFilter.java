@@ -23,7 +23,7 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        if (!isAdminPath(request)) {
+        if (!isProtectedPath(request)) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -34,13 +34,16 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private boolean isAdminPath(HttpServletRequest request) {
+    private boolean isProtectedPath(HttpServletRequest request) {
         String path = request.getRequestURI();
         String contextPath = request.getContextPath();
         if (contextPath != null && !contextPath.isBlank() && path.startsWith(contextPath)) {
             path = path.substring(contextPath.length());
         }
-        return path.equals("/admin") || path.startsWith("/admin/");
+        return path.equals("/admin")
+                || path.startsWith("/admin/")
+                || path.equals("/internal")
+                || path.startsWith("/internal/");
     }
 
     private boolean apiKeyMatches(String candidate) {

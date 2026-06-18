@@ -120,6 +120,17 @@ class StaleGameReconciliationControllerWebMvcTest {
         }
     }
 
+    @Test
+    void reconcileStaleGamesDoesNotExposeEventKeysOrInternalErrors() {
+        StaleGameReconciliationService reconciliationService = new StaleGameReconciliationService(new FailingSummaryLiveGameSyncService());
+
+        StaleGameReconciliationResult result = reconciliationService.reconcile(List.of(LocalDate.of(2026, 5, 8)));
+
+        assertThat(result.dateResults()).hasSize(1);
+        assertThat(result.dateResults().get(0).summary().events()).isEmpty();
+        assertThat(result.dateResults().get(0).summary().errors()).containsExactly("refresh failed");
+    }
+
     private static final class RecordingStaleGameReconciliationService extends StaleGameReconciliationService {
         private List<LocalDate> requestedDates = List.of();
 
@@ -167,6 +178,30 @@ class StaleGameReconciliationControllerWebMvcTest {
                 Thread.currentThread().interrupt();
             }
             return new LiveSyncSummary(date, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of());
+        }
+    }
+
+    private static final class FailingSummaryLiveGameSyncService extends com.kbo.crawlerapi.service.LiveGameSyncService {
+
+        private FailingSummaryLiveGameSyncService() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public LiveSyncSummary sync(LocalDate date, boolean force) {
+            return new LiveSyncSummary(
+                    date,
+                    1,
+                    1,
+                    0,
+                    1,
+                    0,
+                    0,
+                    1,
+                    List.of(),
+                    List.of("internal-event-key"),
+                    List.of("internal stack or upstream detail")
+            );
         }
     }
 }

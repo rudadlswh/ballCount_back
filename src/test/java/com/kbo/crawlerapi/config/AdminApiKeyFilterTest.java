@@ -6,8 +6,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kbo.crawlerapi.api.AdminRankController;
+import com.kbo.crawlerapi.api.InternalDetailRefreshOrchestrationController;
 import com.kbo.crawlerapi.api.PublicPageController;
+import com.kbo.crawlerapi.service.DetailRefreshOrchestratorService;
 import com.kbo.crawlerapi.service.TeamRankService;
+import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -27,7 +30,8 @@ class AdminApiKeyFilterTest {
         teamRankService = new StubTeamRankService();
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new PublicPageController(),
-                        new AdminRankController(teamRankService)
+                        new AdminRankController(teamRankService),
+                        new InternalDetailRefreshOrchestrationController(new StubDetailRefreshOrchestratorService())
                 )
                 .addFilters(new AdminApiKeyFilter(properties))
                 .build();
@@ -83,6 +87,19 @@ class AdminApiKeyFilterTest {
         assertThat(teamRankService.requestedSeason).isEqualTo(2026);
     }
 
+    @Test
+    void internalRequestWithoutApiKeyReturnsUnauthorized() throws Exception {
+        mockMvc.perform(post("/internal/orchestration/detail-refresh-pass"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void internalRequestWithValidApiKeyReachesController() throws Exception {
+        mockMvc.perform(post("/internal/orchestration/detail-refresh-pass")
+                        .header(AdminApiKeyFilter.ADMIN_API_KEY_HEADER, ADMIN_API_KEY))
+                .andExpect(status().isOk());
+    }
+
     private static final class StubTeamRankService extends TeamRankService {
 
         private Integer requestedSeason;
@@ -95,6 +112,25 @@ class AdminApiKeyFilterTest {
         public TeamRankRefreshResult refreshSeasonRankings(int season) {
             requestedSeason = season;
             return new TeamRankRefreshResult(season, 42, 10);
+        }
+    }
+
+    private static final class StubDetailRefreshOrchestratorService extends DetailRefreshOrchestratorService {
+
+        private StubDetailRefreshOrchestratorService() {
+            super(null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public DetailRefreshPassResult runPass(LocalDate date, boolean execute) {
+            return new DetailRefreshPassResult(
+                    LocalDate.of(2026, 4, 9),
+                    execute,
+                    0,
+                    0,
+                    java.util.List.of(),
+                    java.util.List.of()
+            );
         }
     }
 }
