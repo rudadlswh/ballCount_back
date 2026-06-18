@@ -20,6 +20,23 @@ Flyway and JPA use the dedicated `kbo_crawler_api` schema inside the `kbo` datab
 ./gradlew bootRun
 ```
 
+## Production profile
+
+Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Start from
+`.env.production.example`, then set the real database and APNs values outside Git:
+
+- `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
+- `APNS_ENV=production`
+- `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID=com.chogm.kboScore`
+- `APNS_PRIVATE_KEY_PATH`
+- `KBO_PUSH_ENABLED=true`
+
+The production profile disables Swagger/OpenAPI UI, keeps scheduler phases opt-in,
+and defaults APNs to the production gateway. Startup fails under the production
+profile unless `KBO_PUSH_ENABLED=true`, `APNS_ENV=production`,
+`APNS_BUNDLE_ID=com.chogm.kboScore`, `APNS_TEAM_ID`, `APNS_KEY_ID`, and
+`APNS_PRIVATE_KEY_PATH` are all configured.
+
 ## OpenAPI and Swagger UI
 
 When the app is running locally, inspect the documented public API surface at:

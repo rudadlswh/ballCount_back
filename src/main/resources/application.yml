@@ -1,6 +1,9 @@
 spring:
   config:
     import: optional:file:./.env[.properties]
+  profiles:
+    group:
+      prod: production
   application:
     name: kbo-crawler-api
   datasource:
