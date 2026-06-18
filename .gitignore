@@ -16,3 +16,6 @@ build/
 # Operational database backups
 backups/
 .env
+*.log
+app.log
+app.old.log

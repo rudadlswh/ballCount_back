@@ -38,6 +38,10 @@ public final class TeamCatalog {
         return teamDefinition.publicCode();
     }
 
+    public static boolean isSupportedTeamCode(String teamCode) {
+        return TEAM_CODE_MAP.containsKey(teamCode);
+    }
+
     public record TeamDefinition(
             String teamCode,
             String name,

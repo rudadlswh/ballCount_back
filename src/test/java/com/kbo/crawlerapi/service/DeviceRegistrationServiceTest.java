@@ -1,7 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -86,8 +86,10 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.empty());
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.empty());
 
-        service.register("ios", "sandbox", "token-123", null, "lg", true);
+        service.register("ios", "sandbox", "token-123", "install-1", "lg", true);
 
         ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
         verify(notificationDeviceRepository).save(deviceCaptor.capture());
@@ -103,14 +105,48 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
-    void developmentEnvironmentAliasesToSandbox() {
+    void rejectsUnsupportedEnvironmentAlias() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
-        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
-                .thenReturn(Optional.empty());
 
-        service.register("ios", "development", "token-123", null, null, false);
+        assertThatThrownBy(() -> service.register("ios", "development", "token-123", "install-1", null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("environment must be sandbox or production");
+    }
 
-        verify(notificationDeviceRepository).save(any(NotificationDevice.class));
+    @Test
+    void rejectsUnsupportedPlatform() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+
+        assertThatThrownBy(() -> service.register("android", "sandbox", "token-123", "install-1", null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("platform must be ios");
+    }
+
+    @Test
+    void rejectsMissingInstallationId() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+
+        assertThatThrownBy(() -> service.register("ios", "sandbox", "token-123", " ", null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("installationId is required");
+    }
+
+    @Test
+    void rejectsInvalidFavoriteTeamId() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+
+        assertThatThrownBy(() -> service.register("ios", "sandbox", "token-123", "install-1", "invalid-team", false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("favoriteTeamId is invalid");
+    }
+
+    @Test
+    void rejectsOverlongDeviceToken() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+
+        assertThatThrownBy(() -> service.register("ios", "sandbox", "a".repeat(513), "install-1", null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("deviceToken is too long");
     }
 
     @Test
@@ -178,11 +214,13 @@ class DeviceRegistrationServiceTest {
     @Test
     void registeringSameTokenRefreshesLastSeenAt() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
-        NotificationDevice existing = device("ios", "sandbox", "token-123", null, "ssg", true);
+        NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
+        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+                .thenReturn(Optional.of(existing));
 
-        service.register("ios", "sandbox", "token-123", null, "ssg", true);
+        service.register("ios", "sandbox", "token-123", "install-1", "ssg", true);
 
         ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
         verify(notificationDeviceRepository).save(deviceCaptor.capture());

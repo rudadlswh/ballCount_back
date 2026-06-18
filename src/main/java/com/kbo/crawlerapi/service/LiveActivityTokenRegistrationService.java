@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class LiveActivityTokenRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveActivityTokenRegistrationService.class);
+    private static final int TOKEN_PREFIX_LENGTH = 8;
 
     private final LiveActivityTokenRepository liveActivityTokenRepository;
     private final Clock applicationClock;
@@ -208,7 +209,7 @@ public class LiveActivityTokenRegistrationService {
     }
 
     private String tokenPrefix(String token) {
-        return token.substring(0, Math.min(12, token.length()));
+        return token.substring(0, Math.min(TOKEN_PREFIX_LENGTH, token.length()));
     }
 
     public record LiveActivityTokenRegistrationCommand(
