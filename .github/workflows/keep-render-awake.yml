@@ -2,12 +2,7 @@ name: Keep Render Awake
 
 on:
   schedule:
-    # Weekdays Mon-Fri, KST 14:00~22:55 = UTC 05:00~13:55
-    - cron: "*/5 5-13 * * 1-5"
-
-    # Weekends Sat-Sun, KST 10:00~22:55 = UTC 01:00~13:55
-    - cron: "*/5 1-13 * * 6,0"
-
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -15,10 +10,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Ping Render backend
+      - name: Ping Render backend during KST service window
         run: |
-          URL="https://kboscore-back.onrender.com/healthz"
+          KST_DOW=$(TZ=Asia/Seoul date +%u)
+          KST_HOUR=$(TZ=Asia/Seoul date +%H)
+          KST_TIME=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S %Z')
 
+          echo "KST time: $KST_TIME"
+          echo "KST day-of-week: $KST_DOW"
+          echo "KST hour: $KST_HOUR"
+
+          SHOULD_PING=false
+
+          # Weekdays Mon-Fri, KST 14:00~22:59
+          if [ "$KST_DOW" -ge 1 ] && [ "$KST_DOW" -le 5 ] && [ "$KST_HOUR" -ge 14 ] && [ "$KST_HOUR" -le 22 ]; then
+            SHOULD_PING=true
+          fi
+
+          # Weekends Sat-Sun, KST 10:00~22:59
+          if [ "$KST_DOW" -ge 6 ] && [ "$KST_HOUR" -ge 10 ] && [ "$KST_HOUR" -le 22 ]; then
+            SHOULD_PING=true
+          fi
+
+          if [ "$SHOULD_PING" != "true" ]; then
+            echo "Outside keep-awake window. Skipping ping."
+            exit 0
+          fi
+
+          URL="https://kboscore-back.onrender.com/healthz"
           echo "Ping: $URL"
 
           status_code=$(curl -s -o /dev/null -w "%{http_code}" \
