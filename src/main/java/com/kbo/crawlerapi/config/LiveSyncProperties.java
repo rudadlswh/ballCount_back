@@ -17,7 +17,7 @@ public class LiveSyncProperties {
         this.pregameCheckInterval = pregameCheckInterval;
     }
     private boolean enabled = false;
-    private Duration schedulerInterval = Duration.ofSeconds(10);
+    private Duration schedulerInterval = Duration.ofSeconds(2);
     private Duration pregameEligibilityWindow = Duration.ofHours(4);
     private Duration pregameTtl = Duration.ofMinutes(3);
     private Duration liveTtl = Duration.ofSeconds(30);

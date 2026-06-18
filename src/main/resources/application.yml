@@ -47,7 +47,7 @@ app:
     post-final-interval: PT10S
   live-sync:
     enabled: ${KBO_LIVE_SYNC_ENABLED:false}
-    scheduler-interval: PT5S
+    scheduler-interval: ${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT2S}
     detail-extraction-timeout: PT0.1S
     pregame-ttl: PT3M
     live-ttl: PT15S

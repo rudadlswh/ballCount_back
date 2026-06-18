@@ -59,7 +59,7 @@ public class LiveGameSyncScheduler {
         this.applicationClock = applicationClock;
     }
 
-    @Scheduled(fixedDelayString = "${app.live-sync.scheduler-interval:PT5S}")
+    @Scheduled(fixedDelayString = "${app.live-sync.scheduler-interval:PT2S}")
     public void runTick() {
         if (!properties.isEnabled()) {
             log.info("[LiveGameSync] skipped disabled");
