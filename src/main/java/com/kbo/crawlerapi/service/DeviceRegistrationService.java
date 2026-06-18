@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
+import com.kbo.crawlerapi.support.TeamCatalog;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.Locale;
@@ -16,7 +17,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class DeviceRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceRegistrationService.class);
-    private static final int TOKEN_PREFIX_LENGTH = 12;
+    private static final int TOKEN_PREFIX_LENGTH = 8;
+    private static final int MAX_DEVICE_TOKEN_LENGTH = 512;
+    private static final int MAX_INSTALLATION_ID_LENGTH = 100;
+    private static final int MAX_FAVORITE_TEAM_ID_LENGTH = 30;
 
     private final NotificationDeviceRepository notificationDeviceRepository;
     private final Clock applicationClock;
@@ -49,8 +53,8 @@ public class DeviceRegistrationService {
         String normalizedPlatform = normalizePlatform(platform);
         String normalizedEnvironment = normalizeEnvironment(environment);
         String normalizedToken = requireDeviceToken(deviceToken);
-        String normalizedInstallationId = blankToNull(installationId);
-        String normalizedFavoriteTeamId = blankToNull(favoriteTeamId);
+        String normalizedInstallationId = requireInstallationId(installationId);
+        String normalizedFavoriteTeamId = normalizeFavoriteTeamId(favoriteTeamId);
         DeviceNotificationSettings normalizedSettings = settings == null ? DeviceNotificationSettings.defaults() : settings;
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
@@ -136,7 +140,11 @@ public class DeviceRegistrationService {
         if (platform == null || platform.isBlank()) {
             return "ios";
         }
-        return platform.trim().toLowerCase(Locale.ROOT);
+        String normalized = platform.trim().toLowerCase(Locale.ROOT);
+        if (!"ios".equals(normalized)) {
+            throw new IllegalArgumentException("platform must be ios");
+        }
+        return normalized;
     }
 
     private String normalizeEnvironment(String environment) {
@@ -144,12 +152,6 @@ public class DeviceRegistrationService {
             return "sandbox";
         }
         String normalized = environment.trim().toLowerCase(Locale.ROOT);
-        if ("development".equals(normalized) || "debug".equals(normalized)) {
-            return "sandbox";
-        }
-        if ("release".equals(normalized)) {
-            return "production";
-        }
         if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
             throw new IllegalArgumentException("environment must be sandbox or production");
         }
@@ -160,7 +162,34 @@ public class DeviceRegistrationService {
         if (deviceToken == null || deviceToken.isBlank()) {
             throw new IllegalArgumentException("deviceToken is required");
         }
-        return deviceToken.trim();
+        String normalized = deviceToken.trim();
+        if (normalized.length() > MAX_DEVICE_TOKEN_LENGTH) {
+            throw new IllegalArgumentException("deviceToken is too long");
+        }
+        return normalized;
+    }
+
+    private String requireInstallationId(String installationId) {
+        if (installationId == null || installationId.isBlank()) {
+            throw new IllegalArgumentException("installationId is required");
+        }
+        String normalized = installationId.trim();
+        if (normalized.length() > MAX_INSTALLATION_ID_LENGTH) {
+            throw new IllegalArgumentException("installationId is too long");
+        }
+        return normalized;
+    }
+
+    private String normalizeFavoriteTeamId(String favoriteTeamId) {
+        String normalized = blankToNull(favoriteTeamId);
+        if (normalized == null) {
+            return null;
+        }
+        normalized = normalized.toLowerCase(Locale.ROOT);
+        if (normalized.length() > MAX_FAVORITE_TEAM_ID_LENGTH || !TeamCatalog.isSupportedTeamCode(normalized)) {
+            throw new IllegalArgumentException("favoriteTeamId is invalid");
+        }
+        return normalized;
     }
 
     private String blankToNull(String value) {
