@@ -16,3 +16,6 @@ build/
 # Operational database backups
 backups/
 .env
+*.log
+V*_current_modified_backup.sql
+game-list-*.json
