@@ -21,7 +21,7 @@ jobs:
 
           echo "Ping: $URL"
 
-          status_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$URL")
+          status_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$URL")
           curl_exit_code=$?
 
           echo "curl exit code: $curl_exit_code"
