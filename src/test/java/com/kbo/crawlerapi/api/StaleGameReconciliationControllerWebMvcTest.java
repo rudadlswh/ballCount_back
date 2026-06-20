@@ -188,7 +188,7 @@ class StaleGameReconciliationControllerWebMvcTest {
     @Test
     void concurrentReconcileRequestsForSameDateSkipSecondRequestWhileFirstIsRunning() throws Exception {
         BlockingLiveGameSyncService liveSyncService = new BlockingLiveGameSyncService();
-        StaleGameReconciliationService reconciliationService = new StaleGameReconciliationService(liveSyncService);
+        StaleGameReconciliationService reconciliationService = realService(liveSyncService);
         LocalDate date = LocalDate.of(2026, 5, 8);
         var executor = Executors.newFixedThreadPool(1);
 
@@ -217,7 +217,7 @@ class StaleGameReconciliationControllerWebMvcTest {
 
     @Test
     void reconcileStaleGamesDoesNotExposeEventKeysOrInternalErrors() {
-        StaleGameReconciliationService reconciliationService = new StaleGameReconciliationService(new FailingSummaryLiveGameSyncService());
+        StaleGameReconciliationService reconciliationService = realService(new FailingSummaryLiveGameSyncService());
 
         StaleGameReconciliationResult result = reconciliationService.reconcile(List.of(LocalDate.of(2026, 5, 8)));
 
@@ -230,7 +230,7 @@ class StaleGameReconciliationControllerWebMvcTest {
         private List<LocalDate> requestedDates = List.of();
 
         private RecordingStaleGameReconciliationService() {
-            super(null);
+            super(new CountingLiveGameSyncService(), new KboReconcileProperties(), FIXED_CLOCK);
         }
 
         @Override

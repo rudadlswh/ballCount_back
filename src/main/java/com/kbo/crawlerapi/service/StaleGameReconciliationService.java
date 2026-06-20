@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -26,8 +27,12 @@ public class StaleGameReconciliationService {
     private final Set<LocalDate> inFlightDates = ConcurrentHashMap.newKeySet();
     private final Map<LocalDate, Instant> publicCooldownUntilByDate = new ConcurrentHashMap<>();
 
-    public StaleGameReconciliationService(LiveGameSyncService liveGameSyncService) {
-        this(liveGameSyncService, new KboReconcileProperties(), Clock.system(KST));
+    @Autowired
+    public StaleGameReconciliationService(
+            LiveGameSyncService liveGameSyncService,
+            KboReconcileProperties properties
+    ) {
+        this(liveGameSyncService, properties, Clock.system(KST));
     }
 
     public StaleGameReconciliationService(
@@ -35,9 +40,9 @@ public class StaleGameReconciliationService {
             KboReconcileProperties properties,
             Clock applicationClock
     ) {
-        this.liveGameSyncService = liveGameSyncService;
-        this.properties = properties == null ? new KboReconcileProperties() : properties;
-        this.applicationClock = applicationClock == null ? Clock.system(KST) : applicationClock;
+        this.liveGameSyncService = Objects.requireNonNull(liveGameSyncService, "liveGameSyncService must not be null");
+        this.properties = Objects.requireNonNull(properties, "properties must not be null");
+        this.applicationClock = Objects.requireNonNull(applicationClock, "applicationClock must not be null");
     }
 
     public StaleGameReconciliationResult reconcilePublic(List<LocalDate> dates) {
