@@ -44,3 +44,7 @@ app:
     private-key-path: ${APNS_PRIVATE_KEY_PATH:}
     env: ${APNS_ENV:production}
     test-enabled: ${KBO_APNS_TEST_ENABLED:false}
+
+kbo:
+  admin:
+    api-key: ${KBO_ADMIN_API_KEY:}

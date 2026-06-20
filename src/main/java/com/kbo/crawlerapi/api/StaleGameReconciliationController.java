@@ -31,7 +31,17 @@ public class StaleGameReconciliationController {
         if (request == null || request.dates() == null || request.dates().isEmpty()) {
             throw new InvalidParameterException("dates must not be empty");
         }
-        return staleGameReconciliationService.reconcile(request.dates());
+        return staleGameReconciliationService.reconcilePublic(request.dates());
+    }
+
+    @PostMapping("/admin/games/reconcile-stale")
+    public StaleGameReconciliationResult reconcileStaleGamesAsAdmin(
+            @RequestBody StaleGameReconciliationRequest request
+    ) {
+        if (request == null || request.dates() == null || request.dates().isEmpty()) {
+            throw new InvalidParameterException("dates must not be empty");
+        }
+        return staleGameReconciliationService.reconcileAdmin(request.dates());
     }
 
     public record StaleGameReconciliationRequest(

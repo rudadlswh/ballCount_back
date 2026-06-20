@@ -65,7 +65,11 @@ public class DeviceRegistrationService {
         );
         Optional<NotificationDevice> installationMatchedDevice = normalizedInstallationId == null
                 ? Optional.empty()
-                : notificationDeviceRepository.findByInstallationId(normalizedInstallationId);
+                : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(
+                        normalizedPlatform,
+                        normalizedEnvironment,
+                        normalizedInstallationId
+                );
 
         boolean created = installationMatchedDevice.isEmpty() && tokenMatchedDevice.isEmpty();
         NotificationDevice device = installationMatchedDevice

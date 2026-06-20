@@ -7,12 +7,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.kbo.crawlerapi.config.AdminApiKeyFilter;
+import com.kbo.crawlerapi.config.AppSecurityProperties;
+import com.kbo.crawlerapi.config.KboAdminProperties;
+import com.kbo.crawlerapi.config.KboReconcileProperties;
 import com.kbo.crawlerapi.service.LiveGameSyncService.LiveSyncSummary;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationDateResult;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationDateStatus;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationResult;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -30,21 +37,16 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class StaleGameReconciliationControllerWebMvcTest {
 
+    private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-06-19T03:00:00Z"), ZoneId.of("Asia/Seoul"));
+    private static final String ADMIN_KEY = "test-admin-key";
+
     private RecordingStaleGameReconciliationService service;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         service = new RecordingStaleGameReconciliationService();
-        mockMvc = MockMvcBuilders.standaloneSetup(new StaleGameReconciliationController(service))
-                .setControllerAdvice(new ApiExceptionHandler())
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(
-                        Jackson2ObjectMapperBuilder.json()
-                                .modules(new JavaTimeModule())
-                                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-                                .build()
-                ))
-                .build();
+        mockMvc = mockMvc(new StaleGameReconciliationController(service));
     }
 
     @Test
@@ -88,6 +90,99 @@ class StaleGameReconciliationControllerWebMvcTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+    }
+
+    @Test
+    void publicReconcileRejectsMoreThanThreeUniqueDates() throws Exception {
+        MockMvc publicMockMvc = mockMvc(new StaleGameReconciliationController(realService(new CountingLiveGameSyncService())));
+
+        publicMockMvc.perform(post("/api/v1/games/reconcile-stale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-06-16","2026-06-17","2026-06-18","2026-06-19"]}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+    }
+
+    @Test
+    void publicReconcileRejectsFutureDate() throws Exception {
+        MockMvc publicMockMvc = mockMvc(new StaleGameReconciliationController(realService(new CountingLiveGameSyncService())));
+
+        publicMockMvc.perform(post("/api/v1/games/reconcile-stale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-06-20"]}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+    }
+
+    @Test
+    void publicReconcileRejectsDateOlderThanAllowedWindow() throws Exception {
+        MockMvc publicMockMvc = mockMvc(new StaleGameReconciliationController(realService(new CountingLiveGameSyncService())));
+
+        publicMockMvc.perform(post("/api/v1/games/reconcile-stale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-06-11"]}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+    }
+
+    @Test
+    void publicReconcileDeduplicatesDuplicateDates() throws Exception {
+        CountingLiveGameSyncService liveSyncService = new CountingLiveGameSyncService();
+        MockMvc publicMockMvc = mockMvc(new StaleGameReconciliationController(realService(liveSyncService)));
+
+        publicMockMvc.perform(post("/api/v1/games/reconcile-stale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-06-19","2026-06-19"]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dates.length()").value(1))
+                .andExpect(jsonPath("$.processedDateCount").value(1));
+
+        assertThat(liveSyncService.syncCount).hasValue(1);
+    }
+
+    @Test
+    void adminReconcileRejectsMissingOrWrongAdminKey() throws Exception {
+        MockMvc adminMockMvc = adminMockMvc(new StaleGameReconciliationController(realService(new CountingLiveGameSyncService())));
+
+        adminMockMvc.perform(post("/admin/games/reconcile-stale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-04-16"]}
+                                """))
+                .andExpect(status().isUnauthorized());
+
+        adminMockMvc.perform(post("/admin/games/reconcile-stale")
+                        .header(AdminApiKeyFilter.ADMIN_KEY_HEADER, "wrong")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-04-16"]}
+                                """))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminReconcileRunsWithValidAdminKey() throws Exception {
+        CountingLiveGameSyncService liveSyncService = new CountingLiveGameSyncService();
+        MockMvc adminMockMvc = adminMockMvc(new StaleGameReconciliationController(realService(liveSyncService)));
+
+        adminMockMvc.perform(post("/admin/games/reconcile-stale")
+                        .header(AdminApiKeyFilter.ADMIN_KEY_HEADER, ADMIN_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-04-16"]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.processedDateCount").value(1));
+
+        assertThat(liveSyncService.syncCount).hasValue(1);
     }
 
     @Test
@@ -139,7 +234,7 @@ class StaleGameReconciliationControllerWebMvcTest {
         }
 
         @Override
-        public StaleGameReconciliationResult reconcile(List<LocalDate> dates) {
+        public StaleGameReconciliationResult reconcilePublic(List<LocalDate> dates) {
             requestedDates = new ArrayList<>(dates);
             List<LocalDate> uniqueDates = dates.stream().distinct().sorted().toList();
             return new StaleGameReconciliationResult(
@@ -156,6 +251,62 @@ class StaleGameReconciliationControllerWebMvcTest {
                             ))
                             .toList()
             );
+        }
+
+        @Override
+        public StaleGameReconciliationResult reconcileAdmin(List<LocalDate> dates) {
+            return reconcilePublic(dates);
+        }
+    }
+
+    private MockMvc mockMvc(StaleGameReconciliationController controller) {
+        return MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiExceptionHandler())
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(
+                        Jackson2ObjectMapperBuilder.json()
+                                .modules(new JavaTimeModule())
+                                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                                .build()
+                ))
+                .build();
+    }
+
+    private MockMvc adminMockMvc(StaleGameReconciliationController controller) {
+        AppSecurityProperties legacyProperties = new AppSecurityProperties();
+        KboAdminProperties adminProperties = new KboAdminProperties();
+        adminProperties.setApiKey(ADMIN_KEY);
+        return MockMvcBuilders.standaloneSetup(controller)
+                .addFilters(new AdminApiKeyFilter(legacyProperties, adminProperties))
+                .setControllerAdvice(new ApiExceptionHandler())
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(
+                        Jackson2ObjectMapperBuilder.json()
+                                .modules(new JavaTimeModule())
+                                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                                .build()
+                ))
+                .build();
+    }
+
+    private StaleGameReconciliationService realService(com.kbo.crawlerapi.service.LiveGameSyncService liveSyncService) {
+        KboReconcileProperties properties = new KboReconcileProperties();
+        properties.setPublicMaxDates(3);
+        properties.setPublicAllowedPastDays(7);
+        properties.setPublicCooldown(java.time.Duration.ofMinutes(3));
+        properties.setAdminMaxDates(31);
+        return new StaleGameReconciliationService(liveSyncService, properties, FIXED_CLOCK);
+    }
+
+    private static final class CountingLiveGameSyncService extends com.kbo.crawlerapi.service.LiveGameSyncService {
+        private final AtomicInteger syncCount = new AtomicInteger();
+
+        private CountingLiveGameSyncService() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public LiveSyncSummary sync(LocalDate date, boolean force) {
+            syncCount.incrementAndGet();
+            return new LiveSyncSummary(date, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of());
         }
     }
 

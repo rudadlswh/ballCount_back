@@ -2,7 +2,7 @@
 
 ## Local setup
 
-1. Create a repository-root `.env` file by copying [.env.example](/Users/chogyeongmin/develop/kbo_back/.env.example).
+1. Create a repository-root `.env` file.
 2. Set at least these keys in `.env`:
    - `SPRING_DATASOURCE_USERNAME`
    - `SPRING_DATASOURCE_PASSWORD`
@@ -60,7 +60,7 @@ Policy:
 Use the internal verification endpoint to fetch and upsert a month of official KBO schedule data:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/schedule/import?year=2026&month=4'
+curl -X POST 'http://localhost:8088/internal/schedule/import?year=2026&month=4'
 ```
 
 ## Trigger game detail ingestion
@@ -68,13 +68,13 @@ curl -X POST 'http://localhost:8080/internal/schedule/import?year=2026&month=4'
 Use the internal verification endpoint to fetch and persist the latest snapshot and line score data for one imported game:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/games/20260401-LG-KIA/detail/import'
+curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/import'
 ```
 
 To validate repeated same-game refresh behavior without a scheduler, use:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
+curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
 ```
 
 When the source is unchanged, later runs should report `snapshotCreated=false` and `lineScoresUpdated=false`.
@@ -84,8 +84,8 @@ When the source is unchanged, later runs should report `snapshotCreated=false` a
 Use the internal orchestration endpoint to evaluate a date's games and optionally execute one controlled detail-refresh pass:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
-curl -X POST 'http://localhost:8080/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
+curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
+curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
 ```
 
 ## Scheduler shell

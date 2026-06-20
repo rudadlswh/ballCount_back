@@ -61,3 +61,16 @@ app:
 #    private-key: ${APNS_PRIVATE_KEY:}
     env: ${APNS_ENV:sandbox}
     test-enabled: ${KBO_APNS_TEST_ENABLED:false}
+
+kbo:
+  admin:
+    api-key: ${KBO_ADMIN_API_KEY:}
+  reconcile:
+    public-max-dates: ${KBO_RECONCILE_PUBLIC_MAX_DATES:3}
+    public-allowed-past-days: ${KBO_RECONCILE_PUBLIC_ALLOWED_PAST_DAYS:7}
+    public-cooldown: ${KBO_RECONCILE_PUBLIC_COOLDOWN:3m}
+    admin-max-dates: ${KBO_RECONCILE_ADMIN_MAX_DATES:31}
+  http:
+    connect-timeout: ${KBO_HTTP_CONNECT_TIMEOUT:3s}
+    read-timeout: ${KBO_HTTP_READ_TIMEOUT:8s}
+    request-timeout: ${KBO_HTTP_REQUEST_TIMEOUT:10s}

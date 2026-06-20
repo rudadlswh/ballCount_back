@@ -3,6 +3,8 @@ package com.kbo.crawlerapi.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.domain.NotificationDevice;
@@ -57,18 +59,35 @@ public class ApnsPushService {
     private final ApnsProperties properties;
     private final Clock applicationClock;
     private final HttpClient httpClient;
+    private final Duration requestTimeout;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ProviderToken cachedProviderToken;
 
-    @Autowired
     public ApnsPushService(ApnsProperties properties, Clock applicationClock) {
-        this(properties, applicationClock, HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build());
+        this(properties, applicationClock, new KboHttpProperties());
+    }
+
+    @Autowired
+    public ApnsPushService(ApnsProperties properties, Clock applicationClock, KboHttpProperties httpProperties) {
+        this(
+                properties,
+                applicationClock,
+                KboHttpClientFactory.apnsHttpClient(httpProperties),
+                KboHttpClientFactory.requestTimeout(httpProperties)
+        );
     }
 
     ApnsPushService(ApnsProperties properties, Clock applicationClock, HttpClient httpClient) {
+        this(properties, applicationClock, httpClient, KboHttpClientFactory.requestTimeout(new KboHttpProperties()));
+    }
+
+    ApnsPushService(ApnsProperties properties, Clock applicationClock, HttpClient httpClient, Duration requestTimeout) {
         this.properties = properties;
         this.applicationClock = applicationClock;
         this.httpClient = httpClient;
+        this.requestTimeout = requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()
+                ? Duration.ofSeconds(10)
+                : requestTimeout;
     }
 
     public ApnsSendResult send(NotificationEvent event, NotificationDevice device) {
@@ -309,6 +328,7 @@ public class ApnsPushService {
                 """.formatted(jsonString(event.getTitle()), jsonString(event.getBody()), event.getPayload());
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(device)))
+                .timeout(requestTimeout)
                 .header("authorization", "bearer " + token)
                 .header("apns-topic", properties.getBundleId())
                 .header("apns-push-type", "alert")
@@ -327,6 +347,7 @@ public class ApnsPushService {
         Map<String, Object> payload = Map.of("aps", aps);
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(liveActivityToken)))
+                .timeout(requestTimeout)
                 .header("authorization", "bearer " + token)
                 .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")
                 .header("apns-push-type", "liveactivity")

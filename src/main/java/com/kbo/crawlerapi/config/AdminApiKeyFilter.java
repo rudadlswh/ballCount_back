@@ -13,11 +13,18 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class AdminApiKeyFilter extends OncePerRequestFilter {
 
     public static final String ADMIN_API_KEY_HEADER = "X-Admin-Api-Key";
+    public static final String ADMIN_KEY_HEADER = "X-Admin-Key";
 
     private final AppSecurityProperties properties;
+    private final KboAdminProperties adminProperties;
 
     public AdminApiKeyFilter(AppSecurityProperties properties) {
+        this(properties, new KboAdminProperties());
+    }
+
+    public AdminApiKeyFilter(AppSecurityProperties properties, KboAdminProperties adminProperties) {
         this.properties = properties;
+        this.adminProperties = adminProperties;
     }
 
     @Override
@@ -27,7 +34,8 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
             return;
         }
-        if (!apiKeyMatches(request.getHeader(ADMIN_API_KEY_HEADER))) {
+        if (!apiKeyMatches(request.getHeader(ADMIN_KEY_HEADER))
+                && !apiKeyMatches(request.getHeader(ADMIN_API_KEY_HEADER))) {
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
             return;
         }
@@ -47,7 +55,7 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
     }
 
     private boolean apiKeyMatches(String candidate) {
-        String expected = properties.getAdminApiKey();
+        String expected = configuredAdminApiKey();
         if (expected == null || expected.isBlank() || candidate == null || candidate.isBlank()) {
             return false;
         }
@@ -55,5 +63,14 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
                 expected.getBytes(StandardCharsets.UTF_8),
                 candidate.getBytes(StandardCharsets.UTF_8)
         );
+    }
+
+    private String configuredAdminApiKey() {
+        if (adminProperties != null
+                && adminProperties.getApiKey() != null
+                && !adminProperties.getApiKey().isBlank()) {
+            return adminProperties.getApiKey();
+        }
+        return properties == null ? null : properties.getAdminApiKey();
     }
 }

@@ -1,16 +1,17 @@
 package com.kbo.crawlerapi.crawler;
 
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -34,19 +35,35 @@ public class KboGameDetailClient {
     private final String baseUrl;
 
     public KboGameDetailClient() {
-        this(RestClient.builder(), BASE_URL);
+        this(new KboHttpProperties());
+    }
+
+    @Autowired
+    public KboGameDetailClient(KboHttpProperties httpProperties) {
+        this(RestClient.builder(), BASE_URL, httpProperties);
     }
 
     protected KboGameDetailClient(RestClient.Builder restClientBuilder, String baseUrl) {
-        this(restClientBuilder, baseUrl, true);
+        this(restClientBuilder, baseUrl, new KboHttpProperties(), true);
     }
 
     protected KboGameDetailClient(RestClient.Builder restClientBuilder, String baseUrl, boolean configureRequestFactory) {
+        this(restClientBuilder, baseUrl, new KboHttpProperties(), configureRequestFactory);
+    }
+
+    protected KboGameDetailClient(RestClient.Builder restClientBuilder, String baseUrl, KboHttpProperties httpProperties) {
+        this(restClientBuilder, baseUrl, httpProperties, true);
+    }
+
+    private KboGameDetailClient(
+            RestClient.Builder restClientBuilder,
+            String baseUrl,
+            KboHttpProperties httpProperties,
+            boolean configureRequestFactory
+    ) {
         RestClient.Builder builder = restClientBuilder.baseUrl(baseUrl);
         if (configureRequestFactory) {
-            builder.requestFactory(new JdkClientHttpRequestFactory(HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .build()));
+            builder.requestFactory(KboHttpClientFactory.restClientRequestFactory(httpProperties));
         }
         this.restClient = builder.build();
         this.baseUrl = baseUrl;

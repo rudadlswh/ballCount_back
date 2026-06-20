@@ -3,6 +3,7 @@ package com.kbo.crawlerapi.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -33,7 +34,7 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("token-123")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("production"), eq("install-1")))
                 .thenReturn(Optional.empty());
 
         var result = service.register("iOS", "production", " token-123 ", "install-1", "lg", true);
@@ -55,7 +56,7 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.empty());
 
         service.register(
@@ -86,7 +87,7 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.empty());
 
         service.register("ios", "sandbox", "token-123", "install-1", "lg", true);
@@ -164,7 +165,7 @@ class DeviceRegistrationServiceTest {
         );
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("new-token")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "new-token", "install-1", "kia", false);
@@ -185,7 +186,7 @@ class DeviceRegistrationServiceTest {
         NotificationDevice existing = device("ios", "production", "800facf43e22-old", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("80e2a3c36237-new")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("production"), eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "production", "80e2a3c36237-new", "install-1", "ssg", true);
@@ -196,12 +197,30 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
+    void sameInstallationIdInDifferentEnvironmentCreatesSeparateRegistration() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("prod-token")))
+                .thenReturn(Optional.empty());
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("production"), eq("install-1")))
+                .thenReturn(Optional.empty());
+
+        service.register("ios", "production", "prod-token", "install-1", "ssg", true);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getEnvironment()).isEqualTo("production");
+        assertThat(deviceCaptor.getValue().getDeviceToken()).isEqualTo("prod-token");
+        verify(notificationDeviceRepository, never())
+                .findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1"));
+    }
+
+    @Test
     void registeringSameInstallationWithNewFavoriteTeamUpdatesFavoriteTeamId() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "token-123", "install-1", "kia", true);
@@ -217,7 +236,7 @@ class DeviceRegistrationServiceTest {
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "token-123", "install-1", "ssg", true);
@@ -233,7 +252,7 @@ class DeviceRegistrationServiceTest {
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "token-123", "install-1", "ssg", false);
@@ -249,7 +268,7 @@ class DeviceRegistrationServiceTest {
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register(

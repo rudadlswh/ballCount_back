@@ -88,6 +88,14 @@ class AdminApiKeyFilterTest {
     }
 
     @Test
+    void adminRequestAcceptsPrimaryAdminKeyHeader() throws Exception {
+        mockMvc.perform(post("/admin/ranks/refresh")
+                        .header(AdminApiKeyFilter.ADMIN_KEY_HEADER, ADMIN_API_KEY)
+                        .param("season", "2026"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void internalRequestWithoutApiKeyReturnsUnauthorized() throws Exception {
         mockMvc.perform(post("/internal/orchestration/detail-refresh-pass"))
                 .andExpect(status().isUnauthorized());

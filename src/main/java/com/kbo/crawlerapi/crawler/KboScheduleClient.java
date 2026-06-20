@@ -1,5 +1,7 @@
 package com.kbo.crawlerapi.crawler;
 
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import java.time.YearMonth;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -11,6 +13,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public class KboScheduleClient {
@@ -29,13 +32,33 @@ public class KboScheduleClient {
     private final String scheduleEndpointUri;
 
     public KboScheduleClient() {
-        this(RestClient.builder(), BASE_URL);
+        this(new KboHttpProperties());
+    }
+
+    @Autowired
+    public KboScheduleClient(KboHttpProperties httpProperties) {
+        this(RestClient.builder(), BASE_URL, httpProperties);
     }
 
     protected KboScheduleClient(RestClient.Builder restClientBuilder, String baseUrl) {
-        this.restClient = restClientBuilder
-                .baseUrl(baseUrl)
-                .build();
+        this(restClientBuilder, baseUrl, new KboHttpProperties(), false);
+    }
+
+    protected KboScheduleClient(RestClient.Builder restClientBuilder, String baseUrl, KboHttpProperties httpProperties) {
+        this(restClientBuilder, baseUrl, httpProperties, true);
+    }
+
+    private KboScheduleClient(
+            RestClient.Builder restClientBuilder,
+            String baseUrl,
+            KboHttpProperties httpProperties,
+            boolean configureRequestFactory
+    ) {
+        RestClient.Builder builder = restClientBuilder.baseUrl(baseUrl);
+        if (configureRequestFactory) {
+            builder.requestFactory(KboHttpClientFactory.restClientRequestFactory(httpProperties));
+        }
+        this.restClient = builder.build();
         this.scheduleEndpointUri = baseUrl + SCHEDULE_ENDPOINT_PATH;
     }
 

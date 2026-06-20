@@ -1,11 +1,14 @@
 package com.kbo.crawlerapi.crawler;
 
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -29,11 +32,33 @@ public class KboLiveTextClient {
     private final String baseUrl;
 
     public KboLiveTextClient() {
-        this(RestClient.builder(), BASE_URL);
+        this(new KboHttpProperties());
+    }
+
+    @Autowired
+    public KboLiveTextClient(KboHttpProperties httpProperties) {
+        this(RestClient.builder(), BASE_URL, httpProperties);
     }
 
     protected KboLiveTextClient(RestClient.Builder restClientBuilder, String baseUrl) {
-        this.restClient = restClientBuilder.baseUrl(baseUrl).build();
+        this(restClientBuilder, baseUrl, new KboHttpProperties(), false);
+    }
+
+    protected KboLiveTextClient(RestClient.Builder restClientBuilder, String baseUrl, KboHttpProperties httpProperties) {
+        this(restClientBuilder, baseUrl, httpProperties, true);
+    }
+
+    private KboLiveTextClient(
+            RestClient.Builder restClientBuilder,
+            String baseUrl,
+            KboHttpProperties httpProperties,
+            boolean configureRequestFactory
+    ) {
+        RestClient.Builder builder = restClientBuilder.baseUrl(baseUrl);
+        if (configureRequestFactory) {
+            builder.requestFactory(KboHttpClientFactory.restClientRequestFactory(httpProperties));
+        }
+        this.restClient = builder.build();
         this.baseUrl = baseUrl;
     }
 
