@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class PublicPageController {
 
-    private static final String SUPPORT_EMAIL = "chogyeongmin.dev@gmail.com";
+    private static final String SUPPORT_EMAIL = "whrudals56@gmail.com";
     private static final MediaType HTML_UTF8 = new MediaType("text", "html", StandardCharsets.UTF_8);
 
     @GetMapping("/support")
