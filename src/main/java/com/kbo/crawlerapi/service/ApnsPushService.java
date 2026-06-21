@@ -6,6 +6,7 @@ import com.kbo.crawlerapi.config.ApnsProperties;
 import com.kbo.crawlerapi.config.KboHttpClientFactory;
 import com.kbo.crawlerapi.config.KboHttpProperties;
 import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.LiveActivityPushToStartToken;
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
@@ -52,6 +53,8 @@ public class ApnsPushService {
     public static final String APNS_PRIVATE_KEY_UNREADABLE = "apns_private_key_unreadable";
     public static final String APNS_INVALID_PROVIDER_TOKEN = "apns_invalid_provider_token";
     public static final String APNS_BAD_DEVICE_TOKEN = "apns_bad_device_token";
+    public static final String APNS_BAD_TOKEN = "apns_bad_token";
+    public static final String APNS_BAD_ENVIRONMENT = "apns_bad_environment";
     public static final String APNS_TOO_MANY_PROVIDER_TOKEN_UPDATES = "apns_too_many_provider_token_updates";
     private static final Duration PROVIDER_TOKEN_REFRESH_AFTER = Duration.ofMinutes(50);
     private static final Duration PROVIDER_TOKEN_MAX_AGE = Duration.ofMinutes(60);
@@ -199,7 +202,7 @@ public class ApnsPushService {
             String reason = response.body() == null || response.body().isBlank()
                     ? "status_" + response.statusCode()
                     : response.body();
-            String mappedReason = mapApnsFailureReason(reason);
+            String mappedReason = mapLiveActivityStartFailureReason(reason);
             log.warn(
                     "[LiveActivity] APNs failed publicGameId={} providerGameId={} databaseId={} activityId={} status={} reason={}",
                     game.getPublicGameId(),
@@ -217,6 +220,85 @@ public class ApnsPushService {
                     game.getProviderGameId(),
                     game.getId(),
                     liveActivityToken.getActivityId(),
+                    exception.getClass().getSimpleName()
+            );
+            return new ApnsSendResult(false, false, false, exception.getMessage());
+        }
+    }
+
+    public ApnsSendResult sendLiveActivityStart(
+            Game game,
+            LiveActivityPushToStartToken pushToStartToken,
+            Map<String, Object> attributes,
+            Map<String, Object> contentState
+    ) {
+        String tokenSkipReason = pushToStartTokenSkipReason(pushToStartToken);
+        if (tokenSkipReason != null) {
+            log.info(
+                    "[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} installationId={} status=skipped reason={} configuredEnv={} tokenEnv={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    pushToStartToken.getInstallationId(),
+                    tokenSkipReason,
+                    configuredEnvironment(),
+                    pushToStartToken.getEnvironment()
+            );
+            return ApnsSendResult.skipped(tokenSkipReason);
+        }
+
+        String readinessSkipReason = readinessSkipReason();
+        if (readinessSkipReason != null) {
+            log.warn(
+                    "[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} installationId={} status=skipped reason={} configuredEnv={} tokenEnv={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    pushToStartToken.getInstallationId(),
+                    readinessSkipReason,
+                    configuredEnvironment(),
+                    pushToStartToken.getEnvironment()
+            );
+            return ApnsSendResult.skipped(readinessSkipReason);
+        }
+
+        try {
+            String token = providerToken();
+            HttpRequest request = buildLiveActivityStartRequest(pushToStartToken, attributes, contentState, token);
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                log.info(
+                        "[LiveActivityStart] APNs sent publicGameId={} providerGameId={} databaseId={} installationId={} status={} reason={}",
+                        game.getPublicGameId(),
+                        game.getProviderGameId(),
+                        game.getId(),
+                        pushToStartToken.getInstallationId(),
+                        response.statusCode(),
+                        null
+                );
+                return ApnsSendResult.sentResult();
+            }
+            String reason = response.body() == null || response.body().isBlank()
+                    ? "status_" + response.statusCode()
+                    : response.body();
+            String mappedReason = mapApnsFailureReason(reason);
+            log.warn(
+                    "[LiveActivityStart] APNs failed publicGameId={} providerGameId={} databaseId={} installationId={} status={} reason={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    pushToStartToken.getInstallationId(),
+                    response.statusCode(),
+                    mappedReason
+            );
+            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), mappedReason), mappedReason);
+        } catch (Exception exception) {
+            log.warn(
+                    "[LiveActivityStart] APNs failed publicGameId={} providerGameId={} databaseId={} installationId={} status=exception reason={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    pushToStartToken.getInstallationId(),
                     exception.getClass().getSimpleName()
             );
             return new ApnsSendResult(false, false, false, exception.getMessage());
@@ -295,6 +377,19 @@ public class ApnsPushService {
         return null;
     }
 
+    private String pushToStartTokenSkipReason(LiveActivityPushToStartToken token) {
+        if (!"ios".equalsIgnoreCase(token.getPlatform())) {
+            return UNSUPPORTED_PLATFORM;
+        }
+        if (!token.isActive()) {
+            return DEVICE_NOTIFICATIONS_DISABLED;
+        }
+        if (!environmentMatches(token.getEnvironment())) {
+            return APNS_BAD_ENVIRONMENT;
+        }
+        return null;
+    }
+
     private PrivateKeyLoadResult privateKeyLoadResult() {
         try {
             privateKey();
@@ -322,6 +417,14 @@ public class ApnsPushService {
         return host + "/3/device/" + token.getActivityToken();
     }
 
+    private String endpoint(LiveActivityPushToStartToken token) {
+        String env = normalizeEnvironment(token.getEnvironment());
+        String host = "production".equalsIgnoreCase(env)
+                ? "https://api.push.apple.com"
+                : "https://api.sandbox.push.apple.com";
+        return host + "/3/device/" + token.getPushToStartToken();
+    }
+
     HttpRequest buildRequest(NotificationEvent event, NotificationDevice device, String token) {
         String body = """
                 {"aps":{"alert":{"title":%s,"body":%s},"sound":"default"},"data":%s}
@@ -347,6 +450,33 @@ public class ApnsPushService {
         Map<String, Object> payload = Map.of("aps", aps);
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(liveActivityToken)))
+                .timeout(requestTimeout)
+                .header("authorization", "bearer " + token)
+                .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")
+                .header("apns-push-type", "liveactivity")
+                .header("apns-priority", "10")
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(toJson(payload)))
+                .build();
+    }
+
+    HttpRequest buildLiveActivityStartRequest(
+            LiveActivityPushToStartToken pushToStartToken,
+            Map<String, Object> attributes,
+            Map<String, Object> contentState,
+            String token
+    ) {
+        Map<String, Object> aps = new LinkedHashMap<>();
+        aps.put("timestamp", Instant.now(applicationClock).getEpochSecond());
+        aps.put("event", "start");
+        aps.put("attributes-type", "FavoriteTeamGameActivityAttributes");
+        aps.put("attributes", attributes);
+        aps.put("content-state", contentState);
+        aps.put("stale-date", Instant.now(applicationClock).plusSeconds(120).getEpochSecond());
+        aps.put("input-push-token", 1);
+        Map<String, Object> payload = Map.of("aps", aps);
+        return HttpRequest.newBuilder()
+                .uri(URI.create(endpoint(pushToStartToken)))
                 .timeout(requestTimeout)
                 .header("authorization", "bearer " + token)
                 .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")
@@ -394,10 +524,21 @@ public class ApnsPushService {
         if (reason != null && reason.contains("BadDeviceToken")) {
             return APNS_BAD_DEVICE_TOKEN;
         }
+        if (reason != null && reason.contains("DeviceTokenNotForTopic")) {
+            return APNS_BAD_ENVIRONMENT;
+        }
         if (reason != null && reason.contains("TooManyProviderTokenUpdates")) {
             return APNS_TOO_MANY_PROVIDER_TOKEN_UPDATES;
         }
         return reason;
+    }
+
+    String mapLiveActivityStartFailureReason(String reason) {
+        String mappedReason = mapApnsFailureReason(reason);
+        if (APNS_BAD_DEVICE_TOKEN.equals(mappedReason)) {
+            return APNS_BAD_TOKEN;
+        }
+        return mappedReason;
     }
 
     private synchronized String providerToken() throws Exception {

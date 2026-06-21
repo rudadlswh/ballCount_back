@@ -63,6 +63,7 @@ public class LiveGameSyncService {
     private final GameDetailImportService gameDetailImportService;
     private final KboScheduleImportService kboScheduleImportService;
     private final NotificationEventService notificationEventService;
+    private final LiveActivityPushToStartTokenService liveActivityPushToStartTokenService;
     private final TeamRankService teamRankService;
     private final LiveSyncProperties properties;
     private final Clock applicationClock;
@@ -85,6 +86,32 @@ public class LiveGameSyncService {
                 gameDetailImportService,
                 kboScheduleImportService,
                 notificationEventService,
+                null,
+                teamRankService,
+                properties,
+                applicationClock
+        );
+    }
+
+    public LiveGameSyncService(
+            GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
+            GameEventReadRepository gameEventReadRepository,
+            GameDetailImportService gameDetailImportService,
+            KboScheduleImportService kboScheduleImportService,
+            NotificationEventService notificationEventService,
+            TeamRankService teamRankService,
+            LiveSyncProperties properties,
+            Clock applicationClock
+    ) {
+        this(
+                gameRepository,
+                gameSnapshotRepository,
+                gameEventReadRepository,
+                gameDetailImportService,
+                kboScheduleImportService,
+                notificationEventService,
+                null,
                 teamRankService,
                 properties,
                 applicationClock
@@ -99,6 +126,7 @@ public class LiveGameSyncService {
             GameDetailImportService gameDetailImportService,
             KboScheduleImportService kboScheduleImportService,
             NotificationEventService notificationEventService,
+            LiveActivityPushToStartTokenService liveActivityPushToStartTokenService,
             TeamRankService teamRankService,
             LiveSyncProperties properties,
             Clock applicationClock
@@ -109,6 +137,7 @@ public class LiveGameSyncService {
         this.gameDetailImportService = gameDetailImportService;
         this.kboScheduleImportService = kboScheduleImportService;
         this.notificationEventService = notificationEventService;
+        this.liveActivityPushToStartTokenService = liveActivityPushToStartTokenService;
         this.teamRankService = teamRankService;
         this.properties = properties;
         this.applicationClock = applicationClock;
@@ -260,6 +289,9 @@ public class LiveGameSyncService {
                     }
                     notificationSentCount += delivery.sentCount();
                     notificationSkippedCount += delivery.skippedCount();
+                    if (delivery.eventCreated() && NotificationEventService.EVENT_GAME_START.equals(draft.eventType())) {
+                        deliverLiveActivityStart(after, draft);
+                    }
                     if (NotificationEventService.EVENT_GAME_CANCELLED.equals(draft.eventType())) {
                         log.info(
                                 "[LiveGameSync] cancellation notification sent/skipped game={} eventKey={} sent={} skipped={} created={}",
@@ -296,6 +328,30 @@ public class LiveGameSyncService {
                 updatedGames,
                 events,
                 errors
+        );
+    }
+
+    private void deliverLiveActivityStart(Game game, NotificationEventDraft draft) {
+        if (liveActivityPushToStartTokenService == null) {
+            log.info(
+                    "[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} eventKey={} reason=unsupported_os_or_capability",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    draft.eventKey()
+            );
+            return;
+        }
+        LiveActivityPushToStartTokenService.LiveActivityStartDeliveryResult result = liveActivityPushToStartTokenService.deliverStart(game);
+        log.info(
+                "[LiveActivityStart] APNs result publicGameId={} providerGameId={} databaseId={} eventKey={} sent={} skipped={} failed={}",
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getId(),
+                draft.eventKey(),
+                result.sentCount(),
+                result.skippedCount(),
+                result.failedCount()
         );
     }
 

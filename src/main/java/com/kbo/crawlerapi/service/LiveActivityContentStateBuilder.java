@@ -28,9 +28,12 @@ public class LiveActivityContentStateBuilder {
     }
 
     public Map<String, Object> build(Game game, LiveActivityToken token, NotificationEvent event) {
+        return buildForFavoriteTeam(game, token.getFavoriteTeamId(), event);
+    }
+
+    public Map<String, Object> buildForFavoriteTeam(Game game, String favoriteTeamId, NotificationEvent event) {
         GameSnapshot snapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId()).orElse(null);
         boolean preGame = game.getStatus() == GameStatus.SCHEDULED;
-        String favoriteTeamId = token.getFavoriteTeamId();
         boolean favoriteIsAway = favoriteTeamId != null && favoriteTeamId.equals(game.getAwayTeam().getTeamCode());
         Map<String, Object> eventPayload = eventPayload(event);
         Integer homeScore = firstNonNull(snapshot == null ? null : snapshot.getHomeScore(), integerValue(eventPayload.get("homeScore")), game.getHomeScore());

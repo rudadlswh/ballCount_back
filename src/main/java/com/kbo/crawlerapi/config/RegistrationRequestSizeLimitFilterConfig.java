@@ -16,7 +16,9 @@ public class RegistrationRequestSizeLimitFilterConfig {
                 "/devices/register",
                 "/devices/unregister",
                 "/devices/live-activities/register",
-                "/live-activities/register"
+                "/live-activities/register",
+                "/devices/live-activities/push-to-start/register",
+                "/live-activities/push-to-start/register"
         );
         registration.setOrder(1);
         return registration;
