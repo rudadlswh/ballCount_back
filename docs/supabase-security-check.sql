@@ -51,6 +51,7 @@ revoke all privileges on table kbo_crawler_api.team_ranks from anon, authenticat
 revoke all privileges on table kbo_crawler_api.notification_devices from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.notification_events from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.live_activity_tokens from anon, authenticated;
+revoke all privileges on table kbo_crawler_api.live_activity_push_to_start_tokens from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.crawl_jobs from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.crawl_failures from anon, authenticated;
 revoke all privileges on table kbo_crawler_api.crawl_raw_archive from anon, authenticated;
@@ -66,6 +67,7 @@ alter table kbo_crawler_api.team_ranks enable row level security;
 alter table kbo_crawler_api.notification_devices enable row level security;
 alter table kbo_crawler_api.notification_events enable row level security;
 alter table kbo_crawler_api.live_activity_tokens enable row level security;
+alter table kbo_crawler_api.live_activity_push_to_start_tokens enable row level security;
 alter table kbo_crawler_api.crawl_jobs enable row level security;
 alter table kbo_crawler_api.crawl_failures enable row level security;
 alter table kbo_crawler_api.crawl_raw_archive enable row level security;

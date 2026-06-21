@@ -4,8 +4,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kbo.crawlerapi.api.DeviceRegistrationController;
+import com.kbo.crawlerapi.api.AdminRankController;
 import com.kbo.crawlerapi.service.DeviceRegistrationService;
 import com.kbo.crawlerapi.service.DeviceRegistrationService.DeviceRegistrationResult;
+import com.kbo.crawlerapi.service.TeamRankService;
+import java.time.Clock;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,6 +60,24 @@ class RegistrationRequestSizeLimitFilterTest {
                 .andExpect(status().isPayloadTooLarge());
     }
 
+    @Test
+    void adminWriteRejectsPayloadLargerThan32Kb() throws Exception {
+        MockMvc adminMockMvc = MockMvcBuilders.standaloneSetup(new AdminRankController(new StubTeamRankService()))
+                .addFilters(new RegistrationRequestSizeLimitFilter(properties()))
+                .build();
+
+        adminMockMvc.perform(post("/admin/ranks/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"padding\":\"" + "a".repeat((32 * 1024) + 1) + "\"}"))
+                .andExpect(status().isPayloadTooLarge());
+    }
+
+    private AppSecurityProperties properties() {
+        AppSecurityProperties properties = new AppSecurityProperties();
+        properties.setRegistrationRequestMaxBytes(32 * 1024);
+        return properties;
+    }
+
     private static final class StubDeviceRegistrationService extends DeviceRegistrationService {
 
         private StubDeviceRegistrationService() {
@@ -80,6 +101,18 @@ class RegistrationRequestSizeLimitFilterTest {
                     "****",
                     true
             );
+        }
+    }
+
+    private static final class StubTeamRankService extends TeamRankService {
+
+        private StubTeamRankService() {
+            super(null, null, null, Clock.systemUTC());
+        }
+
+        @Override
+        public TeamRankRefreshResult refreshSeasonRankings(int season) {
+            return new TeamRankRefreshResult(season, 0, 0);
         }
     }
 }

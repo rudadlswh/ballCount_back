@@ -18,7 +18,11 @@ public class RegistrationRequestSizeLimitFilterConfig {
                 "/devices/live-activities/register",
                 "/live-activities/register",
                 "/devices/live-activities/push-to-start/register",
-                "/live-activities/push-to-start/register"
+                "/live-activities/push-to-start/register",
+                "/api/v1/games/reconcile-stale",
+                "/games/reconcile-stale",
+                "/admin/*",
+                "/internal/*"
         );
         registration.setOrder(1);
         return registration;

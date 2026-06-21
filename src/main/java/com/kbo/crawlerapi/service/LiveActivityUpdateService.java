@@ -16,10 +16,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class LiveActivityUpdateService {
@@ -31,6 +35,7 @@ public class LiveActivityUpdateService {
     private final ApnsPushService apnsPushService;
     private final Clock applicationClock;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TransactionTemplate transactionTemplate;
 
     public LiveActivityUpdateService(
             LiveActivityTokenRepository liveActivityTokenRepository,
@@ -38,18 +43,29 @@ public class LiveActivityUpdateService {
             ApnsPushService apnsPushService,
             Clock applicationClock
     ) {
+        this(liveActivityTokenRepository, contentStateBuilder, apnsPushService, applicationClock, null);
+    }
+
+    @Autowired
+    public LiveActivityUpdateService(
+            LiveActivityTokenRepository liveActivityTokenRepository,
+            LiveActivityContentStateBuilder contentStateBuilder,
+            ApnsPushService apnsPushService,
+            Clock applicationClock,
+            PlatformTransactionManager transactionManager
+    ) {
         this.liveActivityTokenRepository = liveActivityTokenRepository;
         this.contentStateBuilder = contentStateBuilder;
         this.apnsPushService = apnsPushService;
         this.applicationClock = applicationClock;
+        this.transactionTemplate = transactionManager == null ? null : new TransactionTemplate(transactionManager);
     }
 
-    @Transactional
     public LiveActivityDeliveryResult deliverUpdate(Game game) {
-        List<LiveActivityToken> matches = liveActivityTokenRepository.findByActiveTrue()
+        List<LiveActivityToken> matches = inTransaction(() -> liveActivityTokenRepository.findByActiveTrue()
                 .stream()
                 .filter(token -> contentStateBuilder.matches(game, token))
-                .toList();
+                .toList());
         log.info(
                 "[LiveActivity] token matched publicGameId={} providerGameId={} databaseId={} matchedCount={}",
                 game.getPublicGameId(),
@@ -106,13 +122,13 @@ public class LiveActivityUpdateService {
             ApnsPushService.ApnsSendResult result = apnsPushService.sendLiveActivityUpdate(game, token, contentState);
             if (result.sent()) {
                 sent++;
-                token.markContentStateDelivered(newContentStateHash, contentStateJson, OffsetDateTime.now(applicationClock));
+                markContentStateDelivered(token, newContentStateHash, contentStateJson);
             } else if (result.skipped()) {
                 skipped++;
             } else {
                 failed++;
                 if (result.invalidToken()) {
-                    token.disable(OffsetDateTime.now(applicationClock));
+                    disableToken(token);
                 }
             }
             log.info(
@@ -142,6 +158,37 @@ public class LiveActivityUpdateService {
                 failed
         );
         return new LiveActivityDeliveryResult(sent, skipped, failed);
+    }
+
+    private void markContentStateDelivered(LiveActivityToken token, String contentStateHash, String contentStateJson) {
+        updateToken(token, managedToken -> managedToken.markContentStateDelivered(
+                contentStateHash,
+                contentStateJson,
+                OffsetDateTime.now(applicationClock)
+        ));
+    }
+
+    private void disableToken(LiveActivityToken token) {
+        updateToken(token, managedToken -> managedToken.disable(OffsetDateTime.now(applicationClock)));
+    }
+
+    private void updateToken(LiveActivityToken token, java.util.function.Consumer<LiveActivityToken> update) {
+        if (transactionTemplate == null) {
+            update.accept(token);
+            return;
+        }
+        UUID tokenId = token.getId();
+        inTransaction(() -> {
+            liveActivityTokenRepository.findById(tokenId).ifPresent(update);
+            return null;
+        });
+    }
+
+    private <T> T inTransaction(Supplier<T> work) {
+        if (transactionTemplate == null) {
+            return work.get();
+        }
+        return transactionTemplate.execute(status -> work.get());
     }
 
     private String toStableJson(Map<String, Object> contentState) {

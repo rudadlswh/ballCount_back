@@ -19,6 +19,14 @@ public class LiveActivityTokenRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveActivityTokenRegistrationService.class);
     private static final int TOKEN_PREFIX_LENGTH = 8;
+    private static final int MAX_ACTIVITY_ID_LENGTH = 120;
+    private static final int MAX_TOKEN_LENGTH = 512;
+    private static final int MAX_INSTALLATION_ID_LENGTH = 100;
+    private static final int MAX_FAVORITE_TEAM_ID_LENGTH = 30;
+    private static final int MAX_PUBLIC_GAME_ID_LENGTH = 80;
+    private static final int MAX_PROVIDER_GAME_ID_LENGTH = 100;
+    private static final int MAX_DATABASE_ID_LENGTH = 80;
+    private static final int MAX_STABLE_DETAIL_IDENTITY_LENGTH = 180;
 
     private final LiveActivityTokenRepository liveActivityTokenRepository;
     private final Clock applicationClock;
@@ -30,15 +38,17 @@ public class LiveActivityTokenRegistrationService {
 
     @Transactional
     public LiveActivityTokenRegistrationResult register(LiveActivityTokenRegistrationCommand command) {
-        String activityId = blankToNull(command.activityId());
-        String activityToken = requireText(command.activityToken(), "activityToken");
+        String activityId = optionalText(command.activityId(), "activityId", MAX_ACTIVITY_ID_LENGTH);
+        String activityToken = requireText(command.activityToken(), "activityToken", MAX_TOKEN_LENGTH);
         String platform = normalizePlatform(command.platform());
         String environment = normalizeEnvironment(command.environment());
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        String publicGameId = blankToNull(command.publicGameId());
-        String providerGameId = blankToNull(command.providerGameId());
-        String databaseId = blankToNull(command.databaseId());
-        String stableDetailIdentity = blankToNull(command.stableDetailIdentity());
+        String installationId = optionalText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);
+        String favoriteTeamId = optionalText(command.favoriteTeamId(), "favoriteTeamId", MAX_FAVORITE_TEAM_ID_LENGTH);
+        String publicGameId = optionalText(command.publicGameId(), "publicGameId", MAX_PUBLIC_GAME_ID_LENGTH);
+        String providerGameId = optionalText(command.providerGameId(), "providerGameId", MAX_PROVIDER_GAME_ID_LENGTH);
+        String databaseId = optionalText(command.databaseId(), "databaseId", MAX_DATABASE_ID_LENGTH);
+        String stableDetailIdentity = optionalText(command.stableDetailIdentity(), "stableDetailIdentity", MAX_STABLE_DETAIL_IDENTITY_LENGTH);
 
         Optional<LiveActivityToken> registrationMatch = liveActivityTokenRepository.findRegistrationMatches(
                         environment,
@@ -58,8 +68,8 @@ public class LiveActivityTokenRegistrationService {
                         platform,
                         environment,
                         activityToken,
-                        blankToNull(command.installationId()),
-                        blankToNull(command.favoriteTeamId()),
+                        installationId,
+                        favoriteTeamId,
                         publicGameId,
                         providerGameId,
                         databaseId,
@@ -71,8 +81,8 @@ public class LiveActivityTokenRegistrationService {
                 platform,
                 environment,
                 activityToken,
-                blankToNull(command.installationId()),
-                blankToNull(command.favoriteTeamId()),
+                installationId,
+                favoriteTeamId,
                 publicGameId,
                 providerGameId,
                 databaseId,
@@ -82,7 +92,7 @@ public class LiveActivityTokenRegistrationService {
         List<LiveActivityToken> deactivatedTokens = deactivateSupersededTokens(
                 token,
                 environment,
-                blankToNull(command.installationId()),
+                installationId,
                 activityId,
                 publicGameId,
                 providerGameId,
@@ -197,11 +207,23 @@ public class LiveActivityTokenRegistrationService {
         return normalized;
     }
 
-    private String requireText(String value, String name) {
+    private String requireText(String value, String name, int maxLength) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(name + " is required");
         }
-        return value.trim();
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(name + " is too long");
+        }
+        return normalized;
+    }
+
+    private String optionalText(String value, String name, int maxLength) {
+        String normalized = blankToNull(value);
+        if (normalized != null && normalized.length() > maxLength) {
+            throw new IllegalArgumentException(name + " is too long");
+        }
+        return normalized;
     }
 
     private String blankToNull(String value) {

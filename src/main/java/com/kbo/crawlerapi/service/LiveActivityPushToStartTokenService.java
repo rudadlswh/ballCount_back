@@ -12,21 +12,28 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class LiveActivityPushToStartTokenService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveActivityPushToStartTokenService.class);
     private static final int TOKEN_PREFIX_LENGTH = 8;
+    private static final int MAX_TOKEN_LENGTH = 512;
+    private static final int MAX_INSTALLATION_ID_LENGTH = 100;
 
     private final LiveActivityPushToStartTokenRepository repository;
     private final LiveActivityContentStateBuilder contentStateBuilder;
     private final ApnsPushService apnsPushService;
     private final Clock applicationClock;
+    private final TransactionTemplate transactionTemplate;
 
     public LiveActivityPushToStartTokenService(
             LiveActivityPushToStartTokenRepository repository,
@@ -34,18 +41,30 @@ public class LiveActivityPushToStartTokenService {
             ApnsPushService apnsPushService,
             Clock applicationClock
     ) {
+        this(repository, contentStateBuilder, apnsPushService, applicationClock, null);
+    }
+
+    @Autowired
+    public LiveActivityPushToStartTokenService(
+            LiveActivityPushToStartTokenRepository repository,
+            LiveActivityContentStateBuilder contentStateBuilder,
+            ApnsPushService apnsPushService,
+            Clock applicationClock,
+            PlatformTransactionManager transactionManager
+    ) {
         this.repository = repository;
         this.contentStateBuilder = contentStateBuilder;
         this.apnsPushService = apnsPushService;
         this.applicationClock = applicationClock;
+        this.transactionTemplate = transactionManager == null ? null : new TransactionTemplate(transactionManager);
     }
 
     @Transactional
     public PushToStartTokenRegistrationResult register(PushToStartTokenRegistrationCommand command) {
         String platform = normalizePlatform(command.platform());
         String environment = normalizeEnvironment(command.environment());
-        String pushToStartToken = requireText(command.pushToStartToken(), "pushToStartToken");
-        String installationId = requireText(command.installationId(), "installationId");
+        String pushToStartToken = requireText(command.pushToStartToken(), "pushToStartToken", MAX_TOKEN_LENGTH);
+        String installationId = requireText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);
         String favoriteTeamId = normalizeFavoriteTeamId(command.favoriteTeamId());
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
@@ -96,9 +115,8 @@ public class LiveActivityPushToStartTokenService {
         return new PushToStartTokenRegistrationResult(token.getId(), environment, tokenPrefix(pushToStartToken), token.isActive());
     }
 
-    @Transactional
     public LiveActivityStartDeliveryResult deliverStart(Game game) {
-        List<LiveActivityPushToStartToken> tokens = repository.findByActiveTrue();
+        List<LiveActivityPushToStartToken> tokens = inTransaction(repository::findByActiveTrue);
         if (tokens.isEmpty()) {
             log.info("[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} reason=no_push_to_start_token", game.getPublicGameId(), game.getProviderGameId(), game.getId());
             return new LiveActivityStartDeliveryResult(0, 1, 0);
@@ -129,13 +147,13 @@ public class LiveActivityPushToStartTokenService {
             ApnsPushService.ApnsSendResult result = apnsPushService.sendLiveActivityStart(game, token, attributes, contentState);
             if (result.sent()) {
                 sent++;
-                token.markStartDelivered(gameKey, OffsetDateTime.now(applicationClock));
+                markStartDelivered(token, gameKey);
             } else if (result.skipped()) {
                 skipped++;
             } else {
                 failed++;
                 if (result.invalidToken()) {
-                    token.disable(OffsetDateTime.now(applicationClock));
+                    disableToken(token);
                 }
             }
             log.info(
@@ -151,6 +169,33 @@ public class LiveActivityPushToStartTokenService {
             );
         }
         return new LiveActivityStartDeliveryResult(sent, skipped, failed);
+    }
+
+    private void markStartDelivered(LiveActivityPushToStartToken token, String gameKey) {
+        updateToken(token, managedToken -> managedToken.markStartDelivered(gameKey, OffsetDateTime.now(applicationClock)));
+    }
+
+    private void disableToken(LiveActivityPushToStartToken token) {
+        updateToken(token, managedToken -> managedToken.disable(OffsetDateTime.now(applicationClock)));
+    }
+
+    private void updateToken(LiveActivityPushToStartToken token, java.util.function.Consumer<LiveActivityPushToStartToken> update) {
+        if (transactionTemplate == null) {
+            update.accept(token);
+            return;
+        }
+        UUID tokenId = token.getId();
+        inTransaction(() -> {
+            repository.findById(tokenId).ifPresent(update);
+            return null;
+        });
+    }
+
+    private <T> T inTransaction(Supplier<T> work) {
+        if (transactionTemplate == null) {
+            return work.get();
+        }
+        return transactionTemplate.execute(status -> work.get());
     }
 
     private String startSkipReason(Game game, LiveActivityPushToStartToken token, String gameKey) {
@@ -250,11 +295,15 @@ public class LiveActivityPushToStartTokenService {
         return normalized;
     }
 
-    private String requireText(String value, String name) {
+    private String requireText(String value, String name, int maxLength) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(name + " is required");
         }
-        return value.trim();
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(name + " is too long");
+        }
+        return normalized;
     }
 
     private String blankToNull(String value) {

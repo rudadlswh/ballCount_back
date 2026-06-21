@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -103,6 +104,37 @@ class LiveActivityTokenRegistrationServiceTest {
 
         assertThat(oldActivity.isActive()).isFalse();
         verify(repository).saveAll(any());
+    }
+
+    @Test
+    void rejectsOverlongActivityToken() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+
+        assertThatThrownBy(() -> service.register(command("a".repeat(513))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("activityToken is too long");
+    }
+
+    @Test
+    void rejectsOverlongGameIdentifiers() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "sandbox",
+                        "activity-token",
+                        "install-1",
+                        "hanwha",
+                        "p".repeat(81),
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("publicGameId is too long");
     }
 
     private LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command(String activityToken) {

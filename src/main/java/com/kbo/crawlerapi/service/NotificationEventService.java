@@ -16,11 +16,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class NotificationEventService {
@@ -44,8 +46,8 @@ public class NotificationEventService {
     private final ApnsPushService apnsPushService;
     private final ObjectMapper objectMapper;
     private final Clock applicationClock;
+    private final TransactionTemplate transactionTemplate;
 
-    @Autowired
     public NotificationEventService(
             NotificationEventRepository notificationEventRepository,
             NotificationDeviceRepository notificationDeviceRepository,
@@ -53,37 +55,37 @@ public class NotificationEventService {
             ObjectMapper objectMapper,
             Clock applicationClock
     ) {
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, objectMapper, applicationClock, null);
+    }
+
+    @Autowired
+    public NotificationEventService(
+            NotificationEventRepository notificationEventRepository,
+            NotificationDeviceRepository notificationDeviceRepository,
+            ApnsPushService apnsPushService,
+            ObjectMapper objectMapper,
+            Clock applicationClock,
+            PlatformTransactionManager transactionManager
+    ) {
         this.notificationEventRepository = notificationEventRepository;
         this.notificationDeviceRepository = notificationDeviceRepository;
         this.apnsPushService = apnsPushService;
         this.objectMapper = objectMapper;
         this.applicationClock = applicationClock;
+        this.transactionTemplate = transactionManager == null ? null : new TransactionTemplate(transactionManager);
     }
 
-    @Transactional
     public EventDeliveryResult createAndDeliver(Game game, NotificationEventDraft draft) {
         if (!isDeliverableEventType(draft.eventType())) {
             return EventDeliveryResult.skipped(draft.eventKey());
         }
-        if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()) {
+        PreparedDelivery prepared = inTransaction(() -> prepareDelivery(game, draft));
+        if (prepared.duplicated()) {
             return EventDeliveryResult.duplicate(draft.eventKey());
         }
-
-        NotificationEvent event = notificationEventRepository.save(new NotificationEvent(
-                UUID.randomUUID(),
-                game,
-                draft.eventType(),
-                draft.eventKey(),
-                draft.title(),
-                draft.body(),
-                toJson(draft.payload())
-        ));
-
-        List<String> eventTeamIds = eventTeamIds(game);
-        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByFavoriteTeamIdIn(eventTeamIds)
-                .stream()
-                .filter(device -> isRelevant(device, game))
-                .toList();
+        NotificationEvent event = prepared.event();
+        List<String> eventTeamIds = prepared.eventTeamIds();
+        List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
 
         ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
         log.info(
@@ -102,7 +104,7 @@ public class NotificationEventService {
         );
 
         if (relevantTeamDevices.isEmpty()) {
-            event.markDelivery("skipped", OffsetDateTime.now(applicationClock), ApnsPushService.NO_RELEVANT_DEVICES);
+            markEventDelivery(event, "skipped", ApnsPushService.NO_RELEVANT_DEVICES);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 1, 0);
         }
 
@@ -111,13 +113,13 @@ public class NotificationEventService {
         List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices, draft, game);
         String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices);
         if (deviceSkipReason != null) {
-            event.markDelivery("skipped", OffsetDateTime.now(applicationClock), deviceSkipReason);
+            markEventDelivery(event, "skipped", deviceSkipReason);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, relevantTeamDevices.size(), 0);
         }
 
         String apnsSkipReason = apnsPushService.readinessSkipReason();
         if (apnsSkipReason != null) {
-            event.markDelivery("skipped", OffsetDateTime.now(applicationClock), apnsSkipReason);
+            markEventDelivery(event, "skipped", apnsSkipReason);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, deliverableDevices.size(), 0);
         }
 
@@ -125,6 +127,7 @@ public class NotificationEventService {
         int skipped = 0;
         int failed = 0;
         String lastFailure = null;
+        List<NotificationDevice> invalidDevices = new java.util.ArrayList<>();
         Instant apnsSendRequestedAt = Instant.now(applicationClock);
         log.info(
                 "[Notifications] APNs send requested at={} eventId={} eventKey={} eventType={} deliverableDeviceCount={}",
@@ -145,7 +148,7 @@ public class NotificationEventService {
                 failed++;
                 lastFailure = result.reason();
                 if (result.invalidToken()) {
-                    device.disable(OffsetDateTime.now(applicationClock));
+                    invalidDevices.add(device);
                 }
             }
         }
@@ -157,7 +160,7 @@ public class NotificationEventService {
                 : failed > 0
                 ? "failed"
                 : "skipped";
-        event.markDelivery(status, OffsetDateTime.now(applicationClock), lastFailure);
+        recordDeliveryResult(event, status, lastFailure, invalidDevices);
         Instant apnsResultAt = Instant.now(applicationClock);
         log.info(
                 "[Notifications] APNs result at={} eventId={} eventKey={} eventType={} status={} sent={} skipped={} failed={} durationMs={}",
@@ -172,6 +175,61 @@ public class NotificationEventService {
                 Math.max(0, Duration.between(apnsSendRequestedAt, apnsResultAt).toMillis())
         );
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
+    }
+
+    private PreparedDelivery prepareDelivery(Game game, NotificationEventDraft draft) {
+        if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()) {
+            return PreparedDelivery.duplicateResult();
+        }
+        NotificationEvent event = notificationEventRepository.save(new NotificationEvent(
+                UUID.randomUUID(),
+                game,
+                draft.eventType(),
+                draft.eventKey(),
+                draft.title(),
+                draft.body(),
+                toJson(draft.payload())
+        ));
+        List<String> eventTeamIds = eventTeamIds(game);
+        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByFavoriteTeamIdIn(eventTeamIds)
+                .stream()
+                .filter(device -> isRelevant(device, game))
+                .toList();
+        return new PreparedDelivery(false, event, eventTeamIds, relevantTeamDevices);
+    }
+
+    private void markEventDelivery(NotificationEvent event, String status, String errorMessage) {
+        recordDeliveryResult(event, status, errorMessage, List.of());
+    }
+
+    private void recordDeliveryResult(NotificationEvent event, String status, String errorMessage, List<NotificationDevice> invalidDevices) {
+        if (transactionTemplate == null) {
+            event.markDelivery(status, OffsetDateTime.now(applicationClock), errorMessage);
+            if (!invalidDevices.isEmpty()) {
+                OffsetDateTime now = OffsetDateTime.now(applicationClock);
+                invalidDevices.forEach(device -> device.disable(now));
+            }
+            return;
+        }
+        inTransaction(() -> {
+            notificationEventRepository.findById(event.getId()).ifPresent(managedEvent ->
+                    managedEvent.markDelivery(status, OffsetDateTime.now(applicationClock), errorMessage));
+            if (!invalidDevices.isEmpty()) {
+                OffsetDateTime now = OffsetDateTime.now(applicationClock);
+                List<UUID> invalidDeviceIds = invalidDevices.stream()
+                        .map(NotificationDevice::getId)
+                        .toList();
+                notificationDeviceRepository.findAllById(invalidDeviceIds).forEach(device -> device.disable(now));
+            }
+            return null;
+        });
+    }
+
+    private <T> T inTransaction(Supplier<T> work) {
+        if (transactionTemplate == null) {
+            return work.get();
+        }
+        return transactionTemplate.execute(status -> work.get());
     }
 
     private List<String> eventTeamIds(Game game) {
@@ -322,6 +380,17 @@ public class NotificationEventService {
             String body,
             Map<String, Object> payload
     ) {
+    }
+
+    private record PreparedDelivery(
+            boolean duplicated,
+            NotificationEvent event,
+            List<String> eventTeamIds,
+            List<NotificationDevice> relevantTeamDevices
+    ) {
+        private static PreparedDelivery duplicateResult() {
+            return new PreparedDelivery(true, null, List.of(), List.of());
+        }
     }
 
     public record EventDeliveryResult(

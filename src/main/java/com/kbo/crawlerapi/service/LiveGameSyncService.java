@@ -67,6 +67,7 @@ public class LiveGameSyncService {
     private final TeamRankService teamRankService;
     private final LiveSyncProperties properties;
     private final Clock applicationClock;
+    private final DateSyncLockService dateSyncLockService;
     private final Map<UUID, Instant> nextRefreshAtByGameId = new ConcurrentHashMap<>();
 
     public LiveGameSyncService(
@@ -89,7 +90,8 @@ public class LiveGameSyncService {
                 null,
                 teamRankService,
                 properties,
-                applicationClock
+                applicationClock,
+                new DateSyncLockService()
         );
     }
 
@@ -114,7 +116,8 @@ public class LiveGameSyncService {
                 null,
                 teamRankService,
                 properties,
-                applicationClock
+                applicationClock,
+                new DateSyncLockService()
         );
     }
 
@@ -129,7 +132,8 @@ public class LiveGameSyncService {
             LiveActivityPushToStartTokenService liveActivityPushToStartTokenService,
             TeamRankService teamRankService,
             LiveSyncProperties properties,
-            Clock applicationClock
+            Clock applicationClock,
+            DateSyncLockService dateSyncLockService
     ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
@@ -141,6 +145,7 @@ public class LiveGameSyncService {
         this.teamRankService = teamRankService;
         this.properties = properties;
         this.applicationClock = applicationClock;
+        this.dateSyncLockService = dateSyncLockService == null ? new DateSyncLockService() : dateSyncLockService;
     }
 
     public LocalDate todayKst() {
@@ -153,6 +158,16 @@ public class LiveGameSyncService {
 
     public LiveSyncSummary sync(LocalDate date, boolean force) {
         LocalDate targetDate = date == null ? todayKst() : date;
+        try (DateSyncLockService.SyncLock lock = dateSyncLockService.tryLock(targetDate)) {
+            if (!lock.acquired()) {
+                log.info("[LiveGameSync] skipped date={} reason=sync_already_in_progress", targetDate);
+                return new LiveSyncSummary(targetDate, 0, 0, 0, 0, 0, 1, 0, List.of(), List.of(), List.of("sync already in progress"));
+            }
+            return syncWithLock(targetDate, force);
+        }
+    }
+
+    private LiveSyncSummary syncWithLock(LocalDate targetDate, boolean force) {
         log.info("[LiveGameSync] started date={}", targetDate);
         List<Game> gamesBeforeScheduleRefresh = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
         Map<String, GameState> beforeScheduleStates = new HashMap<>();

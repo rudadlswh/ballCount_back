@@ -51,7 +51,9 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
         return path.equals("/admin")
                 || path.startsWith("/admin/")
                 || path.equals("/internal")
-                || path.startsWith("/internal/");
+                || path.startsWith("/internal/")
+                || path.equals("/api/v1/games/reconcile-stale")
+                || path.equals("/games/reconcile-stale");
     }
 
     private boolean apiKeyMatches(String candidate) {

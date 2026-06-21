@@ -27,11 +27,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class NotificationEventServiceTest {
@@ -62,6 +67,35 @@ class NotificationEventServiceTest {
         assertThat(result.sentCount()).isEqualTo(1);
         assertThat(pushService.sentDevices).containsExactly(relevant);
         assertThat(pushService.sentEvents).extracting(NotificationEvent::getEventType).containsExactly("SCORE_CHANGED");
+    }
+
+    @Test
+    void apnsSendRunsOutsideTransactionWhenTransactionManagerIsConfigured() {
+        Game game = fixtureGame();
+        TransactionAwareApnsPushService pushService = new TransactionAwareApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = new NotificationEventService(
+                notificationEventRepository,
+                notificationDeviceRepository,
+                pushService,
+                new ObjectMapper(),
+                CLOCK,
+                new RecordingTransactionManager()
+        );
+        NotificationDevice relevant = device("kia", "token-a");
+        AtomicReference<NotificationEvent> saved = new AtomicReference<>();
+
+        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> {
+            NotificationEvent event = invocation.getArgument(0);
+            saved.set(event);
+            return event;
+        });
+        when(notificationEventRepository.findById(any(UUID.class))).thenAnswer(invocation -> Optional.of(saved.get()));
+        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+
+        service.createAndDeliver(game, draft());
+
+        assertThat(pushService.transactionActiveDuringSend).containsExactly(false);
     }
 
     @Test
@@ -678,7 +712,7 @@ class NotificationEventServiceTest {
         );
     }
 
-    private static final class RecordingApnsPushService extends ApnsPushService {
+    private static class RecordingApnsPushService extends ApnsPushService {
 
         private final ApnsSendResult result;
         private final String readinessSkipReason;
@@ -686,11 +720,11 @@ class NotificationEventServiceTest {
         private final List<NotificationDevice> sentDevices = new java.util.ArrayList<>();
         private final List<NotificationEvent> sentEvents = new java.util.ArrayList<>();
 
-        private RecordingApnsPushService(ApnsSendResult result) {
+        protected RecordingApnsPushService(ApnsSendResult result) {
             this(result, null, "sandbox");
         }
 
-        private RecordingApnsPushService(ApnsSendResult result, String readinessSkipReason, String configuredEnvironment) {
+        protected RecordingApnsPushService(ApnsSendResult result, String readinessSkipReason, String configuredEnvironment) {
             super(new ApnsProperties(), CLOCK);
             this.result = result;
             this.readinessSkipReason = readinessSkipReason;
@@ -730,6 +764,41 @@ class NotificationEventServiceTest {
             sentEvents.add(event);
             sentDevices.add(device);
             return result;
+        }
+    }
+
+    private static final class TransactionAwareApnsPushService extends RecordingApnsPushService {
+
+        private final List<Boolean> transactionActiveDuringSend = new java.util.ArrayList<>();
+
+        private TransactionAwareApnsPushService(ApnsSendResult result) {
+            super(result);
+        }
+
+        @Override
+        public ApnsSendResult send(NotificationEvent event, NotificationDevice device) {
+            transactionActiveDuringSend.add(TransactionSynchronizationManager.isActualTransactionActive());
+            return super.send(event, device);
+        }
+    }
+
+    private static final class RecordingTransactionManager extends AbstractPlatformTransactionManager {
+
+        @Override
+        protected Object doGetTransaction() {
+            return new Object();
+        }
+
+        @Override
+        protected void doBegin(Object transaction, TransactionDefinition definition) {
+        }
+
+        @Override
+        protected void doCommit(DefaultTransactionStatus status) {
+        }
+
+        @Override
+        protected void doRollback(DefaultTransactionStatus status) {
         }
     }
 }

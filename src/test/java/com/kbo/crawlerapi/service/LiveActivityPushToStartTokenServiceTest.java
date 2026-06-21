@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -83,6 +84,37 @@ class LiveActivityPushToStartTokenServiceTest {
         assertThat(result.sentCount()).isZero();
         assertThat(result.skippedCount()).isEqualTo(1);
         assertThat(apnsPushService.sentCount).isZero();
+    }
+
+    @Test
+    void rejectsOverlongPushToStartToken() {
+        LiveActivityPushToStartTokenService service = service();
+
+        assertThatThrownBy(() -> service.register(command("a".repeat(513), true, true)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("pushToStartToken is too long");
+    }
+
+    @Test
+    void rejectsOverlongInstallationId() {
+        LiveActivityPushToStartTokenService service = service();
+        LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand command =
+                new LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand(
+                        "ios",
+                        "sandbox",
+                        "token",
+                        "i".repeat(101),
+                        "lg",
+                        true,
+                        true,
+                        true,
+                        true,
+                        false
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("installationId is too long");
     }
 
     private LiveActivityPushToStartTokenService service() {

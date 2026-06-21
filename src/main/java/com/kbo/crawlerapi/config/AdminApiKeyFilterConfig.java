@@ -15,7 +15,14 @@ public class AdminApiKeyFilterConfig {
         FilterRegistrationBean<AdminApiKeyFilter> registration = new FilterRegistrationBean<>(
                 new AdminApiKeyFilter(properties, adminProperties)
         );
-        registration.addUrlPatterns("/admin", "/admin/*", "/internal", "/internal/*");
+        registration.addUrlPatterns(
+                "/admin",
+                "/admin/*",
+                "/internal",
+                "/internal/*",
+                "/api/v1/games/reconcile-stale",
+                "/games/reconcile-stale"
+        );
         registration.setOrder(0);
         return registration;
     }

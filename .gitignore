@@ -11,7 +11,10 @@ build/
 # OS
 .DS_Store
 
+# Private keys and certificates
 *.p8
+*.pem
+*.key
 
 # Operational database backups
 backups/

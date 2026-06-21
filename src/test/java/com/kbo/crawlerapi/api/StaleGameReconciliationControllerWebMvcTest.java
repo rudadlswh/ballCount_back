@@ -11,6 +11,7 @@ import com.kbo.crawlerapi.config.AdminApiKeyFilter;
 import com.kbo.crawlerapi.config.AppSecurityProperties;
 import com.kbo.crawlerapi.config.KboAdminProperties;
 import com.kbo.crawlerapi.config.KboReconcileProperties;
+import com.kbo.crawlerapi.config.RegistrationRequestSizeLimitFilter;
 import com.kbo.crawlerapi.service.LiveGameSyncService.LiveSyncSummary;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService.StaleGameReconciliationDateResult;
@@ -226,6 +227,29 @@ class StaleGameReconciliationControllerWebMvcTest {
         assertThat(result.dateResults().get(0).summary().errors()).containsExactly("refresh failed");
     }
 
+    @Test
+    void publicReconcileRequiresAdminKeyWhenFilterIsApplied() throws Exception {
+        MockMvc protectedMockMvc = protectedMockMvc(new StaleGameReconciliationController(realService(new CountingLiveGameSyncService())));
+
+        protectedMockMvc.perform(post("/api/v1/games/reconcile-stale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dates":["2026-06-19"]}
+                                """))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void publicReconcileRejectsPayloadLargerThan32Kb() throws Exception {
+        MockMvc protectedMockMvc = protectedMockMvc(new StaleGameReconciliationController(realService(new CountingLiveGameSyncService())));
+
+        protectedMockMvc.perform(post("/api/v1/games/reconcile-stale")
+                        .header(AdminApiKeyFilter.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"dates\":[\"2026-06-19\"],\"padding\":\"" + "a".repeat((32 * 1024) + 1) + "\"}"))
+                .andExpect(status().isPayloadTooLarge());
+    }
+
     private static final class RecordingStaleGameReconciliationService extends StaleGameReconciliationService {
         private List<LocalDate> requestedDates = List.of();
 
@@ -272,11 +296,19 @@ class StaleGameReconciliationControllerWebMvcTest {
     }
 
     private MockMvc adminMockMvc(StaleGameReconciliationController controller) {
+        return protectedMockMvc(controller);
+    }
+
+    private MockMvc protectedMockMvc(StaleGameReconciliationController controller) {
         AppSecurityProperties legacyProperties = new AppSecurityProperties();
         KboAdminProperties adminProperties = new KboAdminProperties();
         adminProperties.setApiKey(ADMIN_KEY);
+        legacyProperties.setRegistrationRequestMaxBytes(32 * 1024);
         return MockMvcBuilders.standaloneSetup(controller)
-                .addFilters(new AdminApiKeyFilter(legacyProperties, adminProperties))
+                .addFilters(
+                        new AdminApiKeyFilter(legacyProperties, adminProperties),
+                        new RegistrationRequestSizeLimitFilter(legacyProperties)
+                )
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(
                         Jackson2ObjectMapperBuilder.json()

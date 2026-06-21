@@ -29,6 +29,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -59,6 +63,41 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(service.todayKst()).isEqualTo(LocalDate.of(2026, 4, 28));
+    }
+
+    @Test
+    void sameDateSyncSkipsConcurrentSecondRun() throws Exception {
+        LocalDate date = LocalDate.of(2026, 4, 9);
+        CountDownLatch firstRunEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstRun = new CountDownLatch(1);
+        AtomicInteger repositoryCalls = new AtomicInteger();
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(date)))
+                .thenAnswer(invocation -> {
+                    if (repositoryCalls.incrementAndGet() == 1) {
+                        firstRunEntered.countDown();
+                        releaseFirstRun.await(1, TimeUnit.SECONDS);
+                    }
+                    return List.of();
+                });
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), new StubNotificationEventService());
+        var executor = Executors.newSingleThreadExecutor();
+
+        try {
+            var first = executor.submit(() -> service.sync(date, false));
+            assertThat(firstRunEntered.await(1, TimeUnit.SECONDS)).isTrue();
+
+            LiveGameSyncService.LiveSyncSummary second = service.sync(date, false);
+
+            assertThat(second.scannedCount()).isZero();
+            assertThat(second.notificationSkippedCount()).isEqualTo(1);
+            assertThat(second.errors()).containsExactly("sync already in progress");
+
+            releaseFirstRun.countDown();
+            assertThat(first.get(1, TimeUnit.SECONDS).date()).isEqualTo(date);
+        } finally {
+            releaseFirstRun.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
