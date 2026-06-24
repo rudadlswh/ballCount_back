@@ -586,6 +586,7 @@ class LiveGameSyncServiceTest {
                 .thenReturn(List.of(before), List.of(afterSchedule));
         when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(afterSchedule.getId()))).thenReturn(Optional.empty());
         when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(snapshot));
 
         StubNotificationEventService notificationEventService = new StubNotificationEventService();
@@ -597,7 +598,37 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly(NotificationEventService.EVENT_GAME_START);
-        assertThat(notificationEventService.drafts.get(0).eventKey()).isEqualTo("game:%s:game-start".formatted(after.getId()));
+        assertThat(notificationEventService.drafts.get(0).eventKey()).isEqualTo("game:%s:game-start".formatted(afterSchedule.getId()));
+    }
+
+    @Test
+    void scheduleLiveTransitionCreatesGameStartEvenWhenDetailImportFails(CapturedOutput output) {
+        Clock delayedClock = Clock.fixed(Instant.parse("2026-04-09T09:55:00Z"), ZoneId.of("Asia/Seoul"));
+        OffsetDateTime scheduledAt = OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9));
+        Game before = fixtureGame(GameStatus.SCHEDULED, 0, 0, null, scheduledAt);
+        Game afterSchedule = fixtureGame(GameStatus.LIVE, 1, 0, "Top 1", scheduledAt);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before), List.of(afterSchedule));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(afterSchedule.getId()))).thenReturn(Optional.empty());
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(
+                delayedClock,
+                new StubGameDetailImportService(new IllegalStateException("detail parse failed")),
+                notificationEventService
+        );
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_GAME_START);
+        assertThat(output.getOut()).contains("delayed GAME_START detected");
+        assertThat(output.getOut()).contains("delayMinutes=25");
     }
 
     @Test

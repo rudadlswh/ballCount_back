@@ -73,6 +73,12 @@ public class LiveGameSyncScheduler {
 
         try {
             LocalDate todayKst = LocalDate.now(applicationClock.withZone(KST));
+            log.info(
+                    "[LiveGameSync] tick time={} date={} interval={}",
+                    Instant.now(applicationClock),
+                    todayKst,
+                    properties.getSchedulerInterval()
+            );
             List<Game> todaysGames = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(todayKst);
             if (todaysGames.isEmpty()) {
                 log.debug("[LiveGameSync] skipped no games today date={}", todayKst);

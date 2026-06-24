@@ -163,11 +163,13 @@ public class NotificationEventService {
         recordDeliveryResult(event, status, lastFailure, invalidDevices);
         Instant apnsResultAt = Instant.now(applicationClock);
         log.info(
-                "[Notifications] APNs result at={} eventId={} eventKey={} eventType={} status={} sent={} skipped={} failed={} durationMs={}",
+                "[Notifications] APNs result at={} sent_at={} eventId={} eventKey={} eventType={} gameScheduledAt={} status={} sent={} skipped={} failed={} durationMs={}",
+                apnsResultAt,
                 apnsResultAt,
                 event.getId(),
                 draft.eventKey(),
                 draft.eventType(),
+                game.getScheduledAt(),
                 status,
                 sent,
                 skipped,
@@ -190,6 +192,15 @@ public class NotificationEventService {
                 draft.body(),
                 toJson(draft.payload())
         ));
+        log.info(
+                "[Notifications] event persisted eventId={} eventKey={} eventType={} created_at={} gameScheduledAt={} detectedLiveStatusAt={}",
+                event.getId(),
+                draft.eventKey(),
+                draft.eventType(),
+                OffsetDateTime.now(applicationClock),
+                game.getScheduledAt(),
+                Instant.now(applicationClock)
+        );
         List<String> eventTeamIds = eventTeamIds(game);
         List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByFavoriteTeamIdIn(eventTeamIds)
                 .stream()

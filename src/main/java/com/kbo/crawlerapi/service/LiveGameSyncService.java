@@ -204,40 +204,74 @@ public class LiveGameSyncService {
 
         for (Game game : games) {
             GameState before = beforeScheduleStates.get(game.getPublicGameId());
-            if (before == null || !isScheduleCancellationTransition(before.status(), game.getStatus())) {
+            if (before == null) {
                 continue;
             }
-            log.info(
-                    "[LiveGameSync] schedule-level cancellation detected game={} previousStatus={} scheduleStatus={} cancelReason={} rawCancelText={}",
-                    game.getPublicGameId(),
-                    before.status(),
-                    game.getStatus(),
-                    game.getCancelReason(),
-                    game.getRawCancelText()
-            );
-            NotificationEventDraft draft = cancelledDraft(game, game.getStatus());
+            NotificationEventDraft draft;
+            boolean started = false;
+            if (isGameStartTransition(before.status(), game.getStatus())) {
+                log.info(
+                        "[LiveGameSync] schedule-level GAME_START detected game={} providerGameId={} scheduledAt={} previousStatus={} currentStatus={}",
+                        game.getPublicGameId(),
+                        game.getProviderGameId(),
+                        game.getScheduledAt(),
+                        before.status(),
+                        game.getStatus()
+                );
+                draft = startedDraft(game);
+                started = true;
+                logGameStartTiming(game, draft, "schedule-refresh");
+            } else if (isScheduleCancellationTransition(before.status(), game.getStatus())) {
+                log.info(
+                        "[LiveGameSync] schedule-level cancellation detected game={} previousStatus={} scheduleStatus={} cancelReason={} rawCancelText={}",
+                        game.getPublicGameId(),
+                        before.status(),
+                        game.getStatus(),
+                        game.getCancelReason(),
+                        game.getRawCancelText()
+                );
+                draft = cancelledDraft(game, game.getStatus());
+            } else {
+                continue;
+            }
             EventDeliveryResult delivery = notificationEventService.createAndDeliver(game, draft);
             updatedCount++;
             updatedGames.add(game.getPublicGameId());
             if (delivery.eventCreated()) {
                 eventCreatedCount++;
                 events.add(delivery.eventKey());
-                log.info(
-                        "[LiveGameSync] cancellation event created game={} eventKey={}",
-                        game.getPublicGameId(),
-                        delivery.eventKey()
-                );
+                if (started) {
+                    log.info(
+                            "[LiveGameSync] GAME_START event created_at={} game={} providerGameId={} scheduledAt={} eventKey={} source=schedule-refresh",
+                            Instant.now(applicationClock),
+                            game.getPublicGameId(),
+                            game.getProviderGameId(),
+                            game.getScheduledAt(),
+                            delivery.eventKey()
+                    );
+                    deliverLiveActivityStart(game, draft);
+                } else {
+                    log.info(
+                            "[LiveGameSync] cancellation event created game={} eventKey={}",
+                            game.getPublicGameId(),
+                            delivery.eventKey()
+                    );
+                }
             }
             notificationSentCount += delivery.sentCount();
             notificationSkippedCount += delivery.skippedCount();
-            log.info(
-                    "[LiveGameSync] cancellation notification sent/skipped game={} eventKey={} sent={} skipped={} created={}",
-                    game.getPublicGameId(),
-                    delivery.eventKey(),
-                    delivery.sentCount(),
-                    delivery.skippedCount(),
-                    delivery.eventCreated()
-            );
+            if (started) {
+                beforeScheduleStates.put(game.getPublicGameId(), GameState.from(game, latestSnapshot(game)));
+            } else {
+                log.info(
+                        "[LiveGameSync] cancellation notification sent/skipped game={} eventKey={} sent={} skipped={} created={}",
+                        game.getPublicGameId(),
+                        delivery.eventKey(),
+                        delivery.sentCount(),
+                        delivery.skippedCount(),
+                        delivery.eventCreated()
+                );
+            }
             nextRefreshAtByGameId.put(game.getId(), Instant.now(applicationClock).plus(ttlFor(game)));
         }
 
@@ -305,6 +339,15 @@ public class LiveGameSyncService {
                     notificationSentCount += delivery.sentCount();
                     notificationSkippedCount += delivery.skippedCount();
                     if (delivery.eventCreated() && NotificationEventService.EVENT_GAME_START.equals(draft.eventType())) {
+                        log.info(
+                                "[LiveGameSync] GAME_START event created_at={} game={} providerGameId={} scheduledAt={} eventKey={} source=detail-import",
+                                Instant.now(applicationClock),
+                                after.getPublicGameId(),
+                                after.getProviderGameId(),
+                                after.getScheduledAt(),
+                                delivery.eventKey()
+                        );
+                        logGameStartTiming(after, draft, "detail-import");
                         deliverLiveActivityStart(after, draft);
                     }
                     if (NotificationEventService.EVENT_GAME_CANCELLED.equals(draft.eventType())) {
@@ -478,6 +521,42 @@ public class LiveGameSyncService {
             );
         }
         return refreshDue;
+    }
+
+    private boolean isGameStartTransition(GameStatus before, GameStatus after) {
+        return before != GameStatus.FINAL
+                && !isLiveLike(before)
+                && isLiveLike(after);
+    }
+
+    private void logGameStartTiming(Game game, NotificationEventDraft draft, String source) {
+        if (game.getScheduledAt() == null) {
+            return;
+        }
+        Instant detectedAt = Instant.now(applicationClock);
+        long delayMinutes = Duration.between(game.getScheduledAt().toInstant(), detectedAt).toMinutes();
+        log.info(
+                "[LiveGameSync] GAME_START timing game={} providerGameId={} scheduledAt={} detectedLiveStatusAt={} eventKey={} source={} delayMinutes={}",
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getScheduledAt(),
+                detectedAt,
+                draft.eventKey(),
+                source,
+                delayMinutes
+        );
+        if (delayMinutes >= 10) {
+            log.warn(
+                    "[LiveGameSync] delayed GAME_START detected game={} providerGameId={} scheduledAt={} detectedLiveStatusAt={} eventKey={} source={} delayMinutes={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getScheduledAt(),
+                    detectedAt,
+                    draft.eventKey(),
+                    source,
+                    delayMinutes
+            );
+        }
     }
 
     private boolean shouldRunDetailImport(Game game) {
