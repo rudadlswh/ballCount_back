@@ -346,10 +346,14 @@ public class KboScheduleParser {
         if (relayText.contains("문자중계") || relayText.contains("중계")) {
             return GameStatus.LIVE;
         }
-        if (awayScore != null && homeScore != null) {
+        if (hasNonZeroScore(awayScore, homeScore)) {
             return GameStatus.LIVE;
         }
         return GameStatus.SCHEDULED;
+    }
+
+    private boolean hasNonZeroScore(Integer awayScore, Integer homeScore) {
+        return awayScore != null && homeScore != null && (awayScore > 0 || homeScore > 0);
     }
 
     private GameCancelReason resolveCancelReason(boolean isCancelled, String note) {
@@ -380,11 +384,20 @@ public class KboScheduleParser {
         String lower = value.toLowerCase(Locale.ROOT);
         return value.contains("서스펜")
                 || value.contains("우천중단")
+                || value.contains("우천 중단")
+                || value.contains("우천지연")
+                || value.contains("우천 지연")
                 || value.contains("강우중단")
+                || value.contains("강우 중단")
                 || value.contains("경기중단")
+                || value.contains("경기 중단")
                 || value.contains("일시중단")
+                || value.contains("일시 중단")
+                || value.contains("지연")
                 || value.contains("중단")
                 || lower.contains("suspend")
+                || lower.contains("delay")
+                || lower.contains("delayed")
                 || lower.contains("interrupted")
                 || lower.contains("rain delay");
     }
@@ -746,6 +759,28 @@ public class KboScheduleParser {
                     rawCancelText,
                     enrichedAwayStartingPitcherName,
                     enrichedHomeStartingPitcherName,
+                    sourceUpdatedAt
+            );
+        }
+
+        public ParsedScheduleGame withStatus(GameStatus status) {
+            return new ParsedScheduleGame(
+                    provider,
+                    providerGameId,
+                    gameDate,
+                    scheduledAt,
+                    stadium,
+                    status,
+                    status == GameStatus.CANCELLED,
+                    status == GameStatus.POSTPONED,
+                    awayProviderTeamName,
+                    homeProviderTeamName,
+                    awayScore,
+                    homeScore,
+                    status == GameStatus.CANCELLED ? cancelReason : null,
+                    status == GameStatus.CANCELLED || status == GameStatus.POSTPONED ? rawCancelText : null,
+                    awayStartingPitcherName,
+                    homeStartingPitcherName,
                     sourceUpdatedAt
             );
         }

@@ -496,4 +496,8 @@ public class GameSnapshot {
     public OffsetDateTime getFetchedAt() {
         return fetchedAt;
     }
+
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
+    }
 }

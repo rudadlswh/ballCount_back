@@ -444,16 +444,37 @@ public class KboGameDetailParser {
         if (hasReliableFinalMarker(row)) {
             return GameStatus.FINAL;
         }
-        if ("2".equals(gameState)) {
+        if ("2".equals(gameState) && hasLiveProgress(row)) {
             return GameStatus.LIVE;
         }
-        if (integer(row, "GAME_INN_NO") != null) {
+        if (hasLiveProgress(row)) {
             return GameStatus.LIVE;
         }
         if ("1".equals(gameState)) {
             return GameStatus.SCHEDULED;
         }
         return GameStatus.UNKNOWN;
+    }
+
+    private boolean hasLiveProgress(JsonNode row) {
+        Integer awayScore = integer(row, "T_SCORE_CN");
+        Integer homeScore = integer(row, "B_SCORE_CN");
+        Integer inning = integer(row, "GAME_INN_NO");
+        String inningHalf = resolveHalf(text(row, "GAME_TB_SC"));
+        return nullSafePositive(awayScore)
+                || nullSafePositive(homeScore)
+                || (inning != null && inning > 1)
+                || "bottom".equals(inningHalf)
+                || nullSafePositive(integer(row, "BALL_CN"))
+                || nullSafePositive(integer(row, "STRIKE_CN"))
+                || nullSafePositive(integer(row, "OUT_CN"))
+                || baseBattingOrder(row, "B1") != null && baseBattingOrder(row, "B1") > 0
+                || baseBattingOrder(row, "B2") != null && baseBattingOrder(row, "B2") > 0
+                || baseBattingOrder(row, "B3") != null && baseBattingOrder(row, "B3") > 0;
+    }
+
+    private boolean nullSafePositive(Integer value) {
+        return value != null && value > 0;
     }
 
     public Optional<ParsedScoreBoardStatus> parseScoreBoardStatus(String providerGameId, String responseBody) {
@@ -552,8 +573,19 @@ public class KboGameDetailParser {
                 return phrase;
             }
         }
+        for (String phrase : List.of("우천 지연", "우천지연", "우천 중단", "강우 중단", "경기 중단", "일시 중단", "지연")) {
+            if (value.contains(phrase)) {
+                return phrase;
+            }
+        }
         if (lower.contains("rain delay")) {
             return "rain delay";
+        }
+        if (lower.contains("delayed")) {
+            return "delayed";
+        }
+        if (lower.contains("delay")) {
+            return "delay";
         }
         if (lower.contains("suspended")) {
             return "suspended";
@@ -616,11 +648,20 @@ public class KboGameDetailParser {
         String lower = value.toLowerCase(java.util.Locale.ROOT);
         return value.contains("서스펜")
                 || value.contains("우천중단")
+                || value.contains("우천 중단")
+                || value.contains("우천지연")
+                || value.contains("우천 지연")
                 || value.contains("강우중단")
+                || value.contains("강우 중단")
                 || value.contains("경기중단")
+                || value.contains("경기 중단")
                 || value.contains("일시중단")
+                || value.contains("일시 중단")
+                || value.contains("지연")
                 || value.contains("중단")
                 || lower.contains("suspend")
+                || lower.contains("delay")
+                || lower.contains("delayed")
                 || lower.contains("interrupted")
                 || lower.contains("rain delay");
     }

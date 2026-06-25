@@ -128,7 +128,10 @@ public class KboScheduleImportService {
         }
 
         try {
-            PersistResult persistResult = persistParsedGames(parseResult.games(), parseResult.skippedRows());
+            PersistResult persistResult = persistParsedGames(
+                    suppressPrematureLiveStatuses(parseResult.games()),
+                    parseResult.skippedRows()
+            );
             crawlJobTrackingService.markScheduleSucceeded(crawlJob.getId(), parseResult.skippedRows().size());
             return new ScheduleIngestionResult(
                     yearMonth,
@@ -187,6 +190,7 @@ public class KboScheduleImportService {
                 .filter(skippedRow -> date.equals(skippedRow.gameDate()))
                 .toList();
         gamesForDate = enrichDailyScheduleGames(date, gamesForDate);
+        gamesForDate = suppressPrematureLiveStatuses(gamesForDate);
 
         log.info(
                 "Filtered daily KBO schedule crawl rows. requestedDate={}, derivedMonth={}, fetchedRowCount={}, parsedGameCount={}, filteredGameCount={}, filteredSkippedRowCount={}",
@@ -329,6 +333,29 @@ public class KboScheduleImportService {
         return (int) skippedRows.stream()
                 .filter(skippedRow -> "MISSING_PROVIDER_GAME_ID".equals(skippedRow.reason()))
                 .count();
+    }
+
+    private List<ParsedScheduleGame> suppressPrematureLiveStatuses(List<ParsedScheduleGame> games) {
+        return games.stream()
+                .map(this::suppressPrematureLiveStatus)
+                .toList();
+    }
+
+    private ParsedScheduleGame suppressPrematureLiveStatus(ParsedScheduleGame game) {
+        if (game.status() != GameStatus.LIVE || game.scheduledAt() == null) {
+            return game;
+        }
+        if (!OffsetDateTime.now(applicationClock).toInstant().isBefore(game.scheduledAt().toInstant())) {
+            return game;
+        }
+        log.info(
+                "Suppressed premature LIVE schedule status. providerGameId={} gameDate={} scheduledAt={} now={}",
+                game.providerGameId(),
+                game.gameDate(),
+                game.scheduledAt(),
+                OffsetDateTime.now(applicationClock)
+        );
+        return game.withStatus(GameStatus.SCHEDULED);
     }
 
     private void logSkippedScheduleRowDuringImport(KboScheduleParser.SkippedScheduleRow skippedRow) {

@@ -33,6 +33,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +46,7 @@ public class LiveGameSyncService {
     private static final Logger log = LoggerFactory.getLogger(LiveGameSyncService.class);
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter CANCELLED_GAME_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
+    private static final Pattern RESUME_TIME_PATTERN = Pattern.compile("(?<!\\d)([01]?\\d|2[0-3]):([0-5]\\d)(?!\\d)");
     private static final Map<String, String> TEAM_DISPLAY_NAMES = Map.ofEntries(
             Map.entry("hanwha", "한화"),
             Map.entry("lotte", "롯데"),
@@ -207,9 +210,15 @@ public class LiveGameSyncService {
             if (before == null) {
                 continue;
             }
+            GameState afterScheduleState = GameState.from(game, latestSnapshot(game));
+            if (downgradeUnreliableLiveIfNeeded(game, afterScheduleState, "schedule-refresh")) {
+                afterScheduleState = GameState.from(game, latestSnapshot(game));
+                beforeScheduleStates.put(game.getPublicGameId(), afterScheduleState);
+            }
             NotificationEventDraft draft;
             boolean started = false;
-            if (isGameStartTransition(before.status(), game.getStatus())) {
+            boolean interrupted = false;
+            if (shouldCreateGameStartDraft(before, afterScheduleState, game)) {
                 log.info(
                         "[LiveGameSync] schedule-level GAME_START detected game={} providerGameId={} scheduledAt={} previousStatus={} currentStatus={}",
                         game.getPublicGameId(),
@@ -221,16 +230,26 @@ public class LiveGameSyncService {
                 draft = startedDraft(game);
                 started = true;
                 logGameStartTiming(game, draft, "schedule-refresh");
-            } else if (isScheduleCancellationTransition(before.status(), game.getStatus())) {
+            } else if (isScheduleCancellationTransition(before.status(), afterScheduleState.status())) {
                 log.info(
                         "[LiveGameSync] schedule-level cancellation detected game={} previousStatus={} scheduleStatus={} cancelReason={} rawCancelText={}",
                         game.getPublicGameId(),
                         before.status(),
-                        game.getStatus(),
+                        afterScheduleState.status(),
                         game.getCancelReason(),
                         game.getRawCancelText()
                 );
-                draft = cancelledDraft(game, game.getStatus());
+                draft = cancelledDraft(game, afterScheduleState.status());
+            } else if (isInterruptionTransition(before, afterScheduleState)) {
+                log.info(
+                        "[LiveGameSync] schedule-level interruption detected game={} previousStatus={} scheduleStatus={} statusReason={}",
+                        game.getPublicGameId(),
+                        before.status(),
+                        afterScheduleState.status(),
+                        game.getStatusReason()
+                );
+                draft = interruptedDraft(game);
+                interrupted = true;
             } else {
                 continue;
             }
@@ -252,15 +271,16 @@ public class LiveGameSyncService {
                     deliverLiveActivityStart(game, draft);
                 } else {
                     log.info(
-                            "[LiveGameSync] cancellation event created game={} eventKey={}",
+                            "[LiveGameSync] schedule-level event created game={} eventType={} eventKey={}",
                             game.getPublicGameId(),
+                            draft.eventType(),
                             delivery.eventKey()
                     );
                 }
             }
             notificationSentCount += delivery.sentCount();
             notificationSkippedCount += delivery.skippedCount();
-            if (started) {
+            if (started || interrupted) {
                 beforeScheduleStates.put(game.getPublicGameId(), GameState.from(game, latestSnapshot(game)));
             } else {
                 log.info(
@@ -303,13 +323,17 @@ public class LiveGameSyncService {
                 after.markLiveChecked(OffsetDateTime.now(applicationClock));
                 boolean finalConfirmed = confirmFinalIfComplete(after);
                 gameRepository.save(after);
+                GameState afterState = GameState.from(after, latestSnapshot(after));
+                if (downgradeUnreliableLiveIfNeeded(after, afterState, "detail-import")) {
+                    afterState = GameState.from(after, latestSnapshot(after));
+                }
                 if (becameFinalOrFinalConfirmed(before, after, finalConfirmed)) {
                     teamRankService.refreshSeasonRankingsSafely(after.getGameDate().getYear());
                 }
 
                 List<NotificationEventDraft> drafts = detectChanges(
                         before,
-                        GameState.from(after, latestSnapshot(after)),
+                        afterState,
                         after
                 );
                 if (!drafts.isEmpty()) {
@@ -523,10 +547,116 @@ public class LiveGameSyncService {
         return refreshDue;
     }
 
-    private boolean isGameStartTransition(GameStatus before, GameStatus after) {
-        return before != GameStatus.FINAL
-                && !isLiveLike(before)
-                && isLiveLike(after);
+    private boolean isBasicGameStartTransition(GameState before, GameState after) {
+        return before.status() != GameStatus.FINAL
+                && !isLiveLike(before.status())
+                && after.status() == GameStatus.LIVE;
+    }
+
+    private boolean shouldCreateGameStartDraft(GameState before, GameState after, Game game) {
+        return isBasicGameStartTransition(before, after)
+                && hasReliableLiveStartEvidence(game, after);
+    }
+
+    private boolean downgradeUnreliableLiveIfNeeded(Game game, GameState state, String source) {
+        if (game.getStatus() != GameStatus.LIVE || hasReliableLiveStartEvidence(game, state)) {
+            return false;
+        }
+        log.info(
+                "[LiveGameSync] unreliable LIVE reverted game={} providerGameId={} scheduledAt={} source={} statusReason={} snapshotObservedAt={} inning={} inningHalf={} awayScore={} homeScore={} balls={} strikes={} outs={}",
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getScheduledAt(),
+                source,
+                game.getStatusReason(),
+                state.snapshotObservedAt(),
+                state.inning(),
+                state.inningHalf(),
+                game.getAwayScore(),
+                game.getHomeScore(),
+                state.balls(),
+                state.strikes(),
+                state.outs()
+        );
+        game.syncDetail(
+                GameStatus.SCHEDULED,
+                game.getHomeScore(),
+                game.getAwayScore(),
+                game.getInningState(),
+                false,
+                false,
+                null,
+                null,
+                game.getHomeStartingPitcherName(),
+                game.getAwayStartingPitcherName(),
+                game.getLineupData(),
+                game.getStatusReason(),
+                game.getSourceUpdatedAt()
+        );
+        gameRepository.save(game);
+        return true;
+    }
+
+    private boolean hasReliableLiveStartEvidence(Game game, GameState state) {
+        if (isBeforeScheduledStart(game)) {
+            return false;
+        }
+        return hasExplicitOfficialLiveSignal(game)
+                || hasScoreProgress(game)
+                || hasFreshSnapshotProgress(game, state);
+    }
+
+    private boolean isBeforeScheduledStart(Game game) {
+        return game.getScheduledAt() != null
+                && Instant.now(applicationClock).isBefore(game.getScheduledAt().toInstant());
+    }
+
+    private boolean hasExplicitOfficialLiveSignal(Game game) {
+        String statusReason = game.getStatusReason();
+        if (statusReason == null || statusReason.isBlank()) {
+            return false;
+        }
+        String lower = statusReason.toLowerCase(java.util.Locale.ROOT);
+        String collapsed = statusReason.replace(" ", "");
+        return collapsed.contains("경기중")
+                || lower.contains("live")
+                || lower.contains("in_progress")
+                || lower.contains("in progress")
+                || lower.contains("running");
+    }
+
+    private boolean hasScoreProgress(Game game) {
+        return nullSafe(game.getAwayScore()) > 0 || nullSafe(game.getHomeScore()) > 0;
+    }
+
+    private boolean hasFreshSnapshotProgress(Game game, GameState state) {
+        if (!snapshotAtOrAfterScheduledStart(game, state.snapshotObservedAt())) {
+            return false;
+        }
+        return hasActualSnapshotProgress(state);
+    }
+
+    private boolean snapshotAtOrAfterScheduledStart(Game game, OffsetDateTime snapshotObservedAt) {
+        if (snapshotObservedAt == null) {
+            return false;
+        }
+        if (game.getScheduledAt() == null) {
+            return true;
+        }
+        return !snapshotObservedAt.toInstant().isBefore(game.getScheduledAt().toInstant());
+    }
+
+    private boolean hasActualSnapshotProgress(GameState state) {
+        if (state.inning() != null && state.inning() > 1) {
+            return true;
+        }
+        if ("bottom".equals(normalizeHalf(state.inningHalf()))) {
+            return true;
+        }
+        return nullSafe(state.balls()) > 0
+                || nullSafe(state.strikes()) > 0
+                || nullSafe(state.outs()) > 0
+                || baseCount(state) > 0;
     }
 
     private void logGameStartTiming(Game game, NotificationEventDraft draft, String source) {
@@ -684,7 +814,7 @@ public class LiveGameSyncService {
             Game game
     ) {
         List<NotificationEventDraft> drafts = new ArrayList<>();
-        if (before.status() != GameStatus.FINAL && !isLiveLike(before.status()) && isLiveLike(after.status())) {
+        if (shouldCreateGameStartDraft(before, after, game)) {
             drafts.add(startedDraft(game));
         }
         if (isCancellationTransition(before.status(), after.status())) {
@@ -692,6 +822,10 @@ public class LiveGameSyncService {
         }
         if (isInterruptionTransition(before, after)) {
             drafts.add(interruptedDraft(game));
+        }
+        String resumeScheduledTime = resumeScheduledTime(before, after);
+        if (resumeScheduledTime != null) {
+            drafts.add(resumeScheduledDraft(game, resumeScheduledTime));
         }
         if (isResumeTransition(before.status(), after.status())) {
             drafts.add(resumedDraft(game));
@@ -737,8 +871,8 @@ public class LiveGameSyncService {
         String reason = normalizedInterruptionReason(game);
         String matchup = "%s vs %s".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
         String body = isRainInterruption(reason)
-                ? "%s 경기가 우천으로 중단되었습니다.".formatted(matchup)
-                : "%s 경기가 중단되었습니다.".formatted(matchup);
+                ? "%s 경기가 우천으로 지연되었습니다. 재개 시간은 미정입니다.".formatted(matchup)
+                : "%s 경기가 지연되었습니다. 재개 시간은 미정입니다.".formatted(matchup);
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_GAME_INTERRUPTED,
@@ -747,6 +881,20 @@ public class LiveGameSyncService {
                 body
         );
         draft.payload().put("statusReason", game.getStatusReason());
+        return draft;
+    }
+
+    private NotificationEventDraft resumeScheduledDraft(Game game, String resumeTime) {
+        String matchup = "%s vs %s".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
+        NotificationEventDraft draft = draft(
+                game,
+                NotificationEventService.EVENT_GAME_RESUME_SCHEDULED,
+                "game:%s:resume-scheduled:%s".formatted(game.getId(), resumeTime),
+                "경기 재개 예정",
+                "%s 경기가 %s 재개 예정입니다.".formatted(matchup, resumeTime)
+        );
+        draft.payload().put("statusReason", game.getStatusReason());
+        draft.payload().put("expectedResume", resumeTime);
         return draft;
     }
 
@@ -1231,9 +1379,37 @@ public class LiveGameSyncService {
 
     private boolean isInterruptionTransition(GameState before, GameState after) {
         return before.status() != after.status()
-                && (isLiveLike(before.status()) || isWeakFinal(before))
+                && (before.status() == GameStatus.SCHEDULED || before.status() == GameStatus.UNKNOWN || isLiveLike(before.status()) || isWeakFinal(before))
                 && isInterrupted(after.status())
                 && !isInterrupted(before.status());
+    }
+
+    private String resumeScheduledTime(GameState before, GameState after) {
+        if (!isInterrupted(after.status())) {
+            return null;
+        }
+        if (!changedText(before.statusReason(), after.statusReason())) {
+            return null;
+        }
+        return extractOfficialResumeTime(after.statusReason());
+    }
+
+    private String extractOfficialResumeTime(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        boolean resumeContext = value.contains("재개") || lower.contains("resume");
+        boolean scheduledContext = value.contains("예정") || lower.contains("scheduled") || lower.contains("expected");
+        if (!resumeContext || !scheduledContext) {
+            return null;
+        }
+        Matcher matcher = RESUME_TIME_PATTERN.matcher(value);
+        if (!matcher.find()) {
+            return null;
+        }
+        int hour = Integer.parseInt(matcher.group(1));
+        return "%02d:%s".formatted(hour, matcher.group(2));
     }
 
     private boolean isWeakFinal(GameState state) {
@@ -1627,7 +1803,10 @@ public class LiveGameSyncService {
             Integer inning,
             String inningHalf,
             String inningLabel,
+            Integer balls,
+            Integer strikes,
             Integer outs,
+            OffsetDateTime snapshotObservedAt,
             boolean runnerOnFirst,
             boolean runnerOnSecond,
             boolean runnerOnThird,
@@ -1652,7 +1831,10 @@ public class LiveGameSyncService {
                     snapshot == null ? null : snapshot.getInning(),
                     clean(snapshot == null ? null : snapshot.getInningHalf()),
                     clean(snapshot == null ? null : snapshot.getInningLabel()),
+                    snapshot == null ? null : snapshot.getBalls(),
+                    snapshot == null ? null : snapshot.getStrikes(),
                     snapshot == null ? null : snapshot.getOuts(),
+                    snapshotObservedAt(snapshot),
                     snapshot != null && snapshot.isRunnerOnFirst(),
                     snapshot != null && snapshot.isRunnerOnSecond(),
                     snapshot != null && snapshot.isRunnerOnThird(),
@@ -1669,6 +1851,13 @@ public class LiveGameSyncService {
                 return null;
             }
             return value.trim();
+        }
+
+        private static OffsetDateTime snapshotObservedAt(GameSnapshot snapshot) {
+            if (snapshot == null) {
+                return null;
+            }
+            return snapshot.getFetchedAt() != null ? snapshot.getFetchedAt() : snapshot.getCreatedAt();
         }
 
         boolean cancelledOrPostponed() {

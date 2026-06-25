@@ -32,6 +32,25 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void scoreBoardRainDelayMapsToSuspended() {
+        String html = """
+                <html>
+                  <body>
+                    <div class="scoreboard">
+                      <span class="status">우천 지연</span>
+                    </div>
+                  </body>
+                </html>
+                """;
+
+        var status = parser.parseScoreBoardStatus("20260625NCLT0", html);
+
+        assertThat(status).isPresent();
+        assertThat(status.get().status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(status.get().statusReason()).isEqualTo("우천 지연");
+    }
+
+    @Test
     void scoreBoardErrorPageIsIgnored() {
         String html = """
                 <html>
@@ -70,6 +89,32 @@ class KboGameDetailParserTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).status()).isEqualTo(GameStatus.LIVE);
         assertThat(result.get(0).statusReason()).isNull();
+    }
+
+    @Test
+    void gameListRainDelayTextWinsOverLiveGameState() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260625NCLT0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_STATE_SC_NM": "우천 지연",
+                      "GAME_INN_NO": 1,
+                      "GAME_TB_SC": "T",
+                      "SCORE_CK": "0",
+                      "T_SCORE_CN": "0",
+                      "B_SCORE_CN": "0"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(result.get(0).statusReason()).isEqualTo("우천 지연");
     }
 
     @Test
