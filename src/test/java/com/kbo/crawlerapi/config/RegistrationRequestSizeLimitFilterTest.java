@@ -13,8 +13,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 
 class RegistrationRequestSizeLimitFilterTest {
 
@@ -70,6 +73,34 @@ class RegistrationRequestSizeLimitFilterTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"padding\":\"" + "a".repeat((32 * 1024) + 1) + "\"}"))
                 .andExpect(status().isPayloadTooLarge());
+    }
+
+    @Test
+    void rejectsUnknownLengthRequestWhenReadBodyExceedsLimit() throws Exception {
+        AppSecurityProperties properties = new AppSecurityProperties();
+        properties.setRegistrationRequestMaxBytes(8);
+        RegistrationRequestSizeLimitFilter filter = new RegistrationRequestSizeLimitFilter(properties);
+        MockHttpServletRequest rawRequest = new MockHttpServletRequest("POST", "/devices/register");
+        rawRequest.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        rawRequest.setContent("{\"a\":\"too-long\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        HttpServletRequestWrapper unknownLengthRequest = new HttpServletRequestWrapper(rawRequest) {
+            @Override
+            public int getContentLength() {
+                return -1;
+            }
+
+            @Override
+            public long getContentLengthLong() {
+                return -1;
+            }
+        };
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(unknownLengthRequest, response, (request, servletResponse) -> {
+            throw new AssertionError("oversized request should not reach downstream chain");
+        });
+
+        org.assertj.core.api.Assertions.assertThat(response.getStatus()).isEqualTo(413);
     }
 
     private AppSecurityProperties properties() {

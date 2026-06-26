@@ -117,6 +117,28 @@ class LiveActivityPushToStartTokenServiceTest {
                 .hasMessage("installationId is too long");
     }
 
+    @Test
+    void rejectsUnsupportedEnvironmentAlias() {
+        LiveActivityPushToStartTokenService service = service();
+        LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand command =
+                new LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand(
+                        "ios",
+                        "release",
+                        "token",
+                        "install-1",
+                        "lg",
+                        true,
+                        true,
+                        true,
+                        true,
+                        false
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("environment must be sandbox or production");
+    }
+
     private LiveActivityPushToStartTokenService service() {
         return service(new RecordingApnsPushService());
     }

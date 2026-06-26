@@ -6,6 +6,9 @@ import com.kbo.crawlerapi.repository.LiveActivityPushToStartTokenRepository;
 import com.kbo.crawlerapi.support.TeamCatalog;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -25,7 +28,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class LiveActivityPushToStartTokenService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveActivityPushToStartTokenService.class);
-    private static final int TOKEN_PREFIX_LENGTH = 8;
     private static final int MAX_TOKEN_LENGTH = 512;
     private static final int MAX_INSTALLATION_ID_LENGTH = 100;
 
@@ -103,10 +105,8 @@ public class LiveActivityPushToStartTokenService {
         );
         repository.save(token);
         log.info(
-                "[LiveActivityStart] push-to-start token registered tokenPrefix={} installationId={} favoriteTeamId={} environment={} notificationsAuthorized={} liveActivitiesEnabled={} autoStartEnabled={}",
-                tokenPrefix(pushToStartToken),
-                installationId,
-                favoriteTeamId,
+                "[LiveActivityStart] push-to-start token registered tokenHash={} environment={} notificationsAuthorized={} liveActivitiesEnabled={} autoStartEnabled={}",
+                tokenFingerprint(pushToStartToken),
                 environment,
                 command.notificationsAuthorized(),
                 command.liveActivitiesEnabled(),
@@ -131,12 +131,10 @@ public class LiveActivityPushToStartTokenService {
             if (skipReason != null) {
                 skipped++;
                 log.info(
-                        "[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} installationId={} tokenPrefix={} reason={}",
+                        "[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} reason={}",
                         game.getPublicGameId(),
                         game.getProviderGameId(),
                         game.getId(),
-                        token.getInstallationId(),
-                        tokenPrefix(token.getPushToStartToken()),
                         skipReason
                 );
                 continue;
@@ -271,12 +269,6 @@ public class LiveActivityPushToStartTokenService {
             return "sandbox";
         }
         String normalized = environment.trim().toLowerCase(Locale.ROOT);
-        if ("development".equals(normalized) || "debug".equals(normalized)) {
-            return "sandbox";
-        }
-        if ("release".equals(normalized)) {
-            return "production";
-        }
         if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
             throw new IllegalArgumentException("environment must be sandbox or production");
         }
@@ -311,7 +303,23 @@ public class LiveActivityPushToStartTokenService {
     }
 
     private String tokenPrefix(String token) {
-        return token == null ? null : token.substring(0, Math.min(TOKEN_PREFIX_LENGTH, token.length()));
+        return token == null ? null : token.substring(0, Math.min(8, token.length()));
+    }
+
+    private String tokenFingerprint(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder();
+            for (int index = 0; index < Math.min(6, digest.length); index++) {
+                builder.append(String.format("%02x", digest[index]));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            return "unavailable";
+        }
     }
 
     public record PushToStartTokenRegistrationCommand(

@@ -2,8 +2,12 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.repository.LiveActivityTokenRepository;
+import com.kbo.crawlerapi.support.TeamCatalog;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -18,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class LiveActivityTokenRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveActivityTokenRegistrationService.class);
-    private static final int TOKEN_PREFIX_LENGTH = 8;
     private static final int MAX_ACTIVITY_ID_LENGTH = 120;
     private static final int MAX_TOKEN_LENGTH = 512;
     private static final int MAX_INSTALLATION_ID_LENGTH = 100;
@@ -38,13 +41,13 @@ public class LiveActivityTokenRegistrationService {
 
     @Transactional
     public LiveActivityTokenRegistrationResult register(LiveActivityTokenRegistrationCommand command) {
-        String activityId = optionalText(command.activityId(), "activityId", MAX_ACTIVITY_ID_LENGTH);
+        String activityId = requireText(command.activityId(), "activityId", MAX_ACTIVITY_ID_LENGTH);
         String activityToken = requireText(command.activityToken(), "activityToken", MAX_TOKEN_LENGTH);
         String platform = normalizePlatform(command.platform());
         String environment = normalizeEnvironment(command.environment());
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        String installationId = optionalText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);
-        String favoriteTeamId = optionalText(command.favoriteTeamId(), "favoriteTeamId", MAX_FAVORITE_TEAM_ID_LENGTH);
+        String installationId = requireText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);
+        String favoriteTeamId = normalizeFavoriteTeamId(command.favoriteTeamId());
         String publicGameId = optionalText(command.publicGameId(), "publicGameId", MAX_PUBLIC_GAME_ID_LENGTH);
         String providerGameId = optionalText(command.providerGameId(), "providerGameId", MAX_PROVIDER_GAME_ID_LENGTH);
         String databaseId = optionalText(command.databaseId(), "databaseId", MAX_DATABASE_ID_LENGTH);
@@ -105,14 +108,9 @@ public class LiveActivityTokenRegistrationService {
             liveActivityTokenRepository.saveAll(deactivatedTokens);
         }
         log.info(
-                "[LiveActivity] token registration {} activityId={} tokenPrefix={} publicGameId={} providerGameId={} databaseId={} stableDetailIdentity={} environment={} deactivatedSupersededCount={}",
+                "[LiveActivity] token registration {} tokenHash={} environment={} deactivatedSupersededCount={}",
                 created ? "created" : "updated",
-                activityId,
-                tokenPrefix(activityToken),
-                token.getPublicGameId(),
-                token.getProviderGameId(),
-                token.getDatabaseId(),
-                token.getStableDetailIdentity(),
+                tokenFingerprint(activityToken),
                 environment,
                 deactivatedTokens.size()
         );
@@ -187,7 +185,11 @@ public class LiveActivityTokenRegistrationService {
         if (platform == null || platform.isBlank()) {
             return "ios";
         }
-        return platform.trim().toLowerCase(Locale.ROOT);
+        String normalized = platform.trim().toLowerCase(Locale.ROOT);
+        if (!"ios".equals(normalized)) {
+            throw new IllegalArgumentException("platform must be ios");
+        }
+        return normalized;
     }
 
     private String normalizeEnvironment(String environment) {
@@ -195,12 +197,6 @@ public class LiveActivityTokenRegistrationService {
             return "sandbox";
         }
         String normalized = environment.trim().toLowerCase(Locale.ROOT);
-        if ("development".equals(normalized) || "debug".equals(normalized)) {
-            return "sandbox";
-        }
-        if ("release".equals(normalized)) {
-            return "production";
-        }
         if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
             throw new IllegalArgumentException("environment must be sandbox or production");
         }
@@ -226,12 +222,40 @@ public class LiveActivityTokenRegistrationService {
         return normalized;
     }
 
+    private String normalizeFavoriteTeamId(String favoriteTeamId) {
+        String normalized = optionalText(favoriteTeamId, "favoriteTeamId", MAX_FAVORITE_TEAM_ID_LENGTH);
+        if (normalized == null) {
+            return null;
+        }
+        normalized = normalized.toLowerCase(Locale.ROOT);
+        if (!TeamCatalog.isSupportedTeamCode(normalized)) {
+            throw new IllegalArgumentException("favoriteTeamId is invalid");
+        }
+        return normalized;
+    }
+
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
     private String tokenPrefix(String token) {
-        return token.substring(0, Math.min(TOKEN_PREFIX_LENGTH, token.length()));
+        return token.substring(0, Math.min(8, token.length()));
+    }
+
+    private String tokenFingerprint(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder();
+            for (int index = 0; index < Math.min(6, digest.length); index++) {
+                builder.append(String.format("%02x", digest[index]));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            return "unavailable";
+        }
     }
 
     public record LiveActivityTokenRegistrationCommand(

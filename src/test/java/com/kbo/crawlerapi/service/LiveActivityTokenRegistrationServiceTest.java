@@ -116,6 +116,94 @@ class LiveActivityTokenRegistrationServiceTest {
     }
 
     @Test
+    void rejectsUnsupportedPlatform() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "android",
+                        "sandbox",
+                        "activity-token",
+                        "install-1",
+                        "hanwha",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("platform must be ios");
+    }
+
+    @Test
+    void rejectsUnsupportedEnvironmentAlias() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "development",
+                        "activity-token",
+                        "install-1",
+                        "hanwha",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("environment must be sandbox or production");
+    }
+
+    @Test
+    void rejectsMissingInstallationId() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "sandbox",
+                        "activity-token",
+                        " ",
+                        "hanwha",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("installationId is required");
+    }
+
+    @Test
+    void rejectsInvalidFavoriteTeamId() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "sandbox",
+                        "activity-token",
+                        "install-1",
+                        "invalid-team",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("favoriteTeamId is invalid");
+    }
+
+    @Test
     void rejectsOverlongGameIdentifiers() {
         LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
         LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =

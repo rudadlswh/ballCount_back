@@ -8,6 +8,9 @@ import java.time.OffsetDateTime;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -17,7 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class DeviceRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceRegistrationService.class);
-    private static final int TOKEN_PREFIX_LENGTH = 8;
     private static final int MAX_DEVICE_TOKEN_LENGTH = 512;
     private static final int MAX_INSTALLATION_ID_LENGTH = 100;
     private static final int MAX_FAVORITE_TEAM_ID_LENGTH = 30;
@@ -99,8 +101,8 @@ public class DeviceRegistrationService {
                     notificationDeviceRepository.flush();
                 });
 
-        String previousTokenPrefix = tokenPrefix(device.getDeviceToken());
         boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
+        String previousTokenHash = tokenChanged ? tokenFingerprint(device.getDeviceToken()) : null;
         device.update(
                 normalizedPlatform,
                 normalizedEnvironment,
@@ -119,7 +121,7 @@ public class DeviceRegistrationService {
                 now
         );
         notificationDeviceRepository.save(device);
-        logRegistration(normalizedInstallationId, normalizedToken, tokenChanged ? previousTokenPrefix : null, normalizedFavoriteTeamId, normalizedEnvironment, created);
+        logRegistration(normalizedToken, previousTokenHash, normalizedEnvironment, created);
         return new DeviceRegistrationResult(device.getId(), normalizedPlatform, normalizedEnvironment, maskToken(normalizedToken), device.isNotificationsEnabled());
     }
 
@@ -201,38 +203,40 @@ public class DeviceRegistrationService {
     }
 
     private String maskToken(String token) {
-        if (token.length() <= 12) {
-            return "****";
-        }
-        return token.substring(0, 6) + "..." + token.substring(token.length() - 6);
+        return "****";
     }
 
-    private String tokenPrefix(String token) {
+    private String tokenFingerprint(String token) {
         if (token == null || token.isBlank()) {
             return null;
         }
-        return token.substring(0, Math.min(TOKEN_PREFIX_LENGTH, token.length()));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder();
+            for (int index = 0; index < Math.min(6, digest.length); index++) {
+                builder.append(String.format("%02x", digest[index]));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            return "unavailable";
+        }
     }
 
-    private void logRegistration(String installationId, String token, String previousTokenPrefix, String favoriteTeamId, String environment, boolean created) {
-        if (previousTokenPrefix == null) {
+    private void logRegistration(String token, String previousTokenHash, String environment, boolean created) {
+        if (previousTokenHash == null) {
             log.info(
-                    "device registration {} installation_id={} token_prefix={} favorite_team_id={} environment={}",
+                    "device registration {} token_hash={} environment={}",
                     created ? "created" : "updated",
-                    installationId,
-                    tokenPrefix(token),
-                    favoriteTeamId,
+                    tokenFingerprint(token),
                     environment
             );
             return;
         }
         log.info(
-                "device registration {} installation_id={} token_prefix={} previous_token_prefix={} favorite_team_id={} environment={}",
+                "device registration {} token_hash={} previous_token_hash={} environment={}",
                 created ? "created" : "updated",
-                installationId,
-                tokenPrefix(token),
-                previousTokenPrefix,
-                favoriteTeamId,
+                tokenFingerprint(token),
+                previousTokenHash,
                 environment
         );
     }

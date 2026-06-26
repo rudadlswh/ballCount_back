@@ -1,4 +1,8 @@
+# Local environment files
 .env
+.env.*
+!.env.example
+!.env.*.example
 
 # Gradle
 .gradle/
@@ -15,10 +19,12 @@ build/
 *.p8
 *.pem
 *.key
+*.p12
+*.cer
+*.crt
 
 # Operational database backups
 backups/
-.env
 *.log
 V*_current_modified_backup.sql
 game-list-*.json
