@@ -55,11 +55,11 @@ class NotificationEventServiceTest {
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
         NotificationDevice relevant = device("kia", "token-a");
-        NotificationDevice unrelated = device("ssg", "token-b");
+        NotificationDevice unrelated = deviceWithSettings("ssg", "token-b", true, true, true, true, true, true, true, false);
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant, unrelated));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant, unrelated));
 
         var result = service.createAndDeliver(game, draft());
 
@@ -67,6 +67,106 @@ class NotificationEventServiceTest {
         assertThat(result.sentCount()).isEqualTo(1);
         assertThat(pushService.sentDevices).containsExactly(relevant);
         assertThat(pushService.sentEvents).extracting(NotificationEvent::getEventType).containsExactly("SCORE_CHANGED");
+    }
+
+    @Test
+    void globalLotteDeviceReceivesSamsungKtScoreChangedEvent() {
+        Game game = fixtureGame("samsung", "kt");
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationDevice lotteDevice = deviceWithSettings("lotte", "token-lotte", true, true, true, true, true, true, false, false);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, "samsung");
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(lotteDevice));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(lotteDevice);
+    }
+
+    @Test
+    void favoriteOnlyLotteDeviceDoesNotReceiveSamsungKtScoreChangedEvent() {
+        Game game = fixtureGame("samsung", "kt");
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationDevice lotteDevice = deviceWithSettings("lotte", "token-lotte", true, true, true, true, true, true, true, false);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, "samsung");
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(lotteDevice));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.NO_RELEVANT_DEVICES);
+    }
+
+    @Test
+    void favoriteOnlySamsungDeviceReceivesSamsungKtScoreChangedEvent() {
+        Game game = fixtureGame("samsung", "kt");
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationDevice samsungDevice = deviceWithSettings("samsung", "token-samsung", true, true, true, true, true, true, true, false);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, "samsung");
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(samsungDevice));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(samsungDevice);
+    }
+
+    @Test
+    void globalLotteDeviceWithScoreChangeDisabledDoesNotReceiveSamsungKtScoreChangedEvent() {
+        Game game = fixtureGame("samsung", "kt");
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        NotificationEventService service = service(pushService);
+        NotificationDevice lotteDevice = deviceWithSettings("lotte", "token-lotte", true, false, true, true, true, true, false, false);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, "samsung");
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(lotteDevice));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED);
+    }
+
+    @Test
+    void deviceWithMismatchedEnvironmentDoesNotReceiveSamsungKtScoreChangedEvent() {
+        Game game = fixtureGame("samsung", "kt");
+        RecordingApnsPushService pushService = new RecordingApnsPushService(
+                ApnsPushService.ApnsSendResult.sentResult(),
+                null,
+                "production"
+        );
+        NotificationEventService service = service(pushService);
+        NotificationDevice sandboxDevice = deviceWithSettings("lotte", "token-lotte", true, true, true, true, true, true, false, false);
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_SCORE_CHANGED, "samsung");
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(sandboxDevice));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
+        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.ENVIRONMENT_MISMATCH);
     }
 
     @Test
@@ -91,7 +191,7 @@ class NotificationEventServiceTest {
             return event;
         });
         when(notificationEventRepository.findById(any(UUID.class))).thenAnswer(invocation -> Optional.of(saved.get()));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         service.createAndDeliver(game, draft());
 
@@ -108,7 +208,7 @@ class NotificationEventServiceTest {
 
         assertThat(result.eventCreated()).isFalse();
         verify(notificationEventRepository, never()).save(any());
-        verify(notificationDeviceRepository, never()).findByFavoriteTeamIdIn(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
     }
 
     @Test
@@ -120,7 +220,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(game, draft());
 
@@ -140,7 +240,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(game, draft());
 
@@ -162,7 +262,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(fixtureGame(), draft());
 
@@ -182,7 +282,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(relevant));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         service.createAndDeliver(fixtureGame(), draft());
 
@@ -197,7 +297,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(disabled));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(disabled));
 
         service.createAndDeliver(fixtureGame(), draft());
 
@@ -216,7 +316,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(sandboxDevice));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(sandboxDevice));
 
         service.createAndDeliver(fixtureGame(), draft());
 
@@ -231,7 +331,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(android));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(android));
 
         service.createAndDeliver(fixtureGame(), draft());
 
@@ -245,7 +345,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of());
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of());
 
         service.createAndDeliver(fixtureGame(), draft());
 
@@ -269,7 +369,7 @@ class NotificationEventServiceTest {
         assertThat(result.eventCreated()).isFalse();
         assertThat(result.skippedCount()).isEqualTo(1);
         verify(notificationEventRepository, never()).save(any());
-        verify(notificationDeviceRepository, never()).findByFavoriteTeamIdIn(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
     }
 
     @Test
@@ -299,7 +399,7 @@ class NotificationEventServiceTest {
 
             when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
             when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-            when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(disabledDevices.get(index)));
+            when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(disabledDevices.get(index)));
 
             var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -319,7 +419,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -338,7 +438,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -355,7 +455,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -374,7 +474,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -394,7 +494,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(leadingGame, draft);
 
@@ -411,7 +511,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -430,7 +530,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(tiedGame, draft);
 
@@ -448,7 +548,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -466,7 +566,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -484,7 +584,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(tiedGame, draft);
 
@@ -502,7 +602,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(device));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
 
         var result = service.createAndDeliver(leadingGame, draft);
 
@@ -521,7 +621,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(awayDevice, homeDevice));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(awayDevice, homeDevice));
 
         var result = service.createAndDeliver(game, draft);
 
@@ -540,7 +640,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(unrelatedDevice));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(unrelatedDevice));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -559,7 +659,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(losingFavoriteDevice));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(losingFavoriteDevice));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -576,7 +676,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(favoriteOnlyDevice));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(favoriteOnlyDevice));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -593,7 +693,7 @@ class NotificationEventServiceTest {
 
         when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
         when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByFavoriteTeamIdIn(eq(List.of("kia", "lg")))).thenReturn(List.of(losingFavoriteDevice));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(losingFavoriteDevice));
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
@@ -687,14 +787,22 @@ class NotificationEventServiceTest {
         return fixtureGame(1, 0);
     }
 
+    private Game fixtureGame(String awayTeamCode, String homeTeamCode) {
+        return fixtureGame(awayTeamCode, homeTeamCode, 1, 0);
+    }
+
     private Game fixtureGame(Integer awayScore, Integer homeScore) {
-        Team homeTeam = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
-        Team awayTeam = new Team(UUID.randomUUID(), "kia", "KIA 타이거즈", "KIA", "KIA Tigers", null);
+        return fixtureGame("kia", "lg", awayScore, homeScore);
+    }
+
+    private Game fixtureGame(String awayTeamCode, String homeTeamCode, Integer awayScore, Integer homeScore) {
+        Team homeTeam = new Team(UUID.randomUUID(), homeTeamCode, homeTeamCode.toUpperCase(), homeTeamCode.toUpperCase(), homeTeamCode, null);
+        Team awayTeam = new Team(UUID.randomUUID(), awayTeamCode, awayTeamCode.toUpperCase(), awayTeamCode.toUpperCase(), awayTeamCode, null);
         return new Game(
                 UUID.randomUUID(),
-                "20260409-LG-KIA",
+                "20260409-" + homeTeamCode.toUpperCase() + "-" + awayTeamCode.toUpperCase(),
                 "kbo",
-                "20260409HTLG0",
+                "20260409" + homeTeamCode.toUpperCase() + awayTeamCode.toUpperCase(),
                 LocalDate.of(2026, 4, 9),
                 OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
                 "잠실",

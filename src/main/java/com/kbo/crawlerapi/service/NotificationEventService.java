@@ -203,9 +203,9 @@ public class NotificationEventService {
                 Instant.now(applicationClock)
         );
         List<String> eventTeamIds = eventTeamIds(game);
-        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByFavoriteTeamIdIn(eventTeamIds)
+        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue("ios")
                 .stream()
-                .filter(device -> isRelevant(device, game))
+                .filter(device -> !device.isFavoriteTeamOnlyEnabled() || isRelevant(device, game))
                 .toList();
         return new PreparedDelivery(false, event, eventTeamIds, relevantTeamDevices);
     }
