@@ -229,26 +229,22 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void configMissingSkipsWithoutFailingEventCreation() {
+    void configMissingSkipsBeforePersistingEvent() {
         Game game = fixtureGame();
         NotificationEventService service = service(new RecordingApnsPushService(
                 ApnsPushService.ApnsSendResult.sentResult(),
                 ApnsPushService.APNS_CONFIG_MISSING,
                 "sandbox"
         ));
-        NotificationDevice relevant = device("kia", "token-a");
-
-        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
-        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(game, draft());
 
-        assertThat(result.eventCreated()).isTrue();
+        assertThat(result.eventCreated()).isFalse();
         assertThat(result.skippedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
-        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
-        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.APNS_CONFIG_MISSING);
+        verify(notificationEventRepository, never()).findByEventKey(any());
+        verify(notificationEventRepository, never()).save(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
     }
 
     @Test
@@ -269,22 +265,37 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void invalidApnsPrivateKeySkipsWithExplicitReason() {
+    void invalidApnsPrivateKeySkipsBeforePersistingEvent() {
         NotificationEventService service = service(new RecordingApnsPushService(
                 ApnsPushService.ApnsSendResult.sentResult(),
                 ApnsPushService.APNS_PRIVATE_KEY_INVALID,
                 "sandbox"
         ));
-        NotificationDevice relevant = device("kia", "token-a");
 
-        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
-        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
+        var result = service.createAndDeliver(fixtureGame(), draft());
 
-        service.createAndDeliver(fixtureGame(), draft());
+        assertThat(result.eventCreated()).isFalse();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        verify(notificationEventRepository, never()).findByEventKey(any());
+        verify(notificationEventRepository, never()).save(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
+    }
 
-        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
-        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.APNS_PRIVATE_KEY_INVALID);
+    @Test
+    void unreadableApnsPrivateKeySkipsBeforePersistingEvent() {
+        NotificationEventService service = service(new RecordingApnsPushService(
+                ApnsPushService.ApnsSendResult.sentResult(),
+                ApnsPushService.APNS_PRIVATE_KEY_UNREADABLE,
+                "sandbox"
+        ));
+
+        var result = service.createAndDeliver(fixtureGame(), draft());
+
+        assertThat(result.eventCreated()).isFalse();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        verify(notificationEventRepository, never()).findByEventKey(any());
+        verify(notificationEventRepository, never()).save(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
     }
 
     @Test
