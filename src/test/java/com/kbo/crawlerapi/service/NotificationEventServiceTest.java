@@ -252,23 +252,20 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void pushDisabledSkipsWithExplicitReason() {
+    void pushDisabledSkipsBeforePersistingEvent() {
         NotificationEventService service = service(new RecordingApnsPushService(
                 ApnsPushService.ApnsSendResult.sentResult(),
                 ApnsPushService.APNS_PUSH_DISABLED,
                 "sandbox"
         ));
-        NotificationDevice relevant = device("kia", "token-a");
-
-        when(notificationEventRepository.findByEventKey(eq("event-key"))).thenReturn(Optional.empty());
-        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(relevant));
 
         var result = service.createAndDeliver(fixtureGame(), draft());
 
+        assertThat(result.eventCreated()).isFalse();
         assertThat(result.skippedCount()).isEqualTo(1);
-        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
-        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.APNS_PUSH_DISABLED);
+        verify(notificationEventRepository, never()).findByEventKey(any());
+        verify(notificationEventRepository, never()).save(any());
+        verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(any());
     }
 
     @Test

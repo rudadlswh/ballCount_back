@@ -11,7 +11,7 @@ class ApnsProductionConfigurationGuardTest {
     void productionConfigurationIsAcceptedWhenAllRequiredValuesArePresent() {
         ApnsProperties properties = configuredProperties();
 
-        new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration();
+        guard(properties).validateProductionConfiguration();
     }
 
     @Test
@@ -19,13 +19,13 @@ class ApnsProductionConfigurationGuardTest {
         ApnsProperties properties = configuredProperties();
         properties.setEnv("sandbox");
 
-        assertThatThrownBy(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+        assertThatThrownBy(() -> guard(properties).validateProductionConfiguration())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Production APNs requires APNS_ENV=production.");
     }
 
     @Test
-    void productionConfigurationAllowsPushDisabled() {
+    void productionConfigurationAllowsPushDisabledWhenSchedulersAreDisabled() {
         ApnsProperties properties = configuredProperties();
         properties.setPushEnabled(false);
         properties.setEnv("sandbox");
@@ -33,7 +33,39 @@ class ApnsProductionConfigurationGuardTest {
         properties.setKeyId("");
         properties.setPrivateKeyPath("");
 
-        assertThatCode(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+        assertThatCode(() -> guard(properties).validateProductionConfiguration())
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void productionConfigurationRejectsSchedulerEnabledWithPushDisabled() {
+        ApnsProperties properties = configuredProperties();
+        properties.setPushEnabled(false);
+        SchedulerShellProperties schedulerProperties = schedulerProperties(true);
+
+        assertThatThrownBy(() -> guard(properties, schedulerProperties, new LiveSyncProperties()).validateProductionConfiguration())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SCHEDULER_ENABLED=true or KBO_LIVE_SYNC_ENABLED=true.");
+    }
+
+    @Test
+    void productionConfigurationRejectsLiveSyncEnabledWithPushDisabled() {
+        ApnsProperties properties = configuredProperties();
+        properties.setPushEnabled(false);
+        LiveSyncProperties liveSyncProperties = new LiveSyncProperties();
+        liveSyncProperties.setEnabled(true);
+
+        assertThatThrownBy(() -> guard(properties, new SchedulerShellProperties(), liveSyncProperties).validateProductionConfiguration())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SCHEDULER_ENABLED=true or KBO_LIVE_SYNC_ENABLED=true.");
+    }
+
+    @Test
+    void productionConfigurationAllowsPushEnabledWithSchedulerEnabled() {
+        ApnsProperties properties = configuredProperties();
+        SchedulerShellProperties schedulerProperties = schedulerProperties(true);
+
+        assertThatCode(() -> guard(properties, schedulerProperties, new LiveSyncProperties()).validateProductionConfiguration())
                 .doesNotThrowAnyException();
     }
 
@@ -42,7 +74,7 @@ class ApnsProductionConfigurationGuardTest {
         ApnsProperties properties = configuredProperties();
         properties.setPrivateKeyPath("");
 
-        assertThatThrownBy(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+        assertThatThrownBy(() -> guard(properties).validateProductionConfiguration())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Production APNs requires APNS_PRIVATE_KEY_PATH.");
     }
@@ -56,5 +88,23 @@ class ApnsProductionConfigurationGuardTest {
         properties.setBundleId("com.chogm.kboScore");
         properties.setPrivateKeyPath("/secure/AuthKey_KEYID1234.p8");
         return properties;
+    }
+
+    private SchedulerShellProperties schedulerProperties(boolean enabled) {
+        SchedulerShellProperties properties = new SchedulerShellProperties();
+        properties.setEnabled(enabled);
+        return properties;
+    }
+
+    private ApnsProductionConfigurationGuard guard(ApnsProperties properties) {
+        return guard(properties, new SchedulerShellProperties(), new LiveSyncProperties());
+    }
+
+    private ApnsProductionConfigurationGuard guard(
+            ApnsProperties properties,
+            SchedulerShellProperties schedulerProperties,
+            LiveSyncProperties liveSyncProperties
+    ) {
+        return new ApnsProductionConfigurationGuard(properties, schedulerProperties, liveSyncProperties);
     }
 }

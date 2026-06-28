@@ -80,6 +80,16 @@ public class NotificationEventService {
         if (!isDeliverableEventType(draft.eventType())) {
             return EventDeliveryResult.skipped(draft.eventKey());
         }
+        if (ApnsPushService.APNS_PUSH_DISABLED.equals(apnsPushService.readinessSkipReason())) {
+            log.warn(
+                    "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
+                    draft.eventKey(),
+                    draft.eventType(),
+                    ApnsPushService.APNS_PUSH_DISABLED,
+                    apnsPushService.configuredEnvironment()
+            );
+            return EventDeliveryResult.skipped(draft.eventKey());
+        }
         PreparedDelivery prepared = inTransaction(() -> prepareDelivery(game, draft));
         if (prepared.duplicated()) {
             return EventDeliveryResult.duplicate(draft.eventKey());
