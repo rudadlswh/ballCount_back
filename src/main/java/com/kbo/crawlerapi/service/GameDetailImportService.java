@@ -238,14 +238,15 @@ public class GameDetailImportService {
         try {
             backfillProviderGameIdIfNeeded(game, resolvedOfficialDetail.providerGameId());
             OffsetDateTime fetchedAt = OffsetDateTime.now();
-            String combinedRawHash = hash(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash());
-            boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, combinedRawHash, fetchedAt);
+            SelectedScore selectedScore = selectScore(game, parsedDetail, lineScoreResult);
+            String combinedRawHash = hash(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore());
+            boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
             LiveActivityContentAffectingState beforeLiveActivityState = LiveActivityContentAffectingState.from(game);
             game.syncDetail(
                     parsedDetail.status(),
-                    parsedDetail.homeScore(),
-                    parsedDetail.awayScore(),
+                    selectedScore.homeScore(),
+                    selectedScore.awayScore(),
                     parsedDetail.inningLabel(),
                     parsedDetail.isCancelled(),
                     parsedDetail.isPostponed(),
@@ -277,8 +278,8 @@ public class GameDetailImportService {
                     snapshotCreated,
                     lineScoresUpdated,
                     lineScoreResult.innings().size(),
-                    parsedDetail.awayScore(),
-                    parsedDetail.homeScore(),
+                    selectedScore.awayScore(),
+                    selectedScore.homeScore(),
                     parsedDetail.inning(),
                     parsedDetail.inningHalf(),
                     parsedDetail.inningLabel(),
@@ -894,6 +895,7 @@ public class GameDetailImportService {
             Game game,
             ParsedGameDetail parsedDetail,
             ParsedLineScoreResult lineScoreResult,
+            SelectedScore selectedScore,
             String combinedRawHash,
             OffsetDateTime fetchedAt
     ) {
@@ -924,7 +926,7 @@ public class GameDetailImportService {
         );
         logBaseRunnerResolution(game, previousSnapshot, parsedDetail, resolvedBaseRunners);
         if (latestSnapshot.map(GameSnapshot::getRawHash).filter(combinedRawHash::equals).isPresent()
-                && latestSnapshot.map(snapshot -> snapshotCurrentPlayersMatch(snapshot, parsedDetail, resolvedBaseRunners)).orElse(false)) {
+                && latestSnapshot.map(snapshot -> snapshotContentStateMatches(snapshot, parsedDetail, selectedScore, resolvedBaseRunners)).orElse(false)) {
             log.debug(
                     "snapshot persistence skipped unchanged game_id={} raw_hash={} current_pitcher_name={} current_batter_name={}",
                     game.getId(),
@@ -955,8 +957,8 @@ public class GameDetailImportService {
                 resolvedBaseRunners.thirdBaseRunnerId(),
                 parsedDetail.currentPitcherName(),
                 parsedDetail.currentBatterName(),
-                parsedDetail.homeScore(),
-                parsedDetail.awayScore(),
+                selectedScore.homeScore(),
+                selectedScore.awayScore(),
                 lineScoreResult.homeTotals().hits(),
                 lineScoreResult.awayTotals().hits(),
                 lineScoreResult.homeTotals().errors(),
@@ -1000,6 +1002,60 @@ public class GameDetailImportService {
         return true;
     }
 
+    private SelectedScore selectScore(
+            Game game,
+            ParsedGameDetail parsedDetail,
+            ParsedLineScoreResult lineScoreResult
+    ) {
+        ScorePair oldScore = new ScorePair(game.getAwayScore(), game.getHomeScore());
+        ScorePair detailScore = new ScorePair(parsedDetail.awayScore(), parsedDetail.homeScore());
+        ScorePair lineScoreTotal = lineScoreTotal(lineScoreResult);
+
+        if (detailScore.isComplete() && lineScoreTotal.isComplete() && !detailScore.equals(lineScoreTotal)) {
+            SelectedScore selectedScore = lineScoreTotal.totalRuns() >= detailScore.totalRuns()
+                    ? new SelectedScore(lineScoreTotal.awayScore(), lineScoreTotal.homeScore(), "scoreboard_line_score")
+                    : new SelectedScore(detailScore.awayScore(), detailScore.homeScore(), "detail");
+            log.info(
+                    "[GameDetailImport] score source mismatch publicGameId={} providerGameId={} oldScore={} detailScore={} scoreboardScorePresent={} scoreboardScore={} selectedScore={} selectedScoreSource={}",
+                    game.getPublicGameId(),
+                    parsedDetail.providerGameId(),
+                    oldScore.display(),
+                    detailScore.display(),
+                    true,
+                    lineScoreTotal.display(),
+                    selectedScore.display(),
+                    selectedScore.source()
+            );
+            return selectedScore;
+        }
+        if (detailScore.isComplete()) {
+            return new SelectedScore(detailScore.awayScore(), detailScore.homeScore(), "detail");
+        }
+        if (lineScoreTotal.isComplete()) {
+            return new SelectedScore(lineScoreTotal.awayScore(), lineScoreTotal.homeScore(), "scoreboard_line_score");
+        }
+
+        SelectedScore selectedScore = new SelectedScore(oldScore.awayScore(), oldScore.homeScore(), "existing_game");
+        log.info(
+                "[GameDetailImport] score source fallback publicGameId={} providerGameId={} oldScore={} detailScore={} scoreboardScorePresent={} selectedScore={} selectedScoreSource={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                oldScore.display(),
+                detailScore.display(),
+                false,
+                selectedScore.display(),
+                selectedScore.source()
+        );
+        return selectedScore;
+    }
+
+    private ScorePair lineScoreTotal(ParsedLineScoreResult lineScoreResult) {
+        if (lineScoreResult == null || lineScoreResult.awayTotals() == null || lineScoreResult.homeTotals() == null) {
+            return ScorePair.empty();
+        }
+        return new ScorePair(lineScoreResult.awayTotals().runs(), lineScoreResult.homeTotals().runs());
+    }
+
     private boolean hasMeaningfulLiveState(ParsedGameDetail parsedDetail) {
         return parsedDetail.inning() != null
                 || parsedDetail.balls() != null
@@ -1019,12 +1075,15 @@ public class GameDetailImportService {
         return status == GameStatus.LIVE || status == GameStatus.SUSPENDED;
     }
 
-    private boolean snapshotCurrentPlayersMatch(
+    private boolean snapshotContentStateMatches(
             GameSnapshot snapshot,
             ParsedGameDetail parsedDetail,
+            SelectedScore selectedScore,
             BaseRunnerNameResolver.ResolvedBaseRunners resolvedBaseRunners
     ) {
-        return Objects.equals(clean(snapshot.getCurrentPitcherName()), clean(parsedDetail.currentPitcherName()))
+        return Objects.equals(snapshot.getHomeScore(), selectedScore.homeScore())
+                && Objects.equals(snapshot.getAwayScore(), selectedScore.awayScore())
+                && Objects.equals(clean(snapshot.getCurrentPitcherName()), clean(parsedDetail.currentPitcherName()))
                 && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()))
                 && Objects.equals(clean(snapshot.getFirstBaseRunnerName()), clean(resolvedBaseRunners.firstBaseRunnerName()))
                 && Objects.equals(clean(snapshot.getSecondBaseRunnerName()), clean(resolvedBaseRunners.secondBaseRunnerName()))
@@ -1280,6 +1339,30 @@ public class GameDetailImportService {
     ) {
         private static LiveTextImportResult skipped(String skippedReason) {
             return new LiveTextImportResult(0, 0, 0, skippedReason);
+        }
+    }
+
+    private record ScorePair(Integer awayScore, Integer homeScore) {
+        private static ScorePair empty() {
+            return new ScorePair(null, null);
+        }
+
+        private boolean isComplete() {
+            return awayScore != null && homeScore != null;
+        }
+
+        private int totalRuns() {
+            return awayScore + homeScore;
+        }
+
+        private String display() {
+            return awayScore == null || homeScore == null ? "<missing>" : awayScore + "-" + homeScore;
+        }
+    }
+
+    private record SelectedScore(Integer awayScore, Integer homeScore, String source) {
+        private String display() {
+            return awayScore == null || homeScore == null ? "<missing>" : awayScore + "-" + homeScore;
         }
     }
 

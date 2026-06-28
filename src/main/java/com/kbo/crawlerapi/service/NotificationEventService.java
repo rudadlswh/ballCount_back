@@ -80,12 +80,13 @@ public class NotificationEventService {
         if (!isDeliverableEventType(draft.eventType())) {
             return EventDeliveryResult.skipped(draft.eventKey());
         }
-        if (ApnsPushService.APNS_PUSH_DISABLED.equals(apnsPushService.readinessSkipReason())) {
+        String initialApnsSkipReason = apnsPushService.readinessSkipReason();
+        if (initialApnsSkipReason != null) {
             log.warn(
                     "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
                     draft.eventKey(),
                     draft.eventType(),
-                    ApnsPushService.APNS_PUSH_DISABLED,
+                    initialApnsSkipReason,
                     apnsPushService.configuredEnvironment()
             );
             return EventDeliveryResult.skipped(draft.eventKey());

@@ -5,8 +5,10 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
@@ -27,6 +29,7 @@ public class DetailRefreshOrchestratorService {
     private final GameDetailImportService gameDetailImportService;
     private final Clock applicationClock;
     private final com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties;
+    private final DateSyncLockService dateSyncLockService;
 
     public DetailRefreshOrchestratorService(
             GameRepository gameRepository,
@@ -37,6 +40,29 @@ public class DetailRefreshOrchestratorService {
             Clock applicationClock,
             com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties
     ) {
+        this(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                gameBoxscoreRecordReadRepository,
+                gameDetailImportService,
+                applicationClock,
+                schedulerShellProperties,
+                null
+        );
+    }
+
+    @Autowired
+    public DetailRefreshOrchestratorService(
+            GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
+            LineScoreRepository lineScoreRepository,
+            GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository,
+            GameDetailImportService gameDetailImportService,
+            Clock applicationClock,
+            com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties,
+            DateSyncLockService dateSyncLockService
+    ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
         this.lineScoreRepository = lineScoreRepository;
@@ -44,6 +70,7 @@ public class DetailRefreshOrchestratorService {
         this.gameDetailImportService = gameDetailImportService;
         this.applicationClock = applicationClock;
         this.schedulerShellProperties = schedulerShellProperties;
+        this.dateSyncLockService = dateSyncLockService == null ? new DateSyncLockService() : dateSyncLockService;
     }
 
     public DetailRefreshPassResult runPass(LocalDate date, boolean execute) {
@@ -52,6 +79,22 @@ public class DetailRefreshOrchestratorService {
 
     public DetailRefreshPassResult runPass(LocalDate date, boolean execute, Set<RefreshPhase> allowedPhases) {
         LocalDate targetDate = date != null ? date : LocalDate.now(applicationClock);
+        Set<RefreshPhase> effectiveAllowedPhases = allowedPhases == null || allowedPhases.isEmpty()
+                ? Set.of(RefreshPhase.PREGAME, RefreshPhase.LIVE, RefreshPhase.POST_FINAL)
+                : allowedPhases;
+        if (!execute) {
+            return runPassWithoutLock(targetDate, false, effectiveAllowedPhases);
+        }
+
+        LockedPhases lockedPhases = acquireLocks(targetDate, effectiveAllowedPhases);
+        try {
+            return runPassWithoutLock(targetDate, true, lockedPhases.phases());
+        } finally {
+            lockedPhases.close();
+        }
+    }
+
+    private DetailRefreshPassResult runPassWithoutLock(LocalDate targetDate, boolean execute, Set<RefreshPhase> allowedPhases) {
         List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
         List<GameRefreshDecision> decisions = new ArrayList<>(games.size());
 
@@ -71,6 +114,22 @@ public class DetailRefreshOrchestratorService {
                 decisions,
                 executionResults
         );
+    }
+
+    private LockedPhases acquireLocks(LocalDate targetDate, Set<RefreshPhase> allowedPhases) {
+        EnumSet<RefreshPhase> lockedPhases = EnumSet.noneOf(RefreshPhase.class);
+        List<DateSyncLockService.SyncLock> locks = new ArrayList<>();
+        for (RefreshPhase phase : List.of(RefreshPhase.PREGAME, RefreshPhase.LIVE, RefreshPhase.POST_FINAL)) {
+            if (!allowedPhases.contains(phase)) {
+                continue;
+            }
+            DateSyncLockService.SyncLock lock = dateSyncLockService.tryDetailRefreshLock(targetDate, phase.phaseName());
+            if (lock.acquired()) {
+                locks.add(lock);
+                lockedPhases.add(phase);
+            }
+        }
+        return new LockedPhases(lockedPhases, locks);
     }
 
     private GameRefreshDecision evaluate(Game game, Set<RefreshPhase> allowedPhases) {
@@ -217,6 +276,19 @@ public class DetailRefreshOrchestratorService {
 
     private OffsetDateTime toKst(OffsetDateTime value) {
         return value == null ? null : value.atZoneSameInstant(KST).toOffsetDateTime();
+    }
+
+    private record LockedPhases(
+            Set<RefreshPhase> phases,
+            List<DateSyncLockService.SyncLock> locks
+    ) implements AutoCloseable {
+
+        @Override
+        public void close() {
+            for (DateSyncLockService.SyncLock lock : locks) {
+                lock.close();
+            }
+        }
     }
 
     public record DetailRefreshPassResult(

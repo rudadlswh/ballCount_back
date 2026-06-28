@@ -370,6 +370,32 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void liveScoreChangeNotificationUsesMergedLatestScoreFromGameRow() {
+        Game before = fixtureGame(GameStatus.LIVE, 10, 9);
+        Game after = fixtureGame(GameStatus.LIVE, 11, 9);
+        GameSnapshot snapshot = snapshot(after, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.of(snapshot));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(before.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .containsExactly(NotificationEventService.EVENT_SCORE_CHANGED);
+        assertThat(notificationEventService.drafts.get(0).eventKey())
+                .isEqualTo("game:%s:score:11-9".formatted(after.getId()));
+        assertThat(notificationEventService.drafts.get(0).body())
+                .contains("KIA 11-9 LG");
+    }
+
+    @Test
     void liveScoreChangeUsesParsedScoringPlayDetailWithoutChangingDedupeKey() {
         Game before = fixtureGame(GameStatus.LIVE, 2, 2);
         Game after = fixtureGame(GameStatus.LIVE, 4, 2);

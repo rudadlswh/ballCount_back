@@ -55,6 +55,19 @@ class LiveActivityContentStateBuilderTest {
     }
 
     @Test
+    void mergedSnapshotScoreMapsIntoContentStateBeforeStaleGameRowScore() {
+        Game game = game(7, 9);
+        GameSnapshot snapshot = snapshot(game, 11, 9);
+        LiveActivityContentStateBuilder builder = new LiveActivityContentStateBuilder(gameSnapshotRepository);
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())).thenReturn(Optional.of(snapshot));
+
+        var state = builder.build(game, token("lotte"));
+
+        assertThat(state.get("favoriteScoreText")).isEqualTo("11");
+        assertThat(state.get("opponentScoreText")).isEqualTo("9");
+    }
+
+    @Test
     void englishSnapshotInningLabelMapsIntoKoreanContentState() {
         Game game = game(0, 0);
         GameSnapshot snapshot = snapshot(game, 1, 1, "Bottom 3");

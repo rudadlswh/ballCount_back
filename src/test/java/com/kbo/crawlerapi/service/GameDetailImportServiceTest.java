@@ -167,7 +167,7 @@ class GameDetailImportServiceTest {
                 1,
                 10,
                 3,
-                hash("detail-hash:line-hash"),
+                hash("detail-hash:line-hash:score:2:7"),
                 null,
                 OffsetDateTime.now()
         );
@@ -192,6 +192,116 @@ class GameDetailImportServiceTest {
         assertThat(crawlJobTrackingService.partialSuccessJobId).isEqualTo(crawlJob.getId());
         assertThat(crawlJobTrackingService.snapshotCreated).isFalse();
         assertThat(crawlJobTrackingService.importedLineScoreCount).isEqualTo(2);
+    }
+
+    @Test
+    void usesScoreboardLineScoreTotalsWhenDetailScoreIsStale(CapturedOutput output) {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(parsedLiveDetail(game, 7, 9, "detail-score-stale-hash"));
+        kboLineScoreParser.result = lineScoreResult(11, 9, "line-score-newer-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.awayScore()).isEqualTo(11);
+        assertThat(result.homeScore()).isEqualTo(9);
+        assertThat(game.getAwayScore()).isEqualTo(11);
+        assertThat(game.getHomeScore()).isEqualTo(9);
+        assertThat(snapshotCaptor.getValue().getAwayScore()).isEqualTo(11);
+        assertThat(snapshotCaptor.getValue().getHomeScore()).isEqualTo(9);
+        assertThat(output.toString())
+                .contains("score source mismatch")
+                .contains("detailScore=7-9")
+                .contains("scoreboardScore=11-9")
+                .contains("selectedScoreSource=scoreboard_line_score");
+    }
+
+    @Test
+    void savesSnapshotWhenOnlySelectedScoreChangedEvenIfRawHashMatches() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(parsedLiveDetail(game, 7, 9, "detail-hash"));
+        kboLineScoreParser.result = lineScoreResult(11, 9, "line-hash");
+        GameSnapshot latestSnapshot = new GameSnapshot(
+                UUID.randomUUID(),
+                game,
+                6,
+                "top",
+                "6회 초",
+                1,
+                2,
+                1,
+                false,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                9,
+                7,
+                10,
+                13,
+                0,
+                1,
+                2,
+                3,
+                hash("detail-hash:line-hash:score:11:9"),
+                null,
+                OffsetDateTime.now()
+        );
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.of(latestSnapshot));
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(snapshotCaptor.getValue().getRawHash()).isEqualTo(latestSnapshot.getRawHash());
+        assertThat(snapshotCaptor.getValue().getAwayScore()).isEqualTo(11);
+        assertThat(snapshotCaptor.getValue().getHomeScore()).isEqualTo(9);
+    }
+
+    @Test
+    void keepsDetailScoreWhenScoreboardLineScoreIsUnavailable() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(parsedLiveDetail(game, 7, 9, "detail-score-hash"));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("scoreboard-unavailable");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(result.awayScore()).isEqualTo(7);
+        assertThat(result.homeScore()).isEqualTo(9);
+        assertThat(game.getAwayScore()).isEqualTo(7);
+        assertThat(game.getHomeScore()).isEqualTo(9);
+        assertThat(snapshotCaptor.getValue().getAwayScore()).isEqualTo(7);
+        assertThat(snapshotCaptor.getValue().getHomeScore()).isEqualTo(9);
     }
 
     @Test
@@ -1449,7 +1559,7 @@ class GameDetailImportServiceTest {
                 null,
                 null,
                 null,
-                hash("detail-hash:line-hash"),
+                hash("detail-hash:line-hash:score:2:7"),
                 null,
                 OffsetDateTime.now()
         );
@@ -1615,6 +1725,45 @@ class GameDetailImportServiceTest {
         assertThat(result.snapshotCreated()).isTrue();
         assertThat(liveActivityUpdateService.callCount).isEqualTo(1);
         verify(gameSnapshotRepository).save(any(GameSnapshot.class));
+    }
+
+    private KboGameDetailParser.ParsedGameDetail parsedLiveDetail(Game game, Integer awayScore, Integer homeScore, String rawHash) {
+        return new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                awayScore,
+                homeScore,
+                6,
+                "top",
+                "6회 초",
+                1,
+                2,
+                1,
+                false,
+                false,
+                false,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                false,
+                null,
+                null,
+                rawHash
+        );
+    }
+
+    private KboLineScoreParser.ParsedLineScoreResult lineScoreResult(Integer awayRuns, Integer homeRuns, String rawHash) {
+        return new KboLineScoreParser.ParsedLineScoreResult(
+                List.of(new KboLineScoreParser.ParsedLineScoreInning(6, awayRuns, homeRuns)),
+                new KboLineScoreParser.ParsedTeamTotals(awayRuns, 13, 1, 3),
+                new KboLineScoreParser.ParsedTeamTotals(homeRuns, 10, 0, 2),
+                rawHash
+        );
     }
 
     private Game fixtureGame() {
