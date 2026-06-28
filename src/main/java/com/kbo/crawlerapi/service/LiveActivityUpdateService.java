@@ -62,10 +62,29 @@ public class LiveActivityUpdateService {
     }
 
     public LiveActivityDeliveryResult deliverUpdate(Game game) {
-        List<LiveActivityToken> matches = inTransaction(() -> liveActivityTokenRepository.findByActiveTrue()
-                .stream()
-                .filter(token -> contentStateBuilder.matches(game, token))
-                .toList());
+        String readinessSkipReason = apnsPushService.readinessSkipReason();
+        if (readinessSkipReason != null) {
+            ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
+            log.warn(
+                    "[LiveActivity] APNs update preflight skipped publicGameId={} providerGameId={} databaseId={} reason={} pushEnabled={} configuredEnv={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    readinessSkipReason,
+                    diagnostics.pushEnabled(),
+                    diagnostics.configuredEnvironment()
+            );
+            return new LiveActivityDeliveryResult(0, 1, 0);
+        }
+
+        List<LiveActivityToken> matches = inTransaction(() -> liveActivityTokenRepository.findActiveMatchesForGame(
+                apnsPushService.configuredEnvironment(),
+                textOrNull(game.getPublicGameId()),
+                textOrNull(game.getProviderGameId()),
+                game.getId().toString(),
+                stableProviderIdentity(game),
+                stablePublicIdentity(game)
+        ));
         log.info(
                 "[LiveActivity] token matched publicGameId={} providerGameId={} databaseId={} matchedCount={}",
                 game.getPublicGameId(),
@@ -232,6 +251,20 @@ public class LiveActivityUpdateService {
         } catch (Exception exception) {
             return Map.of();
         }
+    }
+
+    private String stableProviderIdentity(Game game) {
+        String providerGameId = textOrNull(game.getProviderGameId());
+        return providerGameId == null ? null : "provider:" + providerGameId;
+    }
+
+    private String stablePublicIdentity(Game game) {
+        String publicGameId = textOrNull(game.getPublicGameId());
+        return publicGameId == null ? null : "public:" + publicGameId.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private String textOrNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     public record LiveActivityDeliveryResult(int sentCount, int skippedCount, int failedCount) {

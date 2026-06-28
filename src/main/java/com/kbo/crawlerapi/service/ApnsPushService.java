@@ -145,7 +145,7 @@ public class ApnsPushService {
                     : response.body();
             String mappedReason = mapApnsFailureReason(reason);
             log.warn("[APNs] push failed eventId={} reason={}", event.getId(), mappedReason);
-            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), mappedReason), mappedReason);
+            return new ApnsSendResult(false, false, isInvalidLiveActivityTokenResponse(response.statusCode(), mappedReason), mappedReason);
         } catch (Exception exception) {
             log.warn("[APNs] push failed eventId={} reason={}", event.getId(), exception.getClass().getSimpleName());
             return new ApnsSendResult(false, false, false, exception.getMessage());
@@ -212,7 +212,7 @@ public class ApnsPushService {
                     response.statusCode(),
                     mappedReason
             );
-            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), mappedReason), mappedReason);
+            return new ApnsSendResult(false, false, isInvalidLiveActivityTokenResponse(response.statusCode(), mappedReason), mappedReason);
         } catch (Exception exception) {
             log.warn(
                     "[LiveActivity] APNs failed publicGameId={} providerGameId={} databaseId={} activityId={} status=exception reason={}",
@@ -515,6 +515,14 @@ public class ApnsPushService {
                 || reason.contains("Unregistered")
                 || reason.contains("DeviceTokenNotForTopic")
                 || APNS_BAD_DEVICE_TOKEN.equals(reason);
+    }
+
+    private boolean isInvalidLiveActivityTokenResponse(int statusCode, String reason) {
+        return statusCode == 410
+                || (reason != null && reason.contains("BadDeviceToken"))
+                || (reason != null && reason.contains("Unregistered"))
+                || APNS_BAD_DEVICE_TOKEN.equals(reason)
+                || APNS_BAD_TOKEN.equals(reason);
     }
 
     String mapApnsFailureReason(String reason) {

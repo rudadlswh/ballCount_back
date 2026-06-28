@@ -1,6 +1,10 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,7 +49,7 @@ class LiveActivityUpdateServiceTest {
                 """.trim()), """
                 {"balls":1,"strikes":1,"outs":0,"currentBatterName":"김타자"}
                 """.trim(), OffsetDateTime.now(CLOCK));
-        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        mockActiveMatches(game, List.of(token));
         RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         LiveActivityUpdateService service = new LiveActivityUpdateService(
                 repository,
@@ -76,7 +80,7 @@ class LiveActivityUpdateServiceTest {
                 """.trim()), """
                 {"balls":0,"strikes":0,"outs":1,"currentBatterName":"이전타자"}
                 """.trim(), OffsetDateTime.now(CLOCK));
-        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        mockActiveMatches(game, List.of(token));
         RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         LiveActivityUpdateService service = new LiveActivityUpdateService(
                 repository,
@@ -104,7 +108,7 @@ class LiveActivityUpdateServiceTest {
         String contentStateJson = stableJson(contentState);
         LiveActivityToken token = liveActivityToken();
         token.markContentStateDelivered(hash(contentStateJson), contentStateJson, OffsetDateTime.now(CLOCK));
-        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        mockActiveMatches(game, List.of(token));
         RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         LiveActivityUpdateService service = new LiveActivityUpdateService(
                 repository,
@@ -124,7 +128,7 @@ class LiveActivityUpdateServiceTest {
     void invalidLiveActivityApnsTokenMarksTokenInactive() {
         Game game = fixtureGame();
         LiveActivityToken token = liveActivityToken();
-        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        mockActiveMatches(game, List.of(token));
         LiveActivityUpdateService service = new LiveActivityUpdateService(
                 repository,
                 new StubLiveActivityContentStateBuilder(Map.of(
@@ -140,6 +144,74 @@ class LiveActivityUpdateServiceTest {
 
         assertThat(result.failedCount()).isEqualTo(1);
         assertThat(token.isActive()).isFalse();
+    }
+
+    @Test
+    void readinessFailureSkipsWithoutQueryingTokens() {
+        Game game = fixtureGame();
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of("isPreGame", false)),
+                new ReadinessFailureApnsPushService(ApnsPushService.APNS_CONFIG_MISSING),
+                CLOCK
+        );
+
+        var result = service.deliverUpdate(game);
+
+        assertThat(result.skippedCount()).isEqualTo(1);
+        verify(repository, never()).findActiveMatchesForGame(anyString(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void onlyMatchingGameIdentityTokensAreSent() {
+        Game game = fixtureGame();
+        LiveActivityToken matchingToken = liveActivityToken();
+        LiveActivityToken otherGameToken = new LiveActivityToken(
+                UUID.randomUUID(),
+                "activity-other",
+                "ios",
+                "sandbox",
+                "other-activity-token",
+                "install-2",
+                "hanwha",
+                "20260605-OTHER",
+                "20260605OTHER0",
+                UUID.randomUUID().toString(),
+                "provider:20260605OTHER0",
+                OffsetDateTime.now(CLOCK)
+        );
+        mockActiveMatches(game, List.of(matchingToken));
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of("isPreGame", false, "favoriteScoreText", "2")),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverUpdate(game);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(apnsPushService.updatedTokens).containsExactly(matchingToken);
+        assertThat(apnsPushService.updatedTokens).doesNotContain(otherGameToken);
+    }
+
+    @Test
+    void topicEnvironmentMismatchDoesNotDisableLiveActivityToken() {
+        Game game = fixtureGame();
+        LiveActivityToken token = liveActivityToken();
+        mockActiveMatches(game, List.of(token));
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of("isPreGame", false, "favoriteScoreText", "1")),
+                new RecordingApnsPushService(new ApnsPushService.ApnsSendResult(false, false, false, ApnsPushService.APNS_BAD_ENVIRONMENT)),
+                CLOCK
+        );
+
+        var result = service.deliverUpdate(game);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(token.isActive()).isTrue();
     }
 
     private static final class StubLiveActivityContentStateBuilder extends LiveActivityContentStateBuilder {
@@ -203,9 +275,25 @@ class LiveActivityUpdateServiceTest {
         );
     }
 
+    private void mockActiveMatches(Game game, List<LiveActivityToken> tokens) {
+        when(repository.findActiveMatchesForGame(
+                "sandbox",
+                game.getPublicGameId(),
+                game.getProviderGameId(),
+                game.getId().toString(),
+                "provider:" + game.getProviderGameId(),
+                "public:" + game.getPublicGameId().toLowerCase(java.util.Locale.ROOT)
+        )).thenReturn(tokens);
+    }
+
     private static final class InvalidTokenApnsPushService extends ApnsPushService {
         private InvalidTokenApnsPushService() {
             super(new ApnsProperties(), CLOCK);
+        }
+
+        @Override
+        public String readinessSkipReason() {
+            return null;
         }
 
         @Override
@@ -214,9 +302,24 @@ class LiveActivityUpdateServiceTest {
         }
     }
 
+    private static final class ReadinessFailureApnsPushService extends ApnsPushService {
+        private final String reason;
+
+        private ReadinessFailureApnsPushService(String reason) {
+            super(new ApnsProperties(), CLOCK);
+            this.reason = reason;
+        }
+
+        @Override
+        public String readinessSkipReason() {
+            return reason;
+        }
+    }
+
     private static final class RecordingApnsPushService extends ApnsPushService {
         private final ApnsSendResult result;
         private final List<Map<String, Object>> contentStates = new ArrayList<>();
+        private final List<LiveActivityToken> updatedTokens = new ArrayList<>();
 
         private RecordingApnsPushService(ApnsSendResult result) {
             super(new ApnsProperties(), CLOCK);
@@ -224,8 +327,14 @@ class LiveActivityUpdateServiceTest {
         }
 
         @Override
+        public String readinessSkipReason() {
+            return null;
+        }
+
+        @Override
         public ApnsSendResult sendLiveActivityUpdate(Game game, LiveActivityToken liveActivityToken, Map<String, Object> contentState) {
             contentStates.add(contentState);
+            updatedTokens.add(liveActivityToken);
             return result;
         }
     }

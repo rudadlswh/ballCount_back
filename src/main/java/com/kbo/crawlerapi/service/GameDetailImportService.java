@@ -41,6 +41,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class GameDetailImportService {
@@ -239,6 +241,7 @@ public class GameDetailImportService {
             String combinedRawHash = hash(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash());
             boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, combinedRawHash, fetchedAt);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
+            LiveActivityContentAffectingState beforeLiveActivityState = LiveActivityContentAffectingState.from(game);
             game.syncDetail(
                     parsedDetail.status(),
                     parsedDetail.homeScore(),
@@ -254,6 +257,7 @@ public class GameDetailImportService {
                     parsedDetail.statusReason(),
                     parsedDetail.sourceUpdatedAt()
             );
+            boolean gameContentStateChanged = !beforeLiveActivityState.equals(LiveActivityContentAffectingState.from(game));
             importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineupData, fetchedAt);
             BoxscoreImportResult boxscoreImportResult = saveBoxscoreRecordsIfAvailable(
                     game,
@@ -262,7 +266,8 @@ public class GameDetailImportService {
                     boxscoreFetchResult
             );
             markDetailImportJob(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size(), parsedDetail, boxscoreImportResult);
-            deliverLiveActivityUpdateIfNeeded(game, parsedDetail);
+            boolean liveActivityContentMayHaveChanged = snapshotCreated || lineScoresUpdated || gameContentStateChanged;
+            scheduleLiveActivityUpdateAfterCommit(game, parsedDetail, liveActivityContentMayHaveChanged);
 
             return new GameDetailImportResult(
                     game.getPublicGameId(),
@@ -414,8 +419,21 @@ public class GameDetailImportService {
         ));
     }
 
-    private void deliverLiveActivityUpdateIfNeeded(Game game, ParsedGameDetail parsedDetail) {
+    private void scheduleLiveActivityUpdateAfterCommit(
+            Game game,
+            ParsedGameDetail parsedDetail,
+            boolean contentStateMayHaveChanged
+    ) {
         if (liveActivityUpdateService == null) {
+            return;
+        }
+        if (!contentStateMayHaveChanged) {
+            log.debug(
+                    "[LiveActivity] update skipped publicGameId={} providerGameId={} databaseId={} reason=content_state_unchanged",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId()
+            );
             return;
         }
         if (!isLiveLike(parsedDetail.status())) {
@@ -428,6 +446,26 @@ public class GameDetailImportService {
             );
             return;
         }
+        Runnable delivery = () -> deliverLiveActivityUpdate(game, parsedDetail);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    delivery.run();
+                }
+            });
+            log.debug(
+                    "[LiveActivity] update scheduled after commit publicGameId={} providerGameId={} databaseId={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId()
+            );
+            return;
+        }
+        delivery.run();
+    }
+
+    private void deliverLiveActivityUpdate(Game game, ParsedGameDetail parsedDetail) {
         try {
             LiveActivityUpdateService.LiveActivityDeliveryResult result = liveActivityUpdateService.deliverUpdate(game);
             log.info(
@@ -446,6 +484,31 @@ public class GameDetailImportService {
                     game.getProviderGameId(),
                     game.getId(),
                     exception.getMessage()
+            );
+        }
+    }
+
+    private record LiveActivityContentAffectingState(
+            GameStatus status,
+            Integer homeScore,
+            Integer awayScore,
+            String inningState,
+            String homeStartingPitcherName,
+            String awayStartingPitcherName,
+            boolean cancelled,
+            boolean postponed
+    ) {
+
+        private static LiveActivityContentAffectingState from(Game game) {
+            return new LiveActivityContentAffectingState(
+                    game.getStatus(),
+                    game.getHomeScore(),
+                    game.getAwayScore(),
+                    game.getInningState(),
+                    game.getHomeStartingPitcherName(),
+                    game.getAwayStartingPitcherName(),
+                    game.isCancelled(),
+                    game.isPostponed()
             );
         }
     }

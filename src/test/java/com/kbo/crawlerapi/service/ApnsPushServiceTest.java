@@ -216,6 +216,33 @@ class ApnsPushServiceTest {
         assertThat(reason).isEqualTo(ApnsPushService.APNS_BAD_DEVICE_TOKEN);
     }
 
+    @Test
+    void liveActivityUnregisteredResponseIsInvalidToken() throws Exception {
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(410, "{\"reason\":\"Unregistered\"}")
+        );
+
+        ApnsPushService.ApnsSendResult result = service.sendLiveActivityUpdate(game(), liveActivityToken(), Map.of("isPreGame", false));
+
+        assertThat(result.invalidToken()).isTrue();
+    }
+
+    @Test
+    void liveActivityTopicMismatchResponseIsNotInvalidToken() throws Exception {
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(400, "{\"reason\":\"DeviceTokenNotForTopic\"}")
+        );
+
+        ApnsPushService.ApnsSendResult result = service.sendLiveActivityUpdate(game(), liveActivityToken(), Map.of("isPreGame", false));
+
+        assertThat(result.reason()).isEqualTo(ApnsPushService.APNS_BAD_ENVIRONMENT);
+        assertThat(result.invalidToken()).isFalse();
+    }
+
     private ApnsProperties configuredProperties() throws Exception {
         ApnsProperties properties = new ApnsProperties();
         properties.setPushEnabled(true);
@@ -257,6 +284,45 @@ class ApnsPushServiceTest {
                 "lg",
                 true,
                 OffsetDateTime.parse("2026-05-01T09:00:00+09:00")
+        );
+    }
+
+    private com.kbo.crawlerapi.domain.Game game() {
+        com.kbo.crawlerapi.domain.Team homeTeam = new com.kbo.crawlerapi.domain.Team(
+                UUID.randomUUID(),
+                "hanwha",
+                "Hanwha Eagles",
+                "HAN",
+                "Hanwha Eagles",
+                null
+        );
+        com.kbo.crawlerapi.domain.Team awayTeam = new com.kbo.crawlerapi.domain.Team(
+                UUID.randomUUID(),
+                "lotte",
+                "Lotte Giants",
+                "LOT",
+                "Lotte Giants",
+                null
+        );
+        return new com.kbo.crawlerapi.domain.Game(
+                UUID.randomUUID(),
+                "20260605-LOT-HAN",
+                "kbo",
+                "20260605HHLT0",
+                java.time.LocalDate.of(2026, 6, 5),
+                OffsetDateTime.parse("2026-06-05T18:30:00+09:00"),
+                "Daejeon",
+                com.kbo.crawlerapi.domain.GameStatus.LIVE,
+                homeTeam,
+                awayTeam,
+                1,
+                1,
+                "1회 초",
+                false,
+                false,
+                null,
+                null,
+                null
         );
     }
 

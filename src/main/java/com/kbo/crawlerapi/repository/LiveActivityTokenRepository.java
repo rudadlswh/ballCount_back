@@ -32,6 +32,28 @@ public interface LiveActivityTokenRepository extends JpaRepository<LiveActivityT
 
     List<LiveActivityToken> findByActiveTrue();
 
+    @Query("""
+            select token
+            from LiveActivityToken token
+            where token.active = true
+              and lower(token.environment) = lower(:environment)
+              and (
+                (:publicGameId is not null and lower(token.publicGameId) = lower(:publicGameId))
+                or (:providerGameId is not null and lower(token.providerGameId) = lower(:providerGameId))
+                or (:databaseId is not null and lower(token.databaseId) = lower(:databaseId))
+                or (:stableProviderIdentity is not null and lower(token.stableDetailIdentity) = lower(:stableProviderIdentity))
+                or (:stablePublicIdentity is not null and lower(token.stableDetailIdentity) = lower(:stablePublicIdentity))
+              )
+            """)
+    List<LiveActivityToken> findActiveMatchesForGame(
+            @Param("environment") String environment,
+            @Param("publicGameId") String publicGameId,
+            @Param("providerGameId") String providerGameId,
+            @Param("databaseId") String databaseId,
+            @Param("stableProviderIdentity") String stableProviderIdentity,
+            @Param("stablePublicIdentity") String stablePublicIdentity
+    );
+
     List<LiveActivityToken> findByActiveTrueAndEnvironmentAndInstallationIdAndActivityId(
             String environment,
             String installationId,

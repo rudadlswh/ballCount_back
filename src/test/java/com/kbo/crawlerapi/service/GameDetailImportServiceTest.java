@@ -28,6 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.crawler.KboLiveTextClient;
@@ -1470,7 +1471,7 @@ class GameDetailImportServiceTest {
     }
 
     @Test
-    void liveDetailImportDeliversLiveActivityUpdateAfterPersistingSnapshot() {
+    void liveDetailImportDeliversLiveActivityUpdateAfterCommit() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
         StubLiveActivityUpdateService liveActivityUpdateService = new StubLiveActivityUpdateService();
@@ -1527,10 +1528,92 @@ class GameDetailImportServiceTest {
                 .thenReturn(Optional.empty());
         when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
 
-        GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+        TransactionSynchronizationManager.initSynchronization();
+        GameDetailImportResult result;
+        try {
+            result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+            assertThat(liveActivityUpdateService.updatedGames).isEmpty();
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(synchronization -> synchronization.afterCommit());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
 
         assertThat(result.snapshotCreated()).isTrue();
         assertThat(liveActivityUpdateService.updatedGames).containsExactly(game);
+        verify(gameSnapshotRepository).save(any(GameSnapshot.class));
+    }
+
+    @Test
+    void liveActivityUpdateFailureAfterCommitDoesNotFailDetailImport() {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        ThrowingLiveActivityUpdateService liveActivityUpdateService = new ThrowingLiveActivityUpdateService();
+        gameDetailImportService = new GameDetailImportService(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                null,
+                null,
+                gameBoxscoreRecordService,
+                null,
+                liveActivityUpdateService,
+                crawlJobTrackingService,
+                new BaseRunnerNameResolver()
+        );
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                2,
+                7,
+                2,
+                "bottom",
+                "2회 말",
+                1,
+                2,
+                1,
+                true,
+                false,
+                true,
+                "홈투수",
+                "원정타자",
+                "홈선발",
+                "원정선발",
+                false,
+                null,
+                null,
+                "live-activity-failure-detail-hash"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        TransactionSynchronizationManager.initSynchronization();
+        GameDetailImportResult result;
+        try {
+            result = gameDetailImportService.importGameDetail(game.getPublicGameId());
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(synchronization -> synchronization.afterCommit());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        assertThat(result.snapshotCreated()).isTrue();
+        assertThat(liveActivityUpdateService.callCount).isEqualTo(1);
         verify(gameSnapshotRepository).save(any(GameSnapshot.class));
     }
 
@@ -1909,6 +1992,21 @@ class GameDetailImportServiceTest {
         public LiveActivityDeliveryResult deliverUpdate(Game game) {
             updatedGames.add(game);
             return new LiveActivityDeliveryResult(1, 0, 0);
+        }
+    }
+
+    private static final class ThrowingLiveActivityUpdateService extends LiveActivityUpdateService {
+
+        private int callCount;
+
+        private ThrowingLiveActivityUpdateService() {
+            super(null, null, null, java.time.Clock.systemUTC());
+        }
+
+        @Override
+        public LiveActivityDeliveryResult deliverUpdate(Game game) {
+            callCount++;
+            throw new IllegalStateException("apns unavailable");
         }
     }
 

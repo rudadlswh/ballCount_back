@@ -116,6 +116,21 @@ public class LiveActivityPushToStartTokenService {
     }
 
     public LiveActivityStartDeliveryResult deliverStart(Game game) {
+        String readinessSkipReason = apnsPushService.readinessSkipReason();
+        if (readinessSkipReason != null) {
+            ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
+            log.warn(
+                    "[LiveActivityStart] APNs start preflight skipped publicGameId={} providerGameId={} databaseId={} reason={} pushEnabled={} configuredEnv={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    readinessSkipReason,
+                    diagnostics.pushEnabled(),
+                    diagnostics.configuredEnvironment()
+            );
+            return new LiveActivityStartDeliveryResult(0, 1, 0);
+        }
+
         List<LiveActivityPushToStartToken> tokens = inTransaction(repository::findByActiveTrue);
         if (tokens.isEmpty()) {
             log.info("[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} reason=no_push_to_start_token", game.getPublicGameId(), game.getProviderGameId(), game.getId());

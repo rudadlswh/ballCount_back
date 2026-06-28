@@ -3,6 +3,7 @@ package com.kbo.crawlerapi.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -84,6 +85,16 @@ class LiveActivityPushToStartTokenServiceTest {
         assertThat(result.sentCount()).isZero();
         assertThat(result.skippedCount()).isEqualTo(1);
         assertThat(apnsPushService.sentCount).isZero();
+    }
+
+    @Test
+    void pushDisabledSkipsWithoutScanningTokens() {
+        LiveActivityPushToStartTokenService service = service(new PushDisabledApnsPushService());
+
+        var result = service.deliverStart(game());
+
+        assertThat(result.skippedCount()).isEqualTo(1);
+        verify(repository, never()).findByActiveTrue();
     }
 
     @Test
@@ -207,7 +218,7 @@ class LiveActivityPushToStartTokenServiceTest {
         );
     }
 
-    private static final class RecordingApnsPushService extends ApnsPushService {
+    private static class RecordingApnsPushService extends ApnsPushService {
         private int sentCount;
 
         private RecordingApnsPushService() {
@@ -220,6 +231,11 @@ class LiveActivityPushToStartTokenServiceTest {
         }
 
         @Override
+        public String readinessSkipReason() {
+            return null;
+        }
+
+        @Override
         public ApnsSendResult sendLiveActivityStart(
                 Game game,
                 LiveActivityPushToStartToken pushToStartToken,
@@ -228,6 +244,14 @@ class LiveActivityPushToStartTokenServiceTest {
         ) {
             sentCount++;
             return ApnsSendResult.sentResult();
+        }
+    }
+
+    private static final class PushDisabledApnsPushService extends RecordingApnsPushService {
+
+        @Override
+        public String readinessSkipReason() {
+            return ApnsPushService.APNS_PUSH_DISABLED;
         }
     }
 }
