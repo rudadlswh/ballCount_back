@@ -191,6 +191,39 @@ public class NotificationEventService {
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
     }
 
+    public NotificationEvent transientEvent(Game game, NotificationEventDraft draft) {
+        return new NotificationEvent(
+                UUID.randomUUID(),
+                game,
+                draft.eventType(),
+                draft.eventKey(),
+                draft.title(),
+                draft.body(),
+                toJson(draft.payload())
+        );
+    }
+
+    public String targetedDeviceSkipReason(NotificationDevice device, NotificationEventDraft draft, Game game) {
+        if (!"ios".equalsIgnoreCase(device.getPlatform())) {
+            return ApnsPushService.UNSUPPORTED_PLATFORM;
+        }
+        if (!device.isNotificationsEnabled()) {
+            return ApnsPushService.DEVICE_NOTIFICATIONS_DISABLED;
+        }
+        if (device.getDeviceToken() == null || device.getDeviceToken().isBlank()) {
+            return ApnsPushService.APNS_BAD_DEVICE_TOKEN;
+        }
+        if (!apnsPushService.environmentMatches(device.getEnvironment())) {
+            return ApnsPushService.ENVIRONMENT_MISMATCH;
+        }
+        if (!eventSettingEnabled(device, draft.eventType())
+                || !favoriteTeamOnlyAllows(device, draft)
+                || !muteWhenLosingAllows(device, draft.eventType(), game)) {
+            return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
+        }
+        return null;
+    }
+
     private PreparedDelivery prepareDelivery(Game game, NotificationEventDraft draft) {
         if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()) {
             return PreparedDelivery.duplicateResult();

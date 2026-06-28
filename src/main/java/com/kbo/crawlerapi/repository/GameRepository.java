@@ -34,6 +34,9 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
     @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
     Optional<Game> findByPublicGameId(String publicGameId);
 
+    @EntityGraph(attributePaths = {"homeTeam", "awayTeam"})
+    Optional<Game> findByProviderGameId(String providerGameId);
+
     Optional<Game> findByProviderAndProviderGameId(String provider, String providerGameId);
 
     Optional<Game> findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(

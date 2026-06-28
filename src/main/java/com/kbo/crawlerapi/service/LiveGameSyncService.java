@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -852,6 +853,200 @@ public class LiveGameSyncService {
             drafts.add(onBaseDraft(game, before, after));
         }
         return drafts;
+    }
+
+    public List<NotificationEventDraft> replayNotificationDrafts(
+            Game game,
+            List<GameSnapshot> snapshots,
+            Set<String> eventTypes,
+            int maxEvents,
+            String installationId
+    ) {
+        if (game == null || snapshots == null || snapshots.isEmpty() || maxEvents <= 0) {
+            return List.of();
+        }
+        Set<String> selectedEventTypes = eventTypes == null ? Set.of() : eventTypes;
+        List<NotificationEventDraft> replayDrafts = new ArrayList<>();
+
+        GameSnapshot firstSnapshot = snapshots.get(0);
+        Game firstLiveGame = replayGame(game, firstSnapshot, GameStatus.LIVE);
+        addReplayDrafts(
+                replayDrafts,
+                detectChanges(
+                        GameState.fromReplay(game, null, GameStatus.SCHEDULED, null, null),
+                        GameState.fromReplay(firstLiveGame, firstSnapshot, GameStatus.LIVE, null, firstLiveGame.getStatusReason()),
+                        firstLiveGame
+                ),
+                selectedEventTypes,
+                maxEvents,
+                game.getId(),
+                installationId
+        );
+
+        for (int index = 1; index < snapshots.size() && replayDrafts.size() < maxEvents; index++) {
+            GameSnapshot beforeSnapshot = snapshots.get(index - 1);
+            GameSnapshot afterSnapshot = snapshots.get(index);
+            Game beforeGame = replayGame(game, beforeSnapshot, GameStatus.LIVE);
+            Game afterGame = replayGame(game, afterSnapshot, GameStatus.LIVE);
+            addReplayDrafts(
+                    replayDrafts,
+                    detectChanges(
+                            GameState.fromReplay(beforeGame, beforeSnapshot, GameStatus.LIVE, null, beforeGame.getStatusReason()),
+                            GameState.fromReplay(afterGame, afterSnapshot, GameStatus.LIVE, null, afterGame.getStatusReason()),
+                            afterGame
+                    ),
+                    selectedEventTypes,
+                    maxEvents,
+                    game.getId(),
+                    installationId
+            );
+        }
+
+        if (replayDrafts.size() < maxEvents && game.getStatus() == GameStatus.FINAL) {
+            GameSnapshot lastSnapshot = snapshots.get(snapshots.size() - 1);
+            Game beforeGame = replayGame(game, lastSnapshot, GameStatus.LIVE);
+            Game finalGame = replayGame(game, lastSnapshot, GameStatus.FINAL);
+            addReplayDrafts(
+                    replayDrafts,
+                    detectChanges(
+                            GameState.fromReplay(beforeGame, lastSnapshot, GameStatus.LIVE, null, beforeGame.getStatusReason()),
+                            GameState.fromReplay(finalGame, lastSnapshot, GameStatus.FINAL, finalGame.getFinalConfirmedAt(), finalGame.getStatusReason()),
+                            finalGame
+                    ),
+                    selectedEventTypes,
+                    maxEvents,
+                    game.getId(),
+                    installationId
+            );
+        }
+
+        return replayDrafts;
+    }
+
+    private void addReplayDrafts(
+            List<NotificationEventDraft> replayDrafts,
+            List<NotificationEventDraft> candidates,
+            Set<String> eventTypes,
+            int maxEvents,
+            UUID gameId,
+            String installationId
+    ) {
+        for (NotificationEventDraft candidate : candidates) {
+            if (replayDrafts.size() >= maxEvents) {
+                return;
+            }
+            if (!eventTypes.isEmpty() && !eventTypes.contains(candidate.eventType())) {
+                continue;
+            }
+            int replayIndex = replayDrafts.size() + 1;
+            Map<String, Object> payload = new HashMap<>(candidate.payload());
+            payload.put("testReplay", true);
+            payload.put("originalEventKey", candidate.eventKey());
+            payload.put("replayIndex", replayIndex);
+            payload.put("targetInstallationId", installationId);
+            replayDrafts.add(new NotificationEventDraft(
+                    candidate.eventType(),
+                    "test-replay:%s:%s:%s:%d".formatted(
+                            gameId,
+                            safeReplayKey(installationId),
+                            candidate.eventType(),
+                            replayIndex
+                    ),
+                    testReplayTitle(candidate.title()),
+                    candidate.body(),
+                    payload
+            ));
+        }
+    }
+
+    private String testReplayTitle(String title) {
+        if (title == null || title.isBlank()) {
+            return "[테스트]";
+        }
+        if (title.startsWith("[테스트]")) {
+            return title;
+        }
+        return "[테스트] " + title;
+    }
+
+    private String safeReplayKey(String value) {
+        if (value == null || value.isBlank()) {
+            return "-";
+        }
+        return value.trim().replaceAll("[^A-Za-z0-9_.-]", "_");
+    }
+
+    private Game replayGame(Game source, GameSnapshot snapshot, GameStatus status) {
+        Integer homeScore = snapshot == null || snapshot.getHomeScore() == null ? source.getHomeScore() : snapshot.getHomeScore();
+        Integer awayScore = snapshot == null || snapshot.getAwayScore() == null ? source.getAwayScore() : snapshot.getAwayScore();
+        String inningState = replayInningState(snapshot);
+        OffsetDateTime sourceUpdatedAt = snapshot == null || snapshot.getSourceUpdatedAt() == null
+                ? source.getSourceUpdatedAt()
+                : snapshot.getSourceUpdatedAt();
+        String statusReason = status == GameStatus.FINAL
+                ? replayFinalStatusReason(source)
+                : source.getStatusReason();
+        Game replay = new Game(
+                source.getId(),
+                source.getPublicGameId(),
+                source.getProvider(),
+                source.getProviderGameId(),
+                source.getGameDate(),
+                source.getScheduledAt(),
+                source.getStadium(),
+                status,
+                source.getHomeTeam(),
+                source.getAwayTeam(),
+                homeScore,
+                awayScore,
+                inningState,
+                false,
+                false,
+                null,
+                null,
+                source.getHomeStartingPitcherName(),
+                source.getAwayStartingPitcherName(),
+                sourceUpdatedAt
+        );
+        replay.syncDetail(
+                status,
+                homeScore,
+                awayScore,
+                inningState,
+                false,
+                false,
+                null,
+                null,
+                source.getHomeStartingPitcherName(),
+                source.getAwayStartingPitcherName(),
+                source.getLineupData(),
+                statusReason,
+                sourceUpdatedAt
+        );
+        if (status == GameStatus.FINAL) {
+            replay.confirmFinal(source.getFinalConfirmedAt() == null ? OffsetDateTime.now(applicationClock) : source.getFinalConfirmedAt());
+        }
+        return replay;
+    }
+
+    private String replayFinalStatusReason(Game source) {
+        if (hasReliableFinalStatusReason(source.getStatusReason())) {
+            return source.getStatusReason();
+        }
+        return "GAME_RESULT_CK=1";
+    }
+
+    private String replayInningState(GameSnapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        if (snapshot.getInningLabel() != null && !snapshot.getInningLabel().isBlank()) {
+            return snapshot.getInningLabel();
+        }
+        if (snapshot.getInning() == null || snapshot.getInningHalf() == null || snapshot.getInningHalf().isBlank()) {
+            return null;
+        }
+        return "%d %s".formatted(snapshot.getInning(), snapshot.getInningHalf());
     }
 
     private NotificationEventDraft cancelledDraft(Game game, GameStatus cancelledStatus) {
@@ -1825,6 +2020,42 @@ public class LiveGameSyncService {
                     clean(game.getStatusReason()),
                     game.getHomeScore(),
                     game.getAwayScore(),
+                    game.getHomeStartingPitcherName(),
+                    game.getAwayStartingPitcherName(),
+                    game.getLineupData() == null ? null : String.valueOf(game.getLineupData().hashCode()),
+                    snapshot == null ? null : snapshot.getInning(),
+                    clean(snapshot == null ? null : snapshot.getInningHalf()),
+                    clean(snapshot == null ? null : snapshot.getInningLabel()),
+                    snapshot == null ? null : snapshot.getBalls(),
+                    snapshot == null ? null : snapshot.getStrikes(),
+                    snapshot == null ? null : snapshot.getOuts(),
+                    snapshotObservedAt(snapshot),
+                    snapshot != null && snapshot.isRunnerOnFirst(),
+                    snapshot != null && snapshot.isRunnerOnSecond(),
+                    snapshot != null && snapshot.isRunnerOnThird(),
+                    clean(snapshot == null ? null : snapshot.getFirstBaseRunnerName()),
+                    clean(snapshot == null ? null : snapshot.getSecondBaseRunnerName()),
+                    clean(snapshot == null ? null : snapshot.getThirdBaseRunnerName()),
+                    clean(snapshot == null ? null : snapshot.getCurrentPitcherName()),
+                    clean(snapshot == null ? null : snapshot.getCurrentBatterName())
+            );
+        }
+
+        static GameState fromReplay(
+                Game game,
+                GameSnapshot snapshot,
+                GameStatus status,
+                OffsetDateTime finalConfirmedAt,
+                String statusReason
+        ) {
+            return new GameState(
+                    status,
+                    false,
+                    false,
+                    finalConfirmedAt,
+                    clean(statusReason),
+                    snapshot == null ? null : snapshot.getHomeScore(),
+                    snapshot == null ? null : snapshot.getAwayScore(),
                     game.getHomeStartingPitcherName(),
                     game.getAwayStartingPitcherName(),
                     game.getLineupData() == null ? null : String.valueOf(game.getLineupData().hashCode()),
