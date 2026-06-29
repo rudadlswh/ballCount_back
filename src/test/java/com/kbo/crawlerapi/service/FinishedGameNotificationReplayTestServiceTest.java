@@ -153,14 +153,33 @@ class FinishedGameNotificationReplayTestServiceTest {
     @Test
     void defaultEnvironmentIsProduction() {
         NotificationDevice production = device("install-1", "production");
-        NotificationDevice sandbox = device("install-1", "sandbox");
+        NotificationDevice sandbox = disabledDevice("install-1", "sandbox");
         arrangeReplay(List.of("SCORE_CHANGED"), List.of(production, sandbox));
 
         var result = service.replay(command("install-1", null, false, 20, List.of("SCORE_CHANGED")));
 
         assertThat(result.targetEnvironment()).isEqualTo("production");
+        assertThat(result.attemptedCount()).isEqualTo(1);
         assertThat(result.sentCount()).isEqualTo(1);
         assertThat(result.skippedCount()).isZero();
+        assertThat(result.events().get(0).deliveryStatus()).isEqualTo("sent");
+        assertThat(result.events().get(0).reason()).isNull();
+        assertThat(apnsPushService.sentDevices).containsExactly(production);
+        verify(notificationDeviceRepository).findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc("install-1", "production");
+    }
+
+    @Test
+    void productionEnvironmentIgnoresSandboxDisabledDevice() {
+        NotificationDevice production = device("install-1", "production");
+        NotificationDevice sandbox = disabledDevice("install-1", "sandbox");
+        arrangeReplay(List.of("SCORE_CHANGED"), List.of(production, sandbox));
+
+        var result = service.replay(command("install-1", "production", false, 20, List.of("SCORE_CHANGED")));
+
+        assertThat(result.attemptedCount()).isEqualTo(1);
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(result.skippedCount()).isZero();
+        assertThat(result.events().get(0).deliveryStatus()).isEqualTo("sent");
         assertThat(result.events().get(0).reason()).isNull();
         assertThat(apnsPushService.sentDevices).containsExactly(production);
         verify(notificationDeviceRepository).findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc("install-1", "production");
@@ -224,8 +243,10 @@ class FinishedGameNotificationReplayTestServiceTest {
 
         var result = service.replay(command("install-1", false, 20, List.of("SCORE_CHANGED")));
 
+        assertThat(result.attemptedCount()).isZero();
         assertThat(result.sentCount()).isZero();
-        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(result.skippedCount()).isEqualTo(result.generatedCount());
+        assertThat(result.events().get(0).deliveryStatus()).isEqualTo("skipped");
         assertThat(result.events().get(0).reason()).isEqualTo(ApnsPushService.DEVICE_NOTIFICATIONS_DISABLED);
         assertThat(apnsPushService.sentDevices).isEmpty();
     }
@@ -368,11 +389,15 @@ class FinishedGameNotificationReplayTestServiceTest {
     }
 
     private NotificationDevice disabledDevice(String installationId) {
+        return disabledDevice(installationId, "production");
+    }
+
+    private NotificationDevice disabledDevice(String installationId, String environment) {
         return new NotificationDevice(
                 UUID.randomUUID(),
                 "ios",
-                "production",
-                "token-" + installationId,
+                environment,
+                "token-" + environment + "-" + installationId,
                 installationId,
                 "lotte",
                 false,
