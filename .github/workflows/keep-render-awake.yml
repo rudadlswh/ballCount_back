@@ -12,7 +12,7 @@ concurrency:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 6
 
     steps:
       - name: Ping Render
@@ -25,10 +25,10 @@ jobs:
           echo "Ping target: $PING_URL"
           echo "UTC time: $(date -u '+%Y-%m-%d %H:%M:%S')"
 
-          for i in 1 2 3 4; do
+          for i in 1 2 3; do
             echo "Attempt $i"
 
-            if curl -fsS --connect-timeout 20 --max-time 90 "$PING_URL"; then
+            if timeout 100s curl -fsS --connect-timeout 20 --max-time 90 "$PING_URL"; then
               echo
               echo "ping success"
               exit 0
