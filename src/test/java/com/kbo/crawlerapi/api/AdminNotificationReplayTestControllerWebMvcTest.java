@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.api;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -11,6 +12,8 @@ import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService;
 import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService.ReplayFinishedGameNotificationEventResult;
 import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService.ReplayFinishedGameNotificationTestCommand;
 import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService.ReplayFinishedGameNotificationTestResult;
+import com.kbo.crawlerapi.service.LiveGameSyncService;
+import com.kbo.crawlerapi.service.LiveGameSyncService.NotificationRecoveryDiagnosis;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,15 +27,17 @@ class AdminNotificationReplayTestControllerWebMvcTest {
     private static final String ADMIN_KEY = "admin-test-key";
 
     private StubReplayTestService replayTestService;
+    private StubLiveGameSyncService liveGameSyncService;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         replayTestService = new StubReplayTestService();
+        liveGameSyncService = new StubLiveGameSyncService();
         AppSecurityProperties properties = new AppSecurityProperties();
         properties.setAdminApiKey(ADMIN_KEY);
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new AdminNotificationReplayTestController(replayTestService))
+                .standaloneSetup(new AdminNotificationReplayTestController(replayTestService, liveGameSyncService))
                 .addFilters(new AdminApiKeyFilter(properties))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
@@ -127,6 +132,29 @@ class AdminNotificationReplayTestControllerWebMvcTest {
         org.assertj.core.api.Assertions.assertThat(replayTestService.command.environment()).isNull();
     }
 
+    @Test
+    void diagnoseGameReturnsSnapshotRecoveryCounts() throws Exception {
+        liveGameSyncService.diagnosis = new NotificationRecoveryDiagnosis(
+                "8e8f7cc5-3c62-45bb-9b50-6e75a82b5a11",
+                "20260617-SSG-LOT",
+                4,
+                3,
+                2,
+                1
+        );
+
+        mockMvc.perform(get("/admin/test/notifications/diagnose-game")
+                        .header(AdminApiKeyFilter.ADMIN_API_KEY_HEADER, ADMIN_KEY)
+                        .param("publicGameId", "20260617-SSG-LOT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.snapshotCount").value(4))
+                .andExpect(jsonPath("$.candidateEventCount").value(3))
+                .andExpect(jsonPath("$.storedEventCount").value(2))
+                .andExpect(jsonPath("$.suspectedMissingEventCount").value(1));
+
+        org.assertj.core.api.Assertions.assertThat(liveGameSyncService.publicGameId).isEqualTo("20260617-SSG-LOT");
+    }
+
     private String requestJson(String installationId) throws Exception {
         return requestJson(installationId, null);
     }
@@ -163,6 +191,22 @@ class AdminNotificationReplayTestControllerWebMvcTest {
                 throw exception;
             }
             return result;
+        }
+    }
+
+    private static final class StubLiveGameSyncService extends LiveGameSyncService {
+
+        private NotificationRecoveryDiagnosis diagnosis;
+        private String publicGameId;
+
+        private StubLiveGameSyncService() {
+            super(null, null, null, null, null, null, null, java.time.Clock.systemUTC());
+        }
+
+        @Override
+        public NotificationRecoveryDiagnosis diagnoseNotificationRecovery(String publicGameId) {
+            this.publicGameId = publicGameId;
+            return diagnosis;
         }
     }
 }

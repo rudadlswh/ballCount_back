@@ -381,6 +381,10 @@ public class GameSnapshot {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    public UUID getId() {
+        return id;
+    }
+
     public Integer getInning() {
         return inning;
     }

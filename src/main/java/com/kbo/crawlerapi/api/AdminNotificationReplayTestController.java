@@ -3,6 +3,8 @@ package com.kbo.crawlerapi.api;
 import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService;
 import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService.ReplayFinishedGameNotificationTestCommand;
 import com.kbo.crawlerapi.service.FinishedGameNotificationReplayTestService.ReplayFinishedGameNotificationTestResult;
+import com.kbo.crawlerapi.service.LiveGameSyncService;
+import com.kbo.crawlerapi.service.LiveGameSyncService.NotificationRecoveryDiagnosis;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -11,8 +13,10 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -20,9 +24,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminNotificationReplayTestController {
 
     private final FinishedGameNotificationReplayTestService replayTestService;
+    private final LiveGameSyncService liveGameSyncService;
 
-    public AdminNotificationReplayTestController(FinishedGameNotificationReplayTestService replayTestService) {
+    public AdminNotificationReplayTestController(
+            FinishedGameNotificationReplayTestService replayTestService,
+            LiveGameSyncService liveGameSyncService
+    ) {
         this.replayTestService = replayTestService;
+        this.liveGameSyncService = liveGameSyncService;
     }
 
     @Operation(
@@ -57,6 +66,11 @@ public class AdminNotificationReplayTestController {
                 request.maxEvents(),
                 Boolean.TRUE.equals(request.dryRun())
         ));
+    }
+
+    @GetMapping("/admin/test/notifications/diagnose-game")
+    public NotificationRecoveryDiagnosis diagnoseGame(@RequestParam String publicGameId) {
+        return liveGameSyncService.diagnoseNotificationRecovery(publicGameId);
     }
 
     @Schema(name = "ReplayFinishedGameNotificationTestRequest")

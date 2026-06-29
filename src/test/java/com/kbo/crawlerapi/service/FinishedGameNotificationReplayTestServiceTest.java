@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -42,6 +43,7 @@ class FinishedGameNotificationReplayTestServiceTest {
     private GameRepository gameRepository;
     private GameSnapshotRepository gameSnapshotRepository;
     private NotificationDeviceRepository notificationDeviceRepository;
+    private NotificationEventRepository notificationEventRepository;
     private RecordingApnsPushService apnsPushService;
     private FinishedGameNotificationReplayTestService service;
     private Game game;
@@ -51,9 +53,10 @@ class FinishedGameNotificationReplayTestServiceTest {
         gameRepository = mock(GameRepository.class);
         gameSnapshotRepository = mock(GameSnapshotRepository.class);
         notificationDeviceRepository = mock(NotificationDeviceRepository.class);
+        notificationEventRepository = mock(NotificationEventRepository.class);
         apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService notificationEventService = new NotificationEventService(
-                mock(NotificationEventRepository.class),
+                notificationEventRepository,
                 notificationDeviceRepository,
                 apnsPushService,
                 new ObjectMapper(),
@@ -235,6 +238,15 @@ class FinishedGameNotificationReplayTestServiceTest {
 
         assertThat(result.events().get(0).title()).startsWith("[테스트] ");
         assertThat(apnsPushService.sentEvents.get(0).getTitle()).startsWith("[테스트] ");
+    }
+
+    @Test
+    void replayUsesTransientEventsWithoutPersistingNotificationEvent() {
+        arrangeReplay(List.of("SCORE_CHANGED"), List.of(device("install-1", "production")));
+
+        service.replay(command("install-1", false, 20, List.of("SCORE_CHANGED")));
+
+        verify(notificationEventRepository, never()).save(any(NotificationEvent.class));
     }
 
     @Test

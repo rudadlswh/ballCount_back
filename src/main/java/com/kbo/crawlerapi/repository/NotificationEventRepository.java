@@ -8,4 +8,8 @@ import com.kbo.crawlerapi.domain.NotificationEvent;
 public interface NotificationEventRepository extends JpaRepository<NotificationEvent, UUID> {
 
     Optional<NotificationEvent> findByEventKey(String eventKey);
+
+    boolean existsByEventKey(String eventKey);
+
+    long countByGame_Id(UUID gameId);
 }

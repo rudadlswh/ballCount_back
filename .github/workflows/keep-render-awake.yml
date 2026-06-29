@@ -1,63 +1,42 @@
-name: Keep Render Awake
+name: keep-render-awake
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2-57/5 * * * *"
   workflow_dispatch:
+
+concurrency:
+  group: keep-render-awake
+  cancel-in-progress: true
 
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
 
     steps:
-      - name: Ping Render backend during KST service window
+      - name: Ping Render
+        shell: bash
+        env:
+          PING_URL: https://kboscore-back.onrender.com/healthz
         run: |
-          KST_DOW=$(TZ=Asia/Seoul date +%u)
-          KST_HOUR=$(TZ=Asia/Seoul date +%H)
-          KST_TIME=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S %Z')
+          set -u
 
-          echo "KST time: $KST_TIME"
-          echo "KST day-of-week: $KST_DOW"
-          echo "KST hour: $KST_HOUR"
+          echo "Ping target: $PING_URL"
+          echo "UTC time: $(date -u '+%Y-%m-%d %H:%M:%S')"
 
-          SHOULD_PING=false
+          for i in 1 2 3 4; do
+            echo "Attempt $i"
 
-          # Weekdays Mon-Fri, KST 14:00~22:59
-          if [ "$KST_DOW" -ge 1 ] && [ "$KST_DOW" -le 5 ] && [ "$KST_HOUR" -ge 14 ] && [ "$KST_HOUR" -le 22 ]; then
-            SHOULD_PING=true
-          fi
+            if curl -fsS --connect-timeout 20 --max-time 90 "$PING_URL"; then
+              echo
+              echo "ping success"
+              exit 0
+            fi
 
-          # Weekends Sat-Sun, KST 10:00~22:59
-          if [ "$KST_DOW" -ge 6 ] && [ "$KST_HOUR" -ge 10 ] && [ "$KST_HOUR" -le 22 ]; then
-            SHOULD_PING=true
-          fi
+            echo "ping failed, retrying..."
+            sleep 15
+          done
 
-          if [ "$SHOULD_PING" != "true" ]; then
-            echo "Outside keep-awake window. Skipping ping."
-            exit 0
-          fi
-
-          URL="https://kboscore-back.onrender.com/healthz"
-          echo "Ping: $URL"
-
-          status_code=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 90 \
-            -H "User-Agent: github-actions-kbo-keep-alive" \
-            -H "X-KBO-Keep-Alive: github-actions" \
-            "$URL")
-          curl_exit_code=$?
-
-          echo "curl exit code: $curl_exit_code"
-          echo "HTTP status: $status_code"
-
-          if [ "$curl_exit_code" -ne 0 ]; then
-            echo "curl failed"
-            exit 1
-          fi
-
-          if [ "$status_code" -ge 500 ]; then
-            echo "server error"
-            exit 1
-          fi
-
-          echo "ping succeeded"
+          echo "ping failed after retries"
+          exit 1

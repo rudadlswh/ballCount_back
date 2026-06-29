@@ -24,8 +24,11 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +40,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,6 +49,7 @@ import org.springframework.stereotype.Service;
 public class LiveGameSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveGameSyncService.class);
+    private static final int DEFAULT_SNAPSHOT_RECOVERY_PAIR_LIMIT = 20;
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter CANCELLED_GAME_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final Pattern RESUME_TIME_PATTERN = Pattern.compile("(?<!\\d)([01]?\\d|2[0-3]):([0-5]\\d)(?!\\d)");
@@ -205,6 +210,7 @@ public class LiveGameSyncService {
         List<String> updatedGames = new ArrayList<>();
         List<String> events = new ArrayList<>();
         List<String> errors = new ArrayList<>();
+        Set<String> handledEventKeys = new HashSet<>();
 
         for (Game game : games) {
             GameState before = beforeScheduleStates.get(game.getPublicGameId());
@@ -260,6 +266,7 @@ public class LiveGameSyncService {
             if (delivery.eventCreated()) {
                 eventCreatedCount++;
                 events.add(delivery.eventKey());
+                handledEventKeys.add(delivery.eventKey());
                 if (started) {
                     log.info(
                             "[LiveGameSync] GAME_START event created_at={} game={} providerGameId={} scheduledAt={} eventKey={} source=schedule-refresh",
@@ -350,6 +357,7 @@ public class LiveGameSyncService {
                             after.getPublicGameId()
                     );
                     EventDeliveryResult delivery = notificationEventService.createAndDeliver(after, draft);
+                    handledEventKeys.add(draft.eventKey());
                     if (delivery.eventCreated()) {
                         eventCreatedCount++;
                         events.add(delivery.eventKey());
@@ -386,6 +394,15 @@ public class LiveGameSyncService {
                         );
                     }
                 }
+                SnapshotRecoveryResult recovery = recoverSnapshotNotifications(after, handledEventKeys);
+                if (recovery.eventCreatedCount() > 0) {
+                    updatedCount++;
+                    updatedGames.add(after.getPublicGameId());
+                    eventCreatedCount += recovery.eventCreatedCount();
+                    events.addAll(recovery.eventKeys());
+                    notificationSentCount += recovery.sentCount();
+                    notificationSkippedCount += recovery.skippedCount();
+                }
                 nextRefreshAtByGameId.put(after.getId(), Instant.now(applicationClock).plus(ttlFor(after)));
             } catch (RuntimeException exception) {
                 failedCount++;
@@ -412,6 +429,126 @@ public class LiveGameSyncService {
                 events,
                 errors
         );
+    }
+
+    private SnapshotRecoveryResult recoverSnapshotNotifications(Game game, Set<String> handledEventKeys) {
+        List<NotificationEventDraft> candidates = snapshotRecoveryDrafts(game, DEFAULT_SNAPSHOT_RECOVERY_PAIR_LIMIT);
+        if (candidates.isEmpty()) {
+            return SnapshotRecoveryResult.empty();
+        }
+        int eventCreatedCount = 0;
+        int sentCount = 0;
+        int skippedCount = 0;
+        int failedCount = 0;
+        List<String> eventKeys = new ArrayList<>();
+        for (NotificationEventDraft draft : candidates) {
+            if (handledEventKeys.contains(draft.eventKey()) || notificationEventService.eventExists(draft)) {
+                logSnapshotRecoveryDecision(game, null, null, draft, "duplicate_event_key", "duplicate_event_key");
+                continue;
+            }
+            logSnapshotRecoveryDecision(game, null, null, draft, "candidate", null);
+            EventDeliveryResult delivery = notificationEventService.createAndDeliver(game, draft);
+            handledEventKeys.add(draft.eventKey());
+            if (!delivery.eventCreated()) {
+                logSnapshotRecoveryDecision(game, null, null, draft, "duplicate_event_key", "duplicate_event_key");
+                continue;
+            }
+            eventCreatedCount++;
+            eventKeys.add(delivery.eventKey());
+            sentCount += delivery.sentCount();
+            skippedCount += delivery.skippedCount();
+            failedCount += delivery.failedCount();
+            String decision = delivery.failedCount() > 0
+                    ? "failed"
+                    : delivery.sentCount() > 0
+                    ? "sent"
+                    : delivery.skippedCount() > 0
+                    ? "no_target_devices"
+                    : "created";
+            logSnapshotRecoveryDecision(game, null, null, draft, decision, "created");
+        }
+        return new SnapshotRecoveryResult(eventCreatedCount, sentCount, skippedCount, failedCount, eventKeys);
+    }
+
+    public NotificationRecoveryDiagnosis diagnoseNotificationRecovery(String publicGameId) {
+        if (publicGameId == null || publicGameId.isBlank()) {
+            throw new com.kbo.crawlerapi.api.InvalidParameterException("publicGameId is required");
+        }
+        Game game = gameRepository.findByPublicGameId(publicGameId.trim())
+                .orElseThrow(() -> new com.kbo.crawlerapi.api.ResourceNotFoundException("game not found: " + publicGameId));
+        List<GameSnapshot> snapshots = recentReplaySnapshots(game, DEFAULT_SNAPSHOT_RECOVERY_PAIR_LIMIT);
+        List<NotificationEventDraft> candidates = snapshotRecoveryDrafts(game, DEFAULT_SNAPSHOT_RECOVERY_PAIR_LIMIT);
+        long storedCount = notificationEventService.countByGameId(game.getId());
+        long missingCount = candidates.stream()
+                .filter(candidate -> !notificationEventService.eventExists(candidate))
+                .count();
+        return new NotificationRecoveryDiagnosis(
+                game.getId().toString(),
+                game.getPublicGameId(),
+                snapshots.size(),
+                candidates.size(),
+                storedCount,
+                missingCount
+        );
+    }
+
+    private List<NotificationEventDraft> snapshotRecoveryDrafts(Game game, int pairLimit) {
+        List<GameSnapshot> snapshots = recentReplaySnapshots(game, pairLimit);
+        if (snapshots.size() < 2) {
+            return terminalRecoveryDrafts(game, snapshots);
+        }
+        Map<String, NotificationEventDraft> draftsByKey = new LinkedHashMap<>();
+        for (int index = 1; index < snapshots.size(); index++) {
+            GameSnapshot beforeSnapshot = snapshots.get(index - 1);
+            GameSnapshot afterSnapshot = snapshots.get(index);
+            Game beforeGame = replayGame(game, beforeSnapshot, GameStatus.LIVE);
+            Game afterGame = replayGame(game, afterSnapshot, GameStatus.LIVE);
+            List<NotificationEventDraft> candidates = detectChanges(
+                    GameState.fromReplay(beforeGame, beforeSnapshot, GameStatus.LIVE, null, beforeGame.getStatusReason()),
+                    GameState.fromReplay(afterGame, afterSnapshot, GameStatus.LIVE, null, afterGame.getStatusReason()),
+                    afterGame
+            );
+            for (NotificationEventDraft candidate : candidates) {
+                draftsByKey.putIfAbsent(candidate.eventKey(), candidate);
+                logSnapshotRecoveryDecision(game, beforeSnapshot, afterSnapshot, candidate, "candidate", null);
+            }
+        }
+        for (NotificationEventDraft terminalDraft : terminalRecoveryDrafts(game, snapshots)) {
+            draftsByKey.putIfAbsent(terminalDraft.eventKey(), terminalDraft);
+        }
+        return new ArrayList<>(draftsByKey.values());
+    }
+
+    private List<NotificationEventDraft> terminalRecoveryDrafts(Game game, List<GameSnapshot> snapshots) {
+        if (game == null) {
+            return List.of();
+        }
+        if (isCancellationTarget(game.getStatus())) {
+            return List.of(cancelledDraft(game, game.getStatus()));
+        }
+        if (game.getStatus() != GameStatus.FINAL || snapshots.isEmpty() || !isStrongFinal(game)) {
+            return List.of();
+        }
+        GameSnapshot lastSnapshot = snapshots.get(snapshots.size() - 1);
+        Game beforeGame = replayGame(game, lastSnapshot, GameStatus.LIVE);
+        Game finalGame = replayGame(game, lastSnapshot, GameStatus.FINAL);
+        return detectChanges(
+                GameState.fromReplay(beforeGame, lastSnapshot, GameStatus.LIVE, null, beforeGame.getStatusReason()),
+                GameState.fromReplay(finalGame, lastSnapshot, GameStatus.FINAL, finalGame.getFinalConfirmedAt(), finalGame.getStatusReason()),
+                finalGame
+        );
+    }
+
+    private List<GameSnapshot> recentReplaySnapshots(Game game, int pairLimit) {
+        if (gameSnapshotRepository == null || game == null || game.getId() == null) {
+            return List.of();
+        }
+        List<GameSnapshot> snapshots = new ArrayList<>(gameSnapshotRepository.findRecentReplaySnapshotsByGameId(
+                game.getId(),
+                PageRequest.of(0, Math.max(2, pairLimit + 1))
+        ));
+        Collections.reverse(snapshots);
+        return snapshots;
     }
 
     private void deliverLiveActivityStart(Game game, NotificationEventDraft draft) {
@@ -847,9 +984,7 @@ public class LiveGameSyncService {
                 && scoreIncreased(before, after)) {
             drafts.add(scoreDraft(game, before, after));
         }
-        if (after.status() == GameStatus.LIVE
-                && baseCount(after) > baseCount(before)
-                && nullSafe(after.outs()) <= nullSafe(before.outs())) {
+        if (after.status() == GameStatus.LIVE && onBaseChanged(before, after)) {
             drafts.add(onBaseDraft(game, before, after));
         }
         return drafts;
@@ -1145,10 +1280,12 @@ public class LiveGameSyncService {
         NotificationEventDraft draft = liveDraft(
                 game,
                 NotificationEventService.EVENT_SCORE_CHANGED,
-                "game:%s:score:%d-%d".formatted(
+                "score:%s:%s:%s:%d:%d".formatted(
                         game.getId(),
-                        game.getAwayScore(),
-                        game.getHomeScore()
+                        safeKey(after.inning()),
+                        safeKey(normalizeHalf(after.inningHalf())),
+                        nullSafe(after.awayScore()),
+                        nullSafe(after.homeScore())
                 ),
                 detailedText == null ? fallbackText.title() : detailedText.title(),
                 formattedMessage,
@@ -1158,6 +1295,7 @@ public class LiveGameSyncService {
                 runCount,
                 eventTeamId
         );
+        addLegacyEventKey(draft, "game:%s:score:%d-%d".formatted(game.getId(), nullSafe(after.awayScore()), nullSafe(after.homeScore())));
         addScoringPlayPayload(draft, scoringPlayDetail);
         log.info(
                 "[ScoringFormatter] gameId={} inning={} inningHalf={} scoreDelta={} selectedEventType={} selectedEventText={} runScoredEventCount={} formattedMessage={} fallbackUsed={}",
@@ -1176,7 +1314,6 @@ public class LiveGameSyncService {
 
     private NotificationEventDraft onBaseDraft(Game game, GameState before, GameState after) {
         Instant detectedAt = Instant.now(applicationClock);
-        String inning = game.getInningState() == null ? "경기" : game.getInningState();
 
         String batterName = before.currentBatterName();
         String pitcherName = before.currentPitcherName();
@@ -1190,13 +1327,13 @@ public class LiveGameSyncService {
         NotificationEventDraft draft = liveDraft(
                 game,
                 NotificationEventService.EVENT_ON_BASE,
-                "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s:result:%s".formatted(
+                "onbase:%s:%s:%s:%s:%s:%s".formatted(
                         game.getId(),
-                        inning,
+                        safeKey(after.inning()),
+                        safeKey(normalizeHalf(after.inningHalf())),
+                        safeKey(after.outs()),
                         baseKey(after),
-                        safeKey(batterName),
-                        safeKey(pitcherName),
-                        safeKey(result)
+                        runnerNamesHash(after)
                 ),
                 onBaseText == null ? "출루" : onBaseText.title(),
                 onBaseText == null ? onBaseBody(game, batterName, result) : onBaseText.body(),
@@ -1206,6 +1343,14 @@ public class LiveGameSyncService {
                 null,
                 eventTeamId
         );
+        addLegacyEventKey(draft, "game:%s:on-base:inning:%s:bases:%s:batter:%s:pitcher:%s:result:%s".formatted(
+                game.getId(),
+                game.getInningState() == null ? "경기" : game.getInningState(),
+                baseKey(after),
+                safeKey(batterName),
+                safeKey(pitcherName),
+                safeKey(result)
+        ));
         addOnBaseDetailPayload(draft, onBaseDetailResolution);
         log.debug(
                 "[LiveGameSync] ON_BASE diagnostics gameId={} eventKey={} previous inning={}/{} batter={} pitcher={} bases={} current inning={}/{} batter={} pitcher={} bases={} eventBatter={} eventPitcher={} eventResult={} eventTeamId={}",
@@ -1244,10 +1389,11 @@ public class LiveGameSyncService {
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_GAME_END,
-                "game:%s:game-end".formatted(game.getId()),
+                "end:%s:%d:%d:%s".formatted(game.getId(), nullSafe(game.getAwayScore()), nullSafe(game.getHomeScore()), game.getStatus()),
                 title,
                 "최종 스코어가 확정되었습니다."
         );
+        addLegacyEventKey(draft, "game:%s:game-end".formatted(game.getId()));
         String winningTeamId = winningTeamId(game);
         if (winningTeamId != null) {
             draft.payload().put("winningTeamId", winningTeamId);
@@ -1261,10 +1407,11 @@ public class LiveGameSyncService {
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_INNING_CHANGED,
-                "game:%s:inning-change:%s:%s".formatted(game.getId(), after.inning(), safeKey(after.inningHalf())),
+                "inning:%s:%s:%s".formatted(game.getId(), safeKey(after.inning()), safeKey(normalizeHalf(after.inningHalf()))),
                 label,
                 "%s로 전환되었습니다.".formatted(label)
         );
+        addLegacyEventKey(draft, "game:%s:inning-change:%s:%s".formatted(game.getId(), after.inning(), safeKey(after.inningHalf())));
         draft.payload().put("inning", after.inning());
         draft.payload().put("inningHalf", after.inningHalf());
         draft.payload().put("inningLabel", label);
@@ -1282,10 +1429,18 @@ public class LiveGameSyncService {
         NotificationEventDraft draft = draft(
                 game,
                 NotificationEventService.EVENT_LEAD_CHANGED,
-                "game:%s:lead-change:%s:%d-%d".formatted(game.getId(), eventTeamId, nullSafe(after.awayScore()), nullSafe(after.homeScore())),
+                "lead:%s:%s:%s:%d:%d:%s".formatted(
+                        game.getId(),
+                        safeKey(after.inning()),
+                        safeKey(normalizeHalf(after.inningHalf())),
+                        nullSafe(after.awayScore()),
+                        nullSafe(after.homeScore()),
+                        safeKey(eventTeamId)
+                ),
                 detailedText == null ? fallbackText.title() : detailedText.title(),
                 detailedText == null ? fallbackText.body() : detailedText.body()
         );
+        addLegacyEventKey(draft, "game:%s:lead-change:%s:%d-%d".formatted(game.getId(), eventTeamId, nullSafe(after.awayScore()), nullSafe(after.homeScore())));
         draft.payload().put("previousAwayScore", before.awayScore());
         draft.payload().put("previousHomeScore", before.homeScore());
         draft.payload().put("awayScore", after.awayScore());
@@ -1498,6 +1653,13 @@ public class LiveGameSyncService {
         payload.put("gameDate", game.getGameDate().toString());
         payload.put("deepLink", "kboscore://games/" + game.getPublicGameId());
         return new NotificationEventDraft(eventType, eventKey, title, body, payload);
+    }
+
+    private void addLegacyEventKey(NotificationEventDraft draft, String legacyEventKey) {
+        if (draft == null || legacyEventKey == null || legacyEventKey.isBlank()) {
+            return;
+        }
+        draft.payload().put("legacyEventKeys", List.of(legacyEventKey));
     }
 
     private NotificationEventDraft liveDraft(
@@ -1933,12 +2095,40 @@ public class LiveGameSyncService {
         return "%s%s%s".formatted(state.runnerOnFirst() ? "1" : "-", state.runnerOnSecond() ? "2" : "-", state.runnerOnThird() ? "3" : "-");
     }
 
+    private boolean onBaseChanged(GameState before, GameState after) {
+        if (before == null || after == null) {
+            return false;
+        }
+        boolean baseChanged = !java.util.Objects.equals(baseKey(before), baseKey(after));
+        boolean runnerChanged = !java.util.Objects.equals(runnerNamesKey(before), runnerNamesKey(after));
+        return (baseChanged || runnerChanged) && baseCount(after) > 0 && nullSafe(after.outs()) <= nullSafe(before.outs());
+    }
+
+    private String runnerNamesHash(GameState state) {
+        return sha256(runnerNamesKey(state)).substring(0, 16);
+    }
+
+    private String runnerNamesKey(GameState state) {
+        if (state == null) {
+            return "-|-|-";
+        }
+        return "%s|%s|%s".formatted(
+                safeKey(state.firstBaseRunnerName()),
+                safeKey(state.secondBaseRunnerName()),
+                safeKey(state.thirdBaseRunnerName())
+        );
+    }
+
     private int nullSafe(Integer value) {
         return value == null ? 0 : value;
     }
 
     private String safeKey(String value) {
         return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
+    private String safeKey(Object value) {
+        return value == null ? "-" : safeKey(String.valueOf(value));
     }
 
     private boolean hasText(String value) {
@@ -1974,6 +2164,36 @@ public class LiveGameSyncService {
     private boolean scoreIncreased(GameState before, GameState after) {
         return nullSafe(after.awayScore()) > nullSafe(before.awayScore())
                 || nullSafe(after.homeScore()) > nullSafe(before.homeScore());
+    }
+
+    private void logSnapshotRecoveryDecision(
+            Game game,
+            GameSnapshot previous,
+            GameSnapshot current,
+            NotificationEventDraft draft,
+            String decision,
+            String reason
+    ) {
+        log.info(
+                "[SnapshotNotificationRecovery] gameId={} publicGameId={} prevSnapshotId={} prevCreatedAt={} currentSnapshotId={} currentCreatedAt={} eventType={} eventKey={} decision={} reason={}",
+                game == null ? null : game.getId(),
+                game == null ? null : game.getPublicGameId(),
+                previous == null ? null : previous.getId(),
+                previous == null ? null : snapshotObservedAt(previous),
+                current == null ? null : current.getId(),
+                current == null ? null : snapshotObservedAt(current),
+                draft == null ? null : draft.eventType(),
+                draft == null ? null : draft.eventKey(),
+                decision,
+                reason
+        );
+    }
+
+    private OffsetDateTime snapshotObservedAt(GameSnapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        return snapshot.getFetchedAt() != null ? snapshot.getFetchedAt() : snapshot.getCreatedAt();
     }
 
     private String sha256(String value) {
@@ -2106,6 +2326,28 @@ public class LiveGameSyncService {
     private record ScoringPlayResolution(
             ScoringPlayDetail detail,
             int runScoredEventCount
+    ) {
+    }
+
+    private record SnapshotRecoveryResult(
+            int eventCreatedCount,
+            int sentCount,
+            int skippedCount,
+            int failedCount,
+            List<String> eventKeys
+    ) {
+        private static SnapshotRecoveryResult empty() {
+            return new SnapshotRecoveryResult(0, 0, 0, 0, List.of());
+        }
+    }
+
+    public record NotificationRecoveryDiagnosis(
+            String gameId,
+            String publicGameId,
+            int snapshotCount,
+            int candidateEventCount,
+            long storedEventCount,
+            long suspectedMissingEventCount
     ) {
     }
 

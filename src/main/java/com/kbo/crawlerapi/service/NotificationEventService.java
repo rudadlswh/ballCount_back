@@ -191,6 +191,19 @@ public class NotificationEventService {
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
     }
 
+    public boolean eventExists(String eventKey) {
+        return notificationEventRepository != null && notificationEventRepository.existsByEventKey(eventKey);
+    }
+
+    public boolean eventExists(NotificationEventDraft draft) {
+        return draft != null
+                && (eventExists(draft.eventKey()) || legacyEventKeys(draft).stream().anyMatch(this::eventExists));
+    }
+
+    public long countByGameId(UUID gameId) {
+        return notificationEventRepository == null || gameId == null ? 0 : notificationEventRepository.countByGame_Id(gameId);
+    }
+
     public NotificationEvent transientEvent(Game game, NotificationEventDraft draft) {
         return new NotificationEvent(
                 UUID.randomUUID(),
@@ -225,7 +238,8 @@ public class NotificationEventService {
     }
 
     private PreparedDelivery prepareDelivery(Game game, NotificationEventDraft draft) {
-        if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()) {
+        if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()
+                || legacyEventKeys(draft).stream().anyMatch(notificationEventRepository::existsByEventKey)) {
             return PreparedDelivery.duplicateResult();
         }
         NotificationEvent event = notificationEventRepository.save(new NotificationEvent(
@@ -399,6 +413,18 @@ public class NotificationEventService {
         }
         String text = String.valueOf(value).trim();
         return text.isEmpty() ? null : text;
+    }
+
+    private List<String> legacyEventKeys(NotificationEventDraft draft) {
+        Object value = draft.payload().get("legacyEventKeys");
+        if (!(value instanceof List<?> values)) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(item -> !item.isBlank())
+                .toList();
     }
 
     private void logDeviceDiagnostics(NotificationEvent event, NotificationDevice device, Game game) {
