@@ -25,6 +25,7 @@ public class FinishedGameNotificationReplayTestService {
 
     public static final int DEFAULT_MAX_EVENTS = 20;
     public static final int MAX_EVENTS_LIMIT = 100;
+    public static final String TARGET_DEVICE_NOT_FOUND = "target_device_not_found";
     private static final Set<String> REPLAYABLE_EVENT_TYPES = Set.of(
             NotificationEventService.EVENT_GAME_START,
             NotificationEventService.EVENT_INNING_CHANGED,
@@ -60,10 +61,14 @@ public class FinishedGameNotificationReplayTestService {
     @Transactional(readOnly = true)
     public ReplayFinishedGameNotificationTestResult replay(ReplayFinishedGameNotificationTestCommand command) {
         String installationId = requireText(command.installationId(), "installationId");
+        String environment = normalizeEnvironment(command.environment());
         int maxEvents = boundedMaxEvents(command.maxEvents());
         Set<String> eventTypes = normalizeEventTypes(command.eventTypes());
         Game game = findGame(command);
         validateFinishedGame(game);
+        NotificationDevice targetDevice = notificationDeviceRepository
+                .findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(installationId, environment)
+                .orElseThrow(() -> new InvalidParameterException(TARGET_DEVICE_NOT_FOUND));
 
         List<GameSnapshot> snapshots = gameSnapshotRepository.findReplaySnapshotsByGameId(game.getId());
         if (snapshots.size() < 2) {
@@ -77,7 +82,6 @@ public class FinishedGameNotificationReplayTestService {
                 maxEvents,
                 installationId
         );
-        List<NotificationDevice> targetDevices = notificationDeviceRepository.findByInstallationId(installationId);
 
         int attemptedCount = 0;
         int sentCount = 0;
@@ -88,7 +92,7 @@ public class FinishedGameNotificationReplayTestService {
             NotificationEventDraft draft = drafts.get(index);
             DeliveryOutcome outcome = command.dryRun()
                     ? DeliveryOutcome.dryRun()
-                    : deliver(game, draft, targetDevices);
+                    : deliver(game, draft, targetDevice);
             attemptedCount += outcome.attemptedCount();
             sentCount += outcome.sentCount();
             skippedCount += outcome.skippedCount();
@@ -107,6 +111,7 @@ public class FinishedGameNotificationReplayTestService {
                 game.getId().toString(),
                 game.getPublicGameId(),
                 installationId,
+                environment,
                 command.dryRun(),
                 drafts.size(),
                 attemptedCount,
@@ -117,44 +122,20 @@ public class FinishedGameNotificationReplayTestService {
         );
     }
 
-    private DeliveryOutcome deliver(Game game, NotificationEventDraft draft, List<NotificationDevice> targetDevices) {
-        if (targetDevices.isEmpty()) {
-            return DeliveryOutcome.skipped("no_matching_installation");
-        }
-
-        int attempted = 0;
-        int sent = 0;
-        int skipped = 0;
-        int failed = 0;
-        String lastReason = null;
+    private DeliveryOutcome deliver(Game game, NotificationEventDraft draft, NotificationDevice targetDevice) {
         NotificationEvent event = notificationEventService.transientEvent(game, draft);
-        for (NotificationDevice device : targetDevices) {
-            String deviceSkipReason = notificationEventService.targetedDeviceSkipReason(device, draft, game);
-            if (deviceSkipReason != null) {
-                skipped++;
-                lastReason = deviceSkipReason;
-                continue;
-            }
-            attempted++;
-            ApnsPushService.ApnsSendResult result = apnsPushService.send(event, device);
-            if (result.sent()) {
-                sent++;
-            } else if (result.skipped()) {
-                skipped++;
-                lastReason = result.reason();
-            } else {
-                failed++;
-                lastReason = result.reason();
-            }
+        String deviceSkipReason = notificationEventService.targetedDeviceSkipReason(targetDevice, draft, game);
+        if (deviceSkipReason != null) {
+            return DeliveryOutcome.skipped(deviceSkipReason);
         }
-        String status = sent > 0 && failed == 0
-                ? "sent"
-                : sent > 0
-                ? "partial_failed"
-                : failed > 0
-                ? "failed"
-                : "skipped";
-        return new DeliveryOutcome(status, lastReason, attempted, sent, skipped, failed);
+        ApnsPushService.ApnsSendResult result = apnsPushService.send(event, targetDevice);
+        if (result.sent()) {
+            return new DeliveryOutcome("sent", null, 1, 1, 0, 0);
+        }
+        if (result.skipped()) {
+            return DeliveryOutcome.skipped(result.reason());
+        }
+        return new DeliveryOutcome("failed", result.reason(), 1, 0, 0, 1);
     }
 
     private Game findGame(ReplayFinishedGameNotificationTestCommand command) {
@@ -207,6 +188,17 @@ public class FinishedGameNotificationReplayTestService {
         return Math.min(maxEvents, MAX_EVENTS_LIMIT);
     }
 
+    private String normalizeEnvironment(String environment) {
+        if (!hasText(environment)) {
+            return "production";
+        }
+        String normalized = environment.trim().toLowerCase(Locale.ROOT);
+        if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
+            throw new InvalidParameterException("environment must be sandbox or production");
+        }
+        return normalized;
+    }
+
     private String requireText(String value, String fieldName) {
         if (!hasText(value)) {
             throw new InvalidParameterException(fieldName + " is required");
@@ -223,6 +215,7 @@ public class FinishedGameNotificationReplayTestService {
             String publicGameId,
             String providerGameId,
             String installationId,
+            String environment,
             List<String> eventTypes,
             Integer maxEvents,
             boolean dryRun
@@ -233,6 +226,7 @@ public class FinishedGameNotificationReplayTestService {
             String gameId,
             String publicGameId,
             String targetInstallationId,
+            String targetEnvironment,
             boolean dryRun,
             int generatedCount,
             int attemptedCount,

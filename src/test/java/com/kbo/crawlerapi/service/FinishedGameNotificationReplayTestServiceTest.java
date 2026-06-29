@@ -88,6 +88,14 @@ class FinishedGameNotificationReplayTestServiceTest {
     }
 
     @Test
+    void unsupportedEnvironmentIsRejected() {
+        assertThatThrownBy(() -> service.replay(command("install-1", "development", false, 20, List.of("SCORE_CHANGED"))))
+                .isInstanceOf(InvalidParameterException.class)
+                .hasMessage("environment must be sandbox or production");
+        verify(notificationDeviceRepository, never()).findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(eq("install-1"), eq("development"));
+    }
+
+    @Test
     void nonFinishedGameIsRejected() {
         Game liveGame = finalGame(GameStatus.LIVE);
         when(gameRepository.findByPublicGameId(eq(liveGame.getPublicGameId()))).thenReturn(Optional.of(liveGame));
@@ -100,6 +108,8 @@ class FinishedGameNotificationReplayTestServiceTest {
     @Test
     void insufficientSnapshotsAreRejected() {
         when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(notificationDeviceRepository.findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(eq("install-1"), eq("production")))
+                .thenReturn(Optional.of(device("install-1", "production")));
         when(gameSnapshotRepository.findReplaySnapshotsByGameId(eq(game.getId()))).thenReturn(List.of(snapshot(0, 0, 1, "top", 0, false, false, false)));
 
         assertThatThrownBy(() -> service.replay(command("install-1", false, 20, List.of("SCORE_CHANGED"))))
@@ -122,21 +132,74 @@ class FinishedGameNotificationReplayTestServiceTest {
 
     @Test
     void sendsOnlyToRequestedInstallationId() {
-        NotificationDevice target = device("install-1");
+        NotificationDevice target = device("install-1", "production");
         arrangeReplay(List.of("SCORE_CHANGED"), List.of(target));
 
         var result = service.replay(command("install-1", false, 20, List.of("SCORE_CHANGED")));
 
+        assertThat(result.targetEnvironment()).isEqualTo("production");
+        assertThat(result.attemptedCount()).isEqualTo(1);
         assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(result.skippedCount()).isZero();
+        assertThat(result.events().get(0).deliveryStatus()).isEqualTo("sent");
+        assertThat(result.events().get(0).reason()).isNull();
         assertThat(apnsPushService.sentDevices).containsExactly(target);
-        verify(notificationDeviceRepository).findByInstallationId("install-1");
+        verify(notificationDeviceRepository).findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc("install-1", "production");
+        verify(notificationDeviceRepository, never()).findByInstallationId("install-1");
         verify(notificationDeviceRepository, never()).findByPlatformAndNotificationsEnabledTrue(eq("ios"));
         verify(notificationDeviceRepository, never()).findByPlatformAndFavoriteTeamIdAndNotificationsEnabledTrue(eq("ios"), eq("lotte"));
     }
 
     @Test
+    void defaultEnvironmentIsProduction() {
+        NotificationDevice production = device("install-1", "production");
+        NotificationDevice sandbox = device("install-1", "sandbox");
+        arrangeReplay(List.of("SCORE_CHANGED"), List.of(production, sandbox));
+
+        var result = service.replay(command("install-1", null, false, 20, List.of("SCORE_CHANGED")));
+
+        assertThat(result.targetEnvironment()).isEqualTo("production");
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(result.skippedCount()).isZero();
+        assertThat(result.events().get(0).reason()).isNull();
+        assertThat(apnsPushService.sentDevices).containsExactly(production);
+        verify(notificationDeviceRepository).findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc("install-1", "production");
+    }
+
+    @Test
+    void sandboxEnvironmentUsesOnlySandboxDevice() {
+        NotificationDevice production = device("install-1", "production");
+        NotificationDevice sandbox = device("install-1", "sandbox");
+        arrangeReplay(List.of("SCORE_CHANGED"), List.of(production, sandbox));
+
+        var result = service.replay(command("install-1", "sandbox", false, 20, List.of("SCORE_CHANGED")));
+
+        assertThat(result.targetEnvironment()).isEqualTo("sandbox");
+        assertThat(result.attemptedCount()).isEqualTo(1);
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(result.skippedCount()).isZero();
+        assertThat(result.events().get(0).deliveryStatus()).isEqualTo("sent");
+        assertThat(result.events().get(0).reason()).isNull();
+        assertThat(apnsPushService.sentDevices).containsExactly(sandbox);
+        verify(notificationDeviceRepository).findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc("install-1", "sandbox");
+    }
+
+    @Test
+    void missingTargetDeviceIsRejectedBeforeApns() {
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(notificationDeviceRepository.findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(eq("install-1"), eq("production")))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.replay(command("install-1", false, 20, List.of("SCORE_CHANGED"))))
+                .isInstanceOf(InvalidParameterException.class)
+                .hasMessage(FinishedGameNotificationReplayTestService.TARGET_DEVICE_NOT_FOUND);
+        assertThat(apnsPushService.sentDevices).isEmpty();
+        verify(gameSnapshotRepository, never()).findReplaySnapshotsByGameId(eq(game.getId()));
+    }
+
+    @Test
     void maxEventsLimitIsApplied() {
-        arrangeReplay(List.of("GAME_START", "SCORE_CHANGED", "GAME_END"), List.of(device("install-1")));
+        arrangeReplay(List.of("GAME_START", "SCORE_CHANGED", "GAME_END"), List.of(device("install-1", "production")));
 
         var result = service.replay(command("install-1", false, 1, List.of("GAME_START", "SCORE_CHANGED", "GAME_END")));
 
@@ -147,7 +210,7 @@ class FinishedGameNotificationReplayTestServiceTest {
 
     @Test
     void titleHasTestPrefix() {
-        arrangeReplay(List.of("SCORE_CHANGED"), List.of(device("install-1")));
+        arrangeReplay(List.of("SCORE_CHANGED"), List.of(device("install-1", "production")));
 
         var result = service.replay(command("install-1", false, 20, List.of("SCORE_CHANGED")));
 
@@ -174,17 +237,25 @@ class FinishedGameNotificationReplayTestServiceTest {
                 snapshot(1, 0, 1, "bottom", 1, false, false, false),
                 snapshot(1, 0, 2, "top", 0, false, false, false)
         ));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1"))).thenReturn(devices.stream()
-                .filter(device -> "install-1".equals(device.getInstallationId()))
-                .toList());
+        for (NotificationDevice device : devices) {
+            when(notificationDeviceRepository.findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(
+                    eq(device.getInstallationId()),
+                    eq(device.getEnvironment())
+            )).thenReturn(Optional.of(device));
+        }
     }
 
     private ReplayFinishedGameNotificationTestCommand command(String installationId, boolean dryRun, Integer maxEvents, List<String> eventTypes) {
+        return command(installationId, null, dryRun, maxEvents, eventTypes);
+    }
+
+    private ReplayFinishedGameNotificationTestCommand command(String installationId, String environment, boolean dryRun, Integer maxEvents, List<String> eventTypes) {
         return new ReplayFinishedGameNotificationTestCommand(
                 null,
                 game.getPublicGameId(),
                 null,
                 installationId,
+                environment,
                 eventTypes,
                 maxEvents,
                 dryRun
@@ -272,11 +343,15 @@ class FinishedGameNotificationReplayTestServiceTest {
     }
 
     private NotificationDevice device(String installationId) {
+        return device(installationId, "production");
+    }
+
+    private NotificationDevice device(String installationId, String environment) {
         return new NotificationDevice(
                 UUID.randomUUID(),
                 "ios",
-                "sandbox",
-                "token-" + installationId,
+                environment,
+                "token-" + environment + "-" + installationId,
                 installationId,
                 "lotte",
                 true,
@@ -296,7 +371,7 @@ class FinishedGameNotificationReplayTestServiceTest {
         return new NotificationDevice(
                 UUID.randomUUID(),
                 "ios",
-                "sandbox",
+                "production",
                 "token-" + installationId,
                 installationId,
                 "lotte",
@@ -325,12 +400,12 @@ class FinishedGameNotificationReplayTestServiceTest {
 
         @Override
         public boolean environmentMatches(String deviceEnvironment) {
-            return "sandbox".equalsIgnoreCase(deviceEnvironment);
+            return true;
         }
 
         @Override
         public String configuredEnvironment() {
-            return "sandbox";
+            return "production";
         }
     }
 }

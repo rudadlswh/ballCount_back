@@ -52,6 +52,7 @@ public class AdminNotificationReplayTestController {
                 request.publicGameId(),
                 request.providerGameId(),
                 request.installationId(),
+                request.environment(),
                 request.eventTypes(),
                 request.maxEvents(),
                 Boolean.TRUE.equals(request.dryRun())
@@ -68,6 +69,8 @@ public class AdminNotificationReplayTestController {
             String providerGameId,
             @Schema(description = "Required target installation_id. Only matching notification_devices rows are considered.", requiredMode = Schema.RequiredMode.REQUIRED, example = "test-installation-id")
             String installationId,
+            @Schema(description = "Target APNs environment. Defaults to production.", allowableValues = {"sandbox", "production"}, defaultValue = "production")
+            String environment,
             @Schema(
                     description = "Event types to replay. Empty or omitted means all replayable event types.",
                     allowableValues = {"GAME_START", "INNING_CHANGED", "SCORE_CHANGED", "LEAD_CHANGED", "ON_BASE", "GAME_END"}
