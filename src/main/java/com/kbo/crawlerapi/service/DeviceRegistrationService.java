@@ -57,7 +57,7 @@ public class DeviceRegistrationService {
         String normalizedToken = requireDeviceToken(deviceToken);
         String normalizedInstallationId = requireInstallationId(installationId);
         String normalizedFavoriteTeamId = normalizeFavoriteTeamId(favoriteTeamId);
-        DeviceNotificationSettings normalizedSettings = settings == null ? DeviceNotificationSettings.defaults() : settings;
+        DeviceNotificationSettings normalizedSettings = normalizeSettings(settings, normalizedFavoriteTeamId);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
         Optional<NotificationDevice> tokenMatchedDevice = notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(
@@ -200,6 +200,23 @@ public class DeviceRegistrationService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private DeviceNotificationSettings normalizeSettings(DeviceNotificationSettings settings, String favoriteTeamId) {
+        DeviceNotificationSettings normalized = settings == null ? DeviceNotificationSettings.defaults() : settings;
+        if (favoriteTeamId == null || normalized.favoriteTeamOnlyEnabled()) {
+            return normalized;
+        }
+        return new DeviceNotificationSettings(
+                normalized.gameStartEnabled(),
+                normalized.scoreChangeEnabled(),
+                normalized.leadChangeEnabled(),
+                normalized.gameEndEnabled(),
+                normalized.onBaseEnabled(),
+                normalized.inningChangeEnabled(),
+                true,
+                normalized.muteWhenLosingEnabled()
+        );
     }
 
     private String maskToken(String token) {

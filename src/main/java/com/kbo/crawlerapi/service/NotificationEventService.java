@@ -125,7 +125,7 @@ public class NotificationEventService {
         relevantTeamDevices.forEach(device -> logDeviceDiagnostics(event, device, game));
 
         List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices, draft, game);
-        String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices);
+        String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices, game);
         if (deviceSkipReason != null) {
             markEventDelivery(event, "skipped", deviceSkipReason);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, relevantTeamDevices.size(), 0);
@@ -230,6 +230,10 @@ public class NotificationEventService {
         if (device.getDeviceToken() == null || device.getDeviceToken().isBlank()) {
             return ApnsPushService.APNS_BAD_DEVICE_TOKEN;
         }
+        String favoriteTeamGameSkipReason = favoriteTeamGameSkipReason(device, game);
+        if (favoriteTeamGameSkipReason != null) {
+            return favoriteTeamGameSkipReason;
+        }
         if (!eventSettingEnabled(device, draft.eventType())
                 || !favoriteTeamOnlyAllows(device, draft)
                 || !muteWhenLosingAllows(device, draft.eventType(), game)) {
@@ -262,10 +266,7 @@ public class NotificationEventService {
                 Instant.now(applicationClock)
         );
         List<String> eventTeamIds = eventTeamIds(game);
-        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue("ios")
-                .stream()
-                .filter(device -> !device.isFavoriteTeamOnlyEnabled() || isRelevant(device, game))
-                .toList();
+        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue("ios");
         return new PreparedDelivery(false, event, eventTeamIds, relevantTeamDevices);
     }
 
@@ -313,20 +314,21 @@ public class NotificationEventService {
     private boolean isRelevant(NotificationDevice device, Game game) {
         String favoriteTeamId = device.getFavoriteTeamId();
         return favoriteTeamId != null
-                && (favoriteTeamId.equals(game.getHomeTeam().getTeamCode()) || favoriteTeamId.equals(game.getAwayTeam().getTeamCode()));
+                && (favoriteTeamId.equalsIgnoreCase(game.getHomeTeam().getTeamCode()) || favoriteTeamId.equalsIgnoreCase(game.getAwayTeam().getTeamCode()));
     }
 
     private List<NotificationDevice> deliverableDevices(List<NotificationDevice> devices, NotificationEventDraft draft, Game game) {
         return devices.stream()
                 .filter(device -> "ios".equalsIgnoreCase(device.getPlatform()))
                 .filter(NotificationDevice::isNotificationsEnabled)
+                .filter(device -> favoriteTeamGameSkipReason(device, game) == null)
                 .filter(device -> eventSettingEnabled(device, draft.eventType()))
                 .filter(device -> favoriteTeamOnlyAllows(device, draft))
                 .filter(device -> muteWhenLosingAllows(device, draft.eventType(), game))
                 .toList();
     }
 
-    private String deviceReadinessSkipReason(List<NotificationDevice> devices, List<NotificationDevice> deliverableDevices) {
+    private String deviceReadinessSkipReason(List<NotificationDevice> devices, List<NotificationDevice> deliverableDevices, Game game) {
         if (!deliverableDevices.isEmpty()) {
             return null;
         }
@@ -343,6 +345,11 @@ public class NotificationEventService {
                 .toList();
         if (enabledDevices.isEmpty()) {
             return ApnsPushService.DEVICE_NOTIFICATIONS_DISABLED;
+        }
+        boolean anyFavoriteTeamGameMatch = enabledDevices.stream()
+                .anyMatch(device -> favoriteTeamGameSkipReason(device, game) == null);
+        if (!anyFavoriteTeamGameMatch) {
+            return ApnsPushService.FAVORITE_TEAM_MISMATCH;
         }
 
         return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
@@ -380,7 +387,15 @@ public class NotificationEventService {
             return true;
         }
         String eventTeamId = payloadText(draft, PAYLOAD_EVENT_TEAM_ID);
-        return eventTeamId != null && eventTeamId.equals(device.getFavoriteTeamId());
+        return eventTeamId != null && eventTeamId.equalsIgnoreCase(device.getFavoriteTeamId());
+    }
+
+    private String favoriteTeamGameSkipReason(NotificationDevice device, Game game) {
+        String favoriteTeamId = device.getFavoriteTeamId();
+        if (favoriteTeamId == null || favoriteTeamId.isBlank() || isRelevant(device, game)) {
+            return null;
+        }
+        return ApnsPushService.FAVORITE_TEAM_MISMATCH;
     }
 
     private boolean muteWhenLosingAllows(NotificationDevice device, String eventType, Game game) {
@@ -435,14 +450,21 @@ public class NotificationEventService {
 
     private void logDeviceDiagnostics(NotificationEvent event, NotificationDevice device, Game game) {
         boolean favoriteTeamMatches = isRelevant(device, game);
+        String skipReason = favoriteTeamGameSkipReason(device, game);
         log.info(
-                "[Notifications] device diagnostics eventId={} deviceId={} platform={} deviceEnv={} notificationsEnabled={} favoriteTeamMatches={} configuredEnv={}",
+                "[Notifications] device diagnostics eventId={} deviceId={} platform={} deviceEnv={} notificationsEnabled={} favoriteTeamId={} favoriteTeamOnlyEnabled={} gamePublicId={} homeTeamId={} awayTeamId={} favoriteTeamMatches={} skipReason={} configuredEnv={}",
                 event.getId(),
                 device.getId(),
                 device.getPlatform(),
                 device.getEnvironment(),
                 device.isNotificationsEnabled(),
+                device.getFavoriteTeamId(),
+                device.isFavoriteTeamOnlyEnabled(),
+                game.getPublicGameId(),
+                game.getHomeTeam().getTeamCode(),
+                game.getAwayTeam().getTeamCode(),
                 favoriteTeamMatches,
+                skipReason,
                 apnsPushService.configuredEnvironment()
         );
     }

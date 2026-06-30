@@ -49,6 +49,7 @@ public class ApnsPushService {
     public static final String ENVIRONMENT_MISMATCH = "environment_mismatch";
     public static final String UNSUPPORTED_PLATFORM = "unsupported_platform";
     public static final String NO_RELEVANT_DEVICES = "no_relevant_devices";
+    public static final String FAVORITE_TEAM_MISMATCH = "favorite_team_mismatch";
     public static final String APNS_PRIVATE_KEY_PATH_NOT_FOUND = "apns_private_key_path_not_found";
     public static final String APNS_PRIVATE_KEY_UNREADABLE = "apns_private_key_unreadable";
     public static final String APNS_INVALID_PROVIDER_TOKEN = "apns_invalid_provider_token";
