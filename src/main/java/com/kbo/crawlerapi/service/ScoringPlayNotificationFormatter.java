@@ -13,7 +13,7 @@ public final class ScoringPlayNotificationFormatter {
         }
         return Optional.of(new NotificationText(
                 "%s 득점".formatted(detail.battingTeamName()),
-                scoreChangeBody(detail)
+                body(detail)
         ));
     }
 
@@ -64,14 +64,11 @@ public final class ScoringPlayNotificationFormatter {
         );
     }
 
-    private static String scoreChangeBody(ScoringPlayDetail detail) {
-        if (hasText(detail.selectedEventText())) {
-            return "%s, %s".formatted(detail.selectedEventText().trim(), runsText(detail.runsScored()));
-        }
-        return playAndRunsText(detail);
-    }
-
     private static String playAndRunsText(ScoringPlayDetail detail) {
+        if (hasText(detail.selectedEventText())) {
+            String eventText = normalizedEventText(detail.selectedEventText());
+            return eventText.matches(".*\\d+\\s*득점.*") ? eventText : "%s, %s".formatted(eventText, runsText(detail.runsScored()));
+        }
         if (hasText(detail.batterName())) {
             return "%s, %s".formatted(playText(detail), runsText(detail.runsScored()));
         }
@@ -85,6 +82,10 @@ public final class ScoringPlayNotificationFormatter {
         }
         String suffix = "상대 실책".equals(result) ? "으로" : "로";
         return result + suffix;
+    }
+
+    private static String normalizedEventText(String value) {
+        return value.trim().replaceFirst("\\s*:\\s*", " ").replaceAll("\\s+", " ");
     }
 
     private static String resultLabel(ScoringPlayDetail detail) {

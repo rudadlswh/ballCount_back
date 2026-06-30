@@ -55,7 +55,7 @@ public final class OnBasePlayDetailExtractor {
             return Optional.of(new ParsedOnBasePlay(batterName, "2루타", 2));
         }
         if (normalized.contains("1루타") || normalized.contains("안타")) {
-            return Optional.of(new ParsedOnBasePlay(batterName, "1루타", 1));
+            return Optional.of(new ParsedOnBasePlay(batterName, "안타", 1));
         }
         if (normalized.contains("볼넷") || normalized.contains("4구")) {
             return Optional.of(new ParsedOnBasePlay(batterName, "볼넷", 1));

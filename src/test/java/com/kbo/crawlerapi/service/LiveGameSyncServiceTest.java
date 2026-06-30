@@ -433,7 +433,7 @@ class LiveGameSyncServiceTest {
         assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_SCORE_CHANGED);
         assertThat(draft.eventKey()).isEqualTo("score:%s:7:top:4:2".formatted(after.getId()));
         assertThat(draft.title()).isEqualTo("KIA 득점");
-        assertThat(draft.body()).isEqualTo("레이예스 : 좌익수 왼쪽 2루타, 2득점");
+        assertThat(draft.body()).isEqualTo("7회초 레이예스 좌익수 왼쪽 2루타, 2득점 · KIA 4-2 LG");
         assertThat(draft.payload())
                 .containsEntry("scoringBatterName", "레이예스")
                 .containsEntry("scoringResultText", "2루타")
@@ -457,7 +457,7 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(draft.title()).isEqualTo("롯데 득점");
-        assertThat(draft.body()).isEqualTo("3회초 롯데 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 득점 상황, 2득점 · 롯데 2-5 LG");
         assertThat(draft.body()).doesNotContain("황성빈", "땅볼");
         assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
     }
@@ -475,7 +475,7 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(draft.title()).isEqualTo("롯데 득점");
-        assertThat(draft.body()).isEqualTo("레이예스 : 좌월 홈런, 2득점");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 좌월 홈런, 2득점 · 롯데 2-5 LG");
         assertThat(draft.payload())
                 .containsEntry("scoringBatterName", "레이예스")
                 .containsEntry("scoringResultText", "홈런");
@@ -501,7 +501,7 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(draft.title()).isEqualTo("롯데 득점");
-        assertThat(draft.body()).isEqualTo("레이예스 : 우중간 2루타, 2득점");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 우중간 2루타, 2득점 · 롯데 2-5 LG");
         assertThat(draft.payload())
                 .containsEntry("scoringBatterName", "레이예스")
                 .containsEntry("scoringResultText", "2루타")
@@ -526,7 +526,7 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(draft.title()).isEqualTo("롯데 득점");
-        assertThat(draft.body()).isEqualTo("전민재 : 좌익수 뒤 홈런 (홈런거리:110M), 4득점");
+        assertThat(draft.body()).isEqualTo("3회초 전민재 좌익수 뒤 홈런 (홈런거리:110M), 4득점 · 롯데 4-5 LG");
         assertThat(draft.body()).doesNotStartWith("4득점");
         assertThat(draft.payload())
                 .containsEntry("scoringResultText", "홈런")
@@ -550,7 +550,7 @@ class LiveGameSyncServiceTest {
         );
 
         assertThat(draft.title()).isEqualTo("롯데 득점");
-        assertThat(draft.body()).isEqualTo("3회초 롯데 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 득점 상황, 2득점 · 롯데 2-5 LG");
         assertThat(draft.body()).doesNotContain("신윤후", "고승민", "홈인");
         assertThat(draft.payload()).doesNotContainKey("scoringSelectedEventText");
     }
@@ -567,7 +567,7 @@ class LiveGameSyncServiceTest {
                 List.of(new GameEventRow(30, 3, "top", "HOME_RUN", "레이예스 : 좌월 홈런, 1득점"))
         );
 
-        assertThat(draft.body()).isEqualTo("3회초 롯데 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 득점 상황, 2득점 · 롯데 2-5 LG");
         assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
     }
 
@@ -583,7 +583,7 @@ class LiveGameSyncServiceTest {
                 List.of(new GameEventRow(30, 3, "top", "HOME_RUN", "레이예스 : 좌월 홈런 · 롯데 1-5 LG"))
         );
 
-        assertThat(draft.body()).isEqualTo("3회초 롯데 2득점 · 롯데 2-5 LG");
+        assertThat(draft.body()).isEqualTo("3회초 레이예스 득점 상황, 2득점 · 롯데 2-5 LG");
         assertThat(draft.payload()).doesNotContainKey("scoringBatterName");
     }
 
@@ -1397,7 +1397,7 @@ class LiveGameSyncServiceTest {
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
         assertThat(notificationEventService.drafts.get(0).body())
-                .isEqualTo("KIA: 이전타자 출루");
+                .isEqualTo("3회초 이전타자 출루 · KIA 1-0 LG");
     }
 
     @Test
@@ -1418,7 +1418,7 @@ class LiveGameSyncServiceTest {
 
         service.sync(before.getGameDate(), false);
 
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA: 윤동희 출루");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("3회초 윤동희 볼넷 · KIA 1-0 LG");
     }
 
     @Test
@@ -1472,8 +1472,8 @@ class LiveGameSyncServiceTest {
                 new LiveSyncProperties()
         );
 
-        assertThat(draft.body()).isEqualTo("4회초 전준우 1루타 · 롯데 2-5 LG");
-        assertThat(draft.payload()).containsEntry("onBaseResultText", "1루타");
+        assertThat(draft.body()).isEqualTo("4회초 전준우 안타 · 롯데 2-5 LG");
+        assertThat(draft.payload()).containsEntry("onBaseResultText", "안타");
     }
 
     @Test
@@ -1549,7 +1549,7 @@ class LiveGameSyncServiceTest {
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly("ON_BASE");
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("KIA 출루");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("3회초 KIA 출루 · KIA 1-0 LG");
     }
 
     @Test
@@ -1765,7 +1765,7 @@ class LiveGameSyncServiceTest {
                 .extracting(NotificationEventDraft::eventType)
                 .containsExactly(NotificationEventService.EVENT_LEAD_CHANGED, NotificationEventService.EVENT_SCORE_CHANGED);
         assertThat(notificationEventService.drafts.get(0).title()).isEqualTo("동점");
-        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("3회초 LG 2득점 · LG 3-3 KIA");
+        assertThat(notificationEventService.drafts.get(0).body()).isEqualTo("3회초 김타자 득점 상황, 2득점 · LG 3-3 KIA");
         assertThat(notificationEventService.drafts.get(0).payload())
                 .containsEntry(NotificationEventService.PAYLOAD_EVENT_TEAM_ID, "lg")
                 .containsEntry("leadChangeReason", "TIED_GAME");

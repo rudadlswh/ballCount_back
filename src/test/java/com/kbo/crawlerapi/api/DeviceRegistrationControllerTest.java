@@ -83,6 +83,26 @@ class DeviceRegistrationControllerTest {
     }
 
     @Test
+    void deviceRegisterRequestReadsSnakeCaseFavoriteTeamOnlySettingWhenProvided() throws Exception {
+        DeviceRegistrationController.DeviceRegisterRequest request = objectMapper.readValue(
+                """
+                {
+                  "platform": "ios",
+                  "environment": "sandbox",
+                  "deviceToken": "token-123",
+                  "installationId": "install-1",
+                  "favoriteTeamID": "lg",
+                  "notificationsAuthorized": true,
+                  "favorite_team_only_enabled": true
+                }
+                """,
+                DeviceRegistrationController.DeviceRegisterRequest.class
+        );
+
+        assertThat(request.notificationSettings().favoriteTeamOnlyEnabled()).isTrue();
+    }
+
+    @Test
     void devicesRegisterReturnsBadRequestForInvalidBody() throws Exception {
         DeviceRegistrationService service = new DeviceRegistrationService(
                 mock(NotificationDeviceRepository.class),

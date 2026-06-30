@@ -15,7 +15,7 @@ class ScoringPlayNotificationFormatterTest {
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
         assertThat(text.title()).isEqualTo("롯데 득점");
-        assertThat(text.body()).isEqualTo("고승민 안타, 1득점");
+        assertThat(text.body()).isEqualTo("7회초 고승민 안타, 1득점 · 롯데 3-2 한화");
     }
 
     @Test
@@ -24,7 +24,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("레이예스 2루타, 2득점");
+        assertThat(text.body()).isEqualTo("7회초 레이예스 2루타, 2득점 · 롯데 4-2 한화");
     }
 
     @Test
@@ -33,7 +33,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("전준우 홈런, 1득점");
+        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 1득점 · 롯데 4-2 한화");
     }
 
     @Test
@@ -42,7 +42,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("전준우 쓰리런 홈런, 3득점");
+        assertThat(text.body()).isEqualTo("7회초 전준우 쓰리런 홈런, 3득점 · 롯데 6-4 한화");
     }
 
     @Test
@@ -51,7 +51,24 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("상대 실책으로 1득점");
+        assertThat(text.body()).isEqualTo("7회초 상대 실책으로 1득점 · 롯데 5-5 한화");
+    }
+
+    @Test
+    void selectedEventTextWithRunCountIsNotDuplicated() {
+        var detail = detail(
+                "오스틴",
+                "상대 실책",
+                null,
+                1,
+                3,
+                2,
+                "오스틴 : 유격수 땅볼 실책으로 출루, 1득점"
+        );
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 오스틴 유격수 땅볼 실책으로 출루, 1득점 · 롯데 3-2 한화");
     }
 
     @Test
@@ -70,7 +87,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("안타로 1득점");
+        assertThat(text.body()).isEqualTo("7회초 안타로 1득점 · 롯데 3-2 한화");
     }
 
     @Test
@@ -165,6 +182,18 @@ class ScoringPlayNotificationFormatterTest {
             Integer awayScoreAfter,
             Integer homeScoreAfter
     ) {
+        return detail(batterName, resultText, hitBaseCount, runsScored, awayScoreAfter, homeScoreAfter, null);
+    }
+
+    private ScoringPlayDetail detail(
+            String batterName,
+            String resultText,
+            Integer hitBaseCount,
+            Integer runsScored,
+            Integer awayScoreAfter,
+            Integer homeScoreAfter,
+            String selectedEventText
+    ) {
         return new ScoringPlayDetail(
                 batterName,
                 resultText,
@@ -178,7 +207,10 @@ class ScoringPlayNotificationFormatterTest {
                 awayScoreAfter,
                 homeScoreAfter,
                 "롯데",
-                "한화"
+                "한화",
+                null,
+                selectedEventText,
+                null
         );
     }
 }

@@ -58,6 +58,7 @@ public class DeviceRegistrationController {
             Boolean gameEndEnabled,
             Boolean onBaseEnabled,
             Boolean inningChangeEnabled,
+            @JsonAlias("favorite_team_only_enabled")
             Boolean favoriteTeamOnlyEnabled,
             Boolean muteWhenLosingEnabled
     ) {
