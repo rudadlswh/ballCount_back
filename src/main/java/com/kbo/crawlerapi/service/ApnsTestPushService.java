@@ -74,7 +74,6 @@ public class ApnsTestPushService {
                 .filter(device -> "ios".equalsIgnoreCase(device.getPlatform()))
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> favoriteTeamId.equals(device.getFavoriteTeamId()))
-                .filter(device -> apnsPushService.environmentMatches(device.getEnvironment()))
                 .toList();
 
         NotificationEvent event = new NotificationEvent(

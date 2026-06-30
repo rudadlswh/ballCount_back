@@ -41,7 +41,11 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSession;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 class ApnsPushServiceTest {
 
@@ -64,6 +68,20 @@ class ApnsPushServiceTest {
                 "\"aps\":{\"alert\":{\"title\":\"KBO Score test\",\"body\":\"APNs manual test\"},\"sound\":\"default\"}",
                 "\"data\":{\"routeHint\":\"notifications\"}"
         );
+    }
+
+    @Test
+    void visibleAlertPushEndpointFollowsDeviceEnvironment() {
+        ApnsProperties properties = new ApnsProperties();
+        properties.setBundleId("com.chogm.kboScore");
+        properties.setEnv("production");
+        ApnsPushService service = new ApnsPushService(properties, Clock.systemUTC());
+
+        HttpRequest sandboxRequest = service.buildRequest(event(), device("ios", "sandbox", "lg", "sandbox-token", true), "jwt-token");
+        HttpRequest productionRequest = service.buildRequest(event(), device("ios", "production", "lg", "production-token", true), "jwt-token");
+
+        assertThat(sandboxRequest.uri().toString()).isEqualTo("https://api.sandbox.push.apple.com/3/device/sandbox-token");
+        assertThat(productionRequest.uri().toString()).isEqualTo("https://api.push.apple.com/3/device/production-token");
     }
 
     @Test
@@ -94,6 +112,20 @@ class ApnsPushServiceTest {
                 "\"opponentScoreText\":\"1\"",
                 "\"stale-date\":1780653720"
         );
+    }
+
+    @Test
+    void liveActivityUpdateEndpointFollowsTokenEnvironment() {
+        ApnsProperties properties = new ApnsProperties();
+        properties.setBundleId("com.chogm.kboScore");
+        properties.setEnv("production");
+        ApnsPushService service = new ApnsPushService(properties, Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")));
+
+        HttpRequest sandboxRequest = service.buildLiveActivityUpdateRequest(liveActivityToken("sandbox", "sandbox-live-token"), Map.of("isPreGame", false), "jwt-token");
+        HttpRequest productionRequest = service.buildLiveActivityUpdateRequest(liveActivityToken("production", "production-live-token"), Map.of("isPreGame", false), "jwt-token");
+
+        assertThat(sandboxRequest.uri().toString()).isEqualTo("https://api.sandbox.push.apple.com/3/device/sandbox-live-token");
+        assertThat(productionRequest.uri().toString()).isEqualTo("https://api.push.apple.com/3/device/production-live-token");
     }
 
     @Test
@@ -135,6 +167,20 @@ class ApnsPushServiceTest {
     }
 
     @Test
+    void liveActivityStartEndpointFollowsTokenEnvironment() {
+        ApnsProperties properties = new ApnsProperties();
+        properties.setBundleId("com.chogm.kboScore");
+        properties.setEnv("production");
+        ApnsPushService service = new ApnsPushService(properties, Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")));
+
+        HttpRequest sandboxRequest = service.buildLiveActivityStartRequest(pushToStartToken("sandbox", "sandbox-start-token"), Map.of(), Map.of(), "jwt-token");
+        HttpRequest productionRequest = service.buildLiveActivityStartRequest(pushToStartToken("production", "production-start-token"), Map.of(), Map.of(), "jwt-token");
+
+        assertThat(sandboxRequest.uri().toString()).isEqualTo("https://api.sandbox.push.apple.com/3/device/sandbox-start-token");
+        assertThat(productionRequest.uri().toString()).isEqualTo("https://api.push.apple.com/3/device/production-start-token");
+    }
+
+    @Test
     void firstSendCreatesProviderToken() throws Exception {
         MutableClock clock = new MutableClock(Instant.parse("2026-05-01T00:00:00Z"));
         RecordingHttpClient httpClient = new RecordingHttpClient(200, "");
@@ -145,6 +191,90 @@ class ApnsPushServiceTest {
         assertThat(result.sent()).isTrue();
         assertThat(httpClient.requests).hasSize(1);
         assertThat(authorization(httpClient.requests.get(0))).startsWith("bearer ");
+    }
+
+    @Test
+    void successLogIncludesDeviceEnvironmentAndStatusWithoutToken() throws Exception {
+        NotificationEvent event = event();
+        NotificationDevice device = device();
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-05-01T00:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(200, "")
+        );
+
+        List<String> logs = captureApnsLogs(() -> service.send(event, device));
+
+        assertThat(logs).anySatisfy(message -> assertThat(message)
+                .contains(
+                        "[APNs] push sent",
+                        "eventId=" + event.getId(),
+                        "deviceId=" + device.getId(),
+                        "installationId=" + device.getInstallationId(),
+                        "configuredEnv=sandbox",
+                        "deviceEnv=sandbox",
+                        "selectedApnsEnvironment=sandbox",
+                        "statusCode=200",
+                        "reason=null"
+                ));
+        assertThat(logs).noneSatisfy(message -> assertThat(message).contains(device.getDeviceToken()));
+    }
+
+    @Test
+    void failureLogIncludesDeviceEnvironmentStatusAndMappedReasonWithoutToken() throws Exception {
+        NotificationEvent event = event();
+        NotificationDevice device = device();
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-05-01T00:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(400, "{\"reason\":\"DeviceTokenNotForTopic\"}")
+        );
+
+        ApnsPushService.ApnsSendResult result = service.send(event, device);
+        List<String> logs = captureApnsLogs(() -> service.send(event, device));
+
+        assertThat(result.reason()).isEqualTo(ApnsPushService.APNS_BAD_ENVIRONMENT);
+        assertThat(logs).anySatisfy(message -> assertThat(message)
+                .contains(
+                        "[APNs] push failed",
+                        "eventId=" + event.getId(),
+                        "deviceId=" + device.getId(),
+                        "installationId=" + device.getInstallationId(),
+                        "configuredEnv=sandbox",
+                        "deviceEnv=sandbox",
+                        "selectedApnsEnvironment=sandbox",
+                        "statusCode=400",
+                        "reason=" + ApnsPushService.APNS_BAD_ENVIRONMENT
+                ));
+        assertThat(logs).noneSatisfy(message -> assertThat(message).contains(device.getDeviceToken()));
+    }
+
+    @Test
+    void exceptionLogIncludesDeviceEnvironmentAndExceptionContextWithoutToken() throws Exception {
+        NotificationEvent event = event();
+        NotificationDevice device = device();
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-05-01T00:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(new IllegalStateException("network down"))
+        );
+
+        List<String> logs = captureApnsLogs(() -> service.send(event, device));
+
+        assertThat(logs).anySatisfy(message -> assertThat(message)
+                .contains(
+                        "[APNs] push exception",
+                        "eventId=" + event.getId(),
+                        "deviceId=" + device.getId(),
+                        "installationId=" + device.getInstallationId(),
+                        "configuredEnv=sandbox",
+                        "deviceEnv=sandbox",
+                        "selectedApnsEnvironment=sandbox",
+                        "statusCode=exception",
+                        "reason=IllegalStateException",
+                        "exceptionMessage=network down"
+                ));
+        assertThat(logs).noneSatisfy(message -> assertThat(message).contains(device.getDeviceToken()));
     }
 
     @Test
@@ -275,14 +405,18 @@ class ApnsPushServiceTest {
     }
 
     private NotificationDevice device() {
+        return device("ios", "sandbox", "lg", "token-123", true);
+    }
+
+    private NotificationDevice device(String platform, String environment, String favoriteTeamId, String token, boolean notificationsEnabled) {
         return new NotificationDevice(
                 UUID.randomUUID(),
-                "ios",
-                "sandbox",
-                "token-123",
+                platform,
+                environment,
+                token,
                 "install-1",
-                "lg",
-                true,
+                favoriteTeamId,
+                notificationsEnabled,
                 OffsetDateTime.parse("2026-05-01T09:00:00+09:00")
         );
     }
@@ -327,12 +461,16 @@ class ApnsPushServiceTest {
     }
 
     private LiveActivityToken liveActivityToken() {
+        return liveActivityToken("sandbox", "live-token-123");
+    }
+
+    private LiveActivityToken liveActivityToken(String environment, String tokenValue) {
         return new LiveActivityToken(
                 UUID.randomUUID(),
                 "activity-1",
                 "ios",
-                "sandbox",
-                "live-token-123",
+                environment,
+                tokenValue,
                 "install-1",
                 "lg",
                 "20260605-LOT-HAN",
@@ -344,14 +482,18 @@ class ApnsPushServiceTest {
     }
 
     private LiveActivityPushToStartToken pushToStartToken() {
+        return pushToStartToken("sandbox", "start-token-123");
+    }
+
+    private LiveActivityPushToStartToken pushToStartToken(String environment, String tokenValue) {
         LiveActivityPushToStartToken token = new LiveActivityPushToStartToken(
                 UUID.randomUUID(),
                 OffsetDateTime.parse("2026-06-05T19:00:00+09:00")
         );
         token.update(
                 "ios",
-                "sandbox",
-                "start-token-123",
+                environment,
+                tokenValue,
                 "install-1",
                 "lg",
                 true,
@@ -368,12 +510,33 @@ class ApnsPushServiceTest {
         return request.headers().firstValue("authorization").orElseThrow();
     }
 
+    private List<String> captureApnsLogs(CheckedRunnable work) throws Exception {
+        Logger logger = (Logger) LoggerFactory.getLogger(ApnsPushService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            work.run();
+            return appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
     private String body(HttpRequest request) throws Exception {
         HttpRequest.BodyPublisher publisher = request.bodyPublisher().orElseThrow();
         BodySubscriber subscriber = new BodySubscriber();
         publisher.subscribe(subscriber);
         subscriber.await();
         return subscriber.body();
+    }
+
+    @FunctionalInterface
+    private interface CheckedRunnable {
+        void run() throws Exception;
     }
 
     private static final class MutableClock extends Clock {
@@ -406,11 +569,19 @@ class ApnsPushServiceTest {
     private static final class RecordingHttpClient extends HttpClient {
         private final int statusCode;
         private final String body;
+        private final RuntimeException exception;
         private final List<HttpRequest> requests = new ArrayList<>();
 
         private RecordingHttpClient(int statusCode, String body) {
             this.statusCode = statusCode;
             this.body = body;
+            this.exception = null;
+        }
+
+        private RecordingHttpClient(RuntimeException exception) {
+            this.statusCode = 0;
+            this.body = "";
+            this.exception = exception;
         }
 
         @Override
@@ -461,6 +632,9 @@ class ApnsPushServiceTest {
         @Override
         public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
             requests.add(request);
+            if (exception != null) {
+                throw exception;
+            }
             @SuppressWarnings("unchecked")
             T typedBody = (T) body;
             return new StubHttpResponse<>(request, statusCode, typedBody);

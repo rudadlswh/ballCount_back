@@ -78,7 +78,6 @@ public class LiveActivityUpdateService {
         }
 
         List<LiveActivityToken> matches = inTransaction(() -> liveActivityTokenRepository.findActiveMatchesForGame(
-                apnsPushService.configuredEnvironment(),
                 textOrNull(game.getPublicGameId()),
                 textOrNull(game.getProviderGameId()),
                 game.getId().toString(),

@@ -36,7 +36,6 @@ public interface LiveActivityTokenRepository extends JpaRepository<LiveActivityT
             select token
             from LiveActivityToken token
             where token.active = true
-              and lower(token.environment) = lower(:environment)
               and (
                 (:publicGameId is not null and lower(token.publicGameId) = lower(:publicGameId))
                 or (:providerGameId is not null and lower(token.providerGameId) = lower(:providerGameId))
@@ -46,7 +45,6 @@ public interface LiveActivityTokenRepository extends JpaRepository<LiveActivityT
               )
             """)
     List<LiveActivityToken> findActiveMatchesForGame(
-            @Param("environment") String environment,
             @Param("publicGameId") String publicGameId,
             @Param("providerGameId") String providerGameId,
             @Param("databaseId") String databaseId,

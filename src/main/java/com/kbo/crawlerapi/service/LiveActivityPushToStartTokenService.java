@@ -221,9 +221,6 @@ public class LiveActivityPushToStartTokenService {
         if (!token.isLiveActivitiesEnabled() || !token.isLiveActivityAutoStartEnabled() || !token.isGameStartEnabled()) {
             return "live_activity_auto_start_disabled";
         }
-        if (!apnsPushService.environmentMatches(token.getEnvironment())) {
-            return "apns_bad_environment";
-        }
         if (!involvesFavoriteTeam(game, token.getFavoriteTeamId())) {
             return "favorite_team_mismatch";
         }

@@ -106,7 +106,7 @@ class AdminApnsTestControllerWebMvcTest {
     }
 
     @Test
-    void endpointIgnoresEnvironmentMismatch() throws Exception {
+    void endpointSendsToProductionDeviceWhenConfiguredForSandbox() throws Exception {
         NotificationDevice productionDevice = device("ios", "production", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndFavoriteTeamIdAndNotificationsEnabledTrue(eq("ios"), eq("ssg")))
                 .thenReturn(List.of(productionDevice));
@@ -115,10 +115,12 @@ class AdminApnsTestControllerWebMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson("ssg")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.matchedDeviceCount").value(0))
-                .andExpect(jsonPath("$.attemptedCount").value(0));
+                .andExpect(jsonPath("$.matchedDeviceCount").value(1))
+                .andExpect(jsonPath("$.attemptedCount").value(1))
+                .andExpect(jsonPath("$.sentCount").value(1))
+                .andExpect(jsonPath("$.failedCount").value(0));
 
-        assertThat(apnsPushService.sentDevices).isEmpty();
+        assertThat(apnsPushService.sentDevices).containsExactly(productionDevice);
     }
 
     @Test

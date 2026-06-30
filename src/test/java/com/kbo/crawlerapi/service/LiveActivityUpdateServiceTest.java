@@ -2,7 +2,6 @@ package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -159,27 +158,13 @@ class LiveActivityUpdateServiceTest {
         var result = service.deliverUpdate(game);
 
         assertThat(result.skippedCount()).isEqualTo(1);
-        verify(repository, never()).findActiveMatchesForGame(anyString(), any(), any(), any(), any(), any());
+        verify(repository, never()).findActiveMatchesForGame(any(), any(), any(), any(), any());
     }
 
     @Test
     void onlyMatchingGameIdentityTokensAreSent() {
         Game game = fixtureGame();
         LiveActivityToken matchingToken = liveActivityToken();
-        LiveActivityToken otherGameToken = new LiveActivityToken(
-                UUID.randomUUID(),
-                "activity-other",
-                "ios",
-                "sandbox",
-                "other-activity-token",
-                "install-2",
-                "hanwha",
-                "20260605-OTHER",
-                "20260605OTHER0",
-                UUID.randomUUID().toString(),
-                "provider:20260605OTHER0",
-                OffsetDateTime.now(CLOCK)
-        );
         mockActiveMatches(game, List.of(matchingToken));
         RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         LiveActivityUpdateService service = new LiveActivityUpdateService(
@@ -193,7 +178,13 @@ class LiveActivityUpdateServiceTest {
 
         assertThat(result.sentCount()).isEqualTo(1);
         assertThat(apnsPushService.updatedTokens).containsExactly(matchingToken);
-        assertThat(apnsPushService.updatedTokens).doesNotContain(otherGameToken);
+        verify(repository).findActiveMatchesForGame(
+                "20260605-LOT-HAN",
+                "20260605HHLT0",
+                game.getId().toString(),
+                "provider:20260605HHLT0",
+                "public:20260605-lot-han"
+        );
     }
 
     @Test
@@ -277,12 +268,11 @@ class LiveActivityUpdateServiceTest {
 
     private void mockActiveMatches(Game game, List<LiveActivityToken> tokens) {
         when(repository.findActiveMatchesForGame(
-                "sandbox",
-                game.getPublicGameId(),
-                game.getProviderGameId(),
+                "20260605-LOT-HAN",
+                "20260605HHLT0",
                 game.getId().toString(),
-                "provider:" + game.getProviderGameId(),
-                "public:" + game.getPublicGameId().toLowerCase(java.util.Locale.ROOT)
+                "provider:20260605HHLT0",
+                "public:20260605-lot-han"
         )).thenReturn(tokens);
     }
 

@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -101,7 +102,7 @@ public class NotificationEventService {
 
         ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
         log.info(
-                "[Notifications] delivery diagnostics eventId={} eventKey={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} eventTeamIds={} relevantDeviceCount={}",
+                "[Notifications] delivery diagnostics eventId={} eventKey={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} eventTeamIds={} relevantDeviceCount={} relevantDeviceEnvCounts={}",
                 event.getId(),
                 draft.eventKey(),
                 diagnostics.pushEnabled(),
@@ -112,7 +113,8 @@ public class NotificationEventService {
                 diagnostics.inlinePrivateKeyPresent(),
                 diagnostics.configuredEnvironment(),
                 eventTeamIds,
-                relevantTeamDevices.size()
+                relevantTeamDevices.size(),
+                environmentCounts(relevantTeamDevices)
         );
 
         if (relevantTeamDevices.isEmpty()) {
@@ -142,12 +144,13 @@ public class NotificationEventService {
         List<NotificationDevice> invalidDevices = new java.util.ArrayList<>();
         Instant apnsSendRequestedAt = Instant.now(applicationClock);
         log.info(
-                "[Notifications] APNs send requested at={} eventId={} eventKey={} eventType={} deliverableDeviceCount={}",
+                "[Notifications] APNs send requested at={} eventId={} eventKey={} eventType={} deliverableDeviceCount={} deliverableDeviceEnvCounts={}",
                 apnsSendRequestedAt,
                 event.getId(),
                 draft.eventKey(),
                 draft.eventType(),
-                deliverableDevices.size()
+                deliverableDevices.size(),
+                environmentCounts(deliverableDevices)
         );
         for (NotificationDevice device : deliverableDevices) {
             ApnsPushService.ApnsSendResult result = apnsPushService.send(event, device);
@@ -175,7 +178,7 @@ public class NotificationEventService {
         recordDeliveryResult(event, status, lastFailure, invalidDevices);
         Instant apnsResultAt = Instant.now(applicationClock);
         log.info(
-                "[Notifications] APNs result at={} sent_at={} eventId={} eventKey={} eventType={} gameScheduledAt={} status={} sent={} skipped={} failed={} durationMs={}",
+                "[Notifications] APNs result at={} sent_at={} eventId={} eventKey={} eventType={} gameScheduledAt={} status={} sent={} skipped={} failed={} deliverableDeviceEnvCounts={} durationMs={}",
                 apnsResultAt,
                 apnsResultAt,
                 event.getId(),
@@ -186,6 +189,7 @@ public class NotificationEventService {
                 sent,
                 skipped,
                 failed,
+                environmentCounts(deliverableDevices),
                 Math.max(0, Duration.between(apnsSendRequestedAt, apnsResultAt).toMillis())
         );
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
@@ -225,9 +229,6 @@ public class NotificationEventService {
         }
         if (device.getDeviceToken() == null || device.getDeviceToken().isBlank()) {
             return ApnsPushService.APNS_BAD_DEVICE_TOKEN;
-        }
-        if (!apnsPushService.environmentMatches(device.getEnvironment())) {
-            return ApnsPushService.ENVIRONMENT_MISMATCH;
         }
         if (!eventSettingEnabled(device, draft.eventType())
                 || !favoriteTeamOnlyAllows(device, draft)
@@ -319,7 +320,6 @@ public class NotificationEventService {
         return devices.stream()
                 .filter(device -> "ios".equalsIgnoreCase(device.getPlatform()))
                 .filter(NotificationDevice::isNotificationsEnabled)
-                .filter(device -> apnsPushService.environmentMatches(device.getEnvironment()))
                 .filter(device -> eventSettingEnabled(device, draft.eventType()))
                 .filter(device -> favoriteTeamOnlyAllows(device, draft))
                 .filter(device -> muteWhenLosingAllows(device, draft.eventType(), game))
@@ -345,12 +345,18 @@ public class NotificationEventService {
             return ApnsPushService.DEVICE_NOTIFICATIONS_DISABLED;
         }
 
-        boolean anyEnvironmentMatch = enabledDevices.stream()
-                .anyMatch(device -> apnsPushService.environmentMatches(device.getEnvironment()));
-        if (!anyEnvironmentMatch) {
-            return ApnsPushService.ENVIRONMENT_MISMATCH;
-        }
         return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
+    }
+
+    private Map<String, Long> environmentCounts(List<NotificationDevice> devices) {
+        return devices.stream()
+                .collect(Collectors.groupingBy(
+                        device -> device.getEnvironment() == null || device.getEnvironment().isBlank()
+                                ? "unknown"
+                                : device.getEnvironment(),
+                        java.util.TreeMap::new,
+                        Collectors.counting()
+                ));
     }
 
     private boolean eventSettingEnabled(NotificationDevice device, String eventType) {

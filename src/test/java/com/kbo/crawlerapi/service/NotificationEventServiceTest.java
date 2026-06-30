@@ -146,7 +146,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void deviceWithMismatchedEnvironmentDoesNotReceiveSamsungKtScoreChangedEvent() {
+    void sandboxDeviceReceivesNotificationWhenServerConfiguredForProduction() {
         Game game = fixtureGame("samsung", "kt");
         RecordingApnsPushService pushService = new RecordingApnsPushService(
                 ApnsPushService.ApnsSendResult.sentResult(),
@@ -163,10 +163,9 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(game, draft);
 
-        assertThat(result.sentCount()).isZero();
-        assertThat(result.skippedCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).isEmpty();
-        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.ENVIRONMENT_MISMATCH);
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(result.skippedCount()).isZero();
+        assertThat(pushService.sentDevices).containsExactly(sandboxDevice);
     }
 
     @Test
@@ -314,7 +313,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void mismatchedDeviceEnvironmentSkipsWithEnvironmentMismatch() {
+    void sandboxDeviceIsNotSkippedWhenConfiguredEnvironmentIsProduction() {
         NotificationEventService service = service(new RecordingApnsPushService(
                 ApnsPushService.ApnsSendResult.sentResult(),
                 null,
@@ -328,8 +327,8 @@ class NotificationEventServiceTest {
 
         service.createAndDeliver(fixtureGame(), draft());
 
-        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("skipped");
-        assertThat(savedEvent().getErrorMessage()).isEqualTo(ApnsPushService.ENVIRONMENT_MISMATCH);
+        assertThat(savedEvent().getDeliveryStatus()).isEqualTo("sent");
+        assertThat(savedEvent().getErrorMessage()).isNull();
     }
 
     @Test
