@@ -630,7 +630,7 @@ public class LiveGameSyncService {
         if (!refreshDue) {
             return "ttl-not-due";
         }
-        if (isScheduleCancellationTarget(game.getStatus())) {
+        if (isCancellationTarget(game.getStatus())) {
             return "schedule-cancellation-target";
         }
         if (!shouldRunDetailImport(game)) {
@@ -651,38 +651,6 @@ public class LiveGameSyncService {
                 detailImportAttempted ? "attempted" : "skipped",
                 skipReason
         );
-    }
-
-    private boolean isCandidate(Game game, boolean force) {
-        if (game.getProviderGameId() == null || game.getProviderGameId().isBlank()) {
-            log.debug("[LiveGameSync] skipped candidate game={} reason=missing-provider-game-id", game.getPublicGameId());
-            return false;
-        }
-        if (shouldSkipFinalConfirmed(game)) {
-            log.debug("[LiveGameSync] skipped candidate game={} reason=final-confirmed", game.getPublicGameId());
-            return false;
-        }
-        if (!force && !isActiveKstWindow() && !isNearScheduledStart(game) && !hasScheduledStartReached(game)) {
-            log.debug(
-                    "[LiveGameSync] skipped candidate game={} reason=outside-active-window-and-pregame-eligibility scheduledAt={} now={}",
-                    game.getPublicGameId(),
-                    game.getScheduledAt(),
-                    Instant.now(applicationClock)
-            );
-            return false;
-        }
-        Instant nextRefreshAt = nextRefreshAtByGameId.get(game.getId());
-        Instant now = Instant.now(applicationClock);
-        boolean refreshDue = force || nextRefreshAt == null || !now.isBefore(nextRefreshAt);
-        if (!refreshDue) {
-            log.debug(
-                    "[LiveGameSync] skipped candidate game={} reason=ttl-not-due now={} nextRefreshAt={}",
-                    game.getPublicGameId(),
-                    now,
-                    nextRefreshAt
-            );
-        }
-        return refreshDue;
     }
 
     private boolean isBasicGameStartTransition(GameState before, GameState after) {
@@ -1239,20 +1207,6 @@ public class LiveGameSyncService {
         );
     }
 
-    private NotificationEventDraft pitchersDraft(Game game) {
-        String away = game.getAwayStartingPitcherName();
-        String home = game.getHomeStartingPitcherName();
-        String title = "%s vs %s 선발투수 공개".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
-        String body = "%s vs %s".formatted(away == null ? "미정" : away, home == null ? "미정" : home);
-        return draft(game, "STARTING_PITCHERS", "game:%s:pitchers:%s:%s".formatted(game.getId(), away, home), title, body);
-    }
-
-    private NotificationEventDraft lineupDraft(Game game) {
-        String title = "%s 라인업 공개".formatted(teamShortName(game, game.getHomeTeam().getTeamCode()));
-        String body = "오늘 경기 선발 라인업이 공개되었습니다.";
-        return draft(game, "LINEUP_AVAILABLE", "game:%s:lineup:%s".formatted(game.getId(), sha256(game.getLineupData())), title, body);
-    }
-
     private NotificationEventDraft startedDraft(Game game) {
         String title = "%s vs %s 경기 시작".formatted(teamShortName(game, game.getAwayTeam().getTeamCode()), teamShortName(game, game.getHomeTeam().getTeamCode()));
         return draft(game, NotificationEventService.EVENT_GAME_START, "game:%s:game-start".formatted(game.getId()), title, "경기가 시작되었습니다.");
@@ -1727,12 +1681,8 @@ public class LiveGameSyncService {
 
     private boolean isScheduleCancellationTransition(GameStatus before, GameStatus after) {
         return before != after
-                && isScheduleCancellationTarget(after)
+                && isCancellationTarget(after)
                 && (before == GameStatus.SCHEDULED || before == GameStatus.UNKNOWN || isLiveLike(before));
-    }
-
-    private boolean isScheduleCancellationTarget(GameStatus status) {
-        return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
     }
 
     private boolean isInterruptionTransition(GameState before, GameState after) {

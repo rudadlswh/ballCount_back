@@ -418,10 +418,10 @@ class NotificationEventServiceTest {
     @Test
     void disabledDetailedEventSettingsSkipDelivery() {
         List<NotificationEventService.NotificationEventDraft> drafts = List.of(
-                draft(NotificationEventService.EVENT_GAME_STARTED, null),
+                draft(NotificationEventService.EVENT_GAME_START, null),
                 draft(NotificationEventService.EVENT_SCORE_CHANGED, "kia"),
                 draft(NotificationEventService.EVENT_LEAD_CHANGED, "kia"),
-                draft(NotificationEventService.EVENT_GAME_FINAL, null),
+                draft(NotificationEventService.EVENT_GAME_END, null),
                 draft(NotificationEventService.EVENT_ON_BASE, "kia"),
                 draft(NotificationEventService.EVENT_INNING_CHANGED, null)
         );
@@ -898,11 +898,6 @@ class NotificationEventServiceTest {
                     readinessSkipReason == null || !ApnsPushService.APNS_CONFIG_MISSING.equals(readinessSkipReason),
                     configuredEnvironment
             );
-        }
-
-        @Override
-        public boolean environmentMatches(String deviceEnvironment) {
-            return configuredEnvironment.equalsIgnoreCase(deviceEnvironment);
         }
 
         @Override

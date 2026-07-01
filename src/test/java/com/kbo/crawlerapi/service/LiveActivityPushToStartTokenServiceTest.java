@@ -226,11 +226,6 @@ class LiveActivityPushToStartTokenServiceTest {
         }
 
         @Override
-        public boolean environmentMatches(String deviceEnvironment) {
-            return "sandbox".equalsIgnoreCase(deviceEnvironment);
-        }
-
-        @Override
         public String readinessSkipReason() {
             return null;
         }

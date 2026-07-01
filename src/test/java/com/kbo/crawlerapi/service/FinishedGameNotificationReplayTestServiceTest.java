@@ -436,11 +436,6 @@ class FinishedGameNotificationReplayTestServiceTest {
         }
 
         @Override
-        public boolean environmentMatches(String deviceEnvironment) {
-            return true;
-        }
-
-        @Override
         public String configuredEnvironment() {
             return "production";
         }

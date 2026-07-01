@@ -30,11 +30,9 @@ public class NotificationEventService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationEventService.class);
     public static final String EVENT_GAME_START = "GAME_START";
-    public static final String EVENT_GAME_STARTED = EVENT_GAME_START;
     public static final String EVENT_SCORE_CHANGED = "SCORE_CHANGED";
     public static final String EVENT_LEAD_CHANGED = "LEAD_CHANGED";
     public static final String EVENT_GAME_END = "GAME_END";
-    public static final String EVENT_GAME_FINAL = EVENT_GAME_END;
     public static final String EVENT_GAME_CANCELLED = "GAME_CANCELLED";
     public static final String EVENT_GAME_INTERRUPTED = "GAME_INTERRUPTED";
     public static final String EVENT_GAME_RESUME_SCHEDULED = "GAME_RESUME_SCHEDULED";

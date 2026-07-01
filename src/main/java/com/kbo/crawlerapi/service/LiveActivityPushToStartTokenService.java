@@ -3,12 +3,9 @@ package com.kbo.crawlerapi.service;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.LiveActivityPushToStartToken;
 import com.kbo.crawlerapi.repository.LiveActivityPushToStartTokenRepository;
-import com.kbo.crawlerapi.support.TeamCatalog;
+import com.kbo.crawlerapi.support.RegistrationInputNormalizer;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -30,6 +27,7 @@ public class LiveActivityPushToStartTokenService {
     private static final Logger log = LoggerFactory.getLogger(LiveActivityPushToStartTokenService.class);
     private static final int MAX_TOKEN_LENGTH = 512;
     private static final int MAX_INSTALLATION_ID_LENGTH = 100;
+    private static final int MAX_FAVORITE_TEAM_ID_LENGTH = 30;
 
     private final LiveActivityPushToStartTokenRepository repository;
     private final LiveActivityContentStateBuilder contentStateBuilder;
@@ -63,11 +61,11 @@ public class LiveActivityPushToStartTokenService {
 
     @Transactional
     public PushToStartTokenRegistrationResult register(PushToStartTokenRegistrationCommand command) {
-        String platform = normalizePlatform(command.platform());
-        String environment = normalizeEnvironment(command.environment());
-        String pushToStartToken = requireText(command.pushToStartToken(), "pushToStartToken", MAX_TOKEN_LENGTH);
-        String installationId = requireText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);
-        String favoriteTeamId = normalizeFavoriteTeamId(command.favoriteTeamId());
+        String platform = RegistrationInputNormalizer.normalizePlatform(command.platform());
+        String environment = RegistrationInputNormalizer.normalizeClientEnvironment(command.environment());
+        String pushToStartToken = RegistrationInputNormalizer.requireText(command.pushToStartToken(), "pushToStartToken", MAX_TOKEN_LENGTH);
+        String installationId = RegistrationInputNormalizer.requireText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);
+        String favoriteTeamId = RegistrationInputNormalizer.normalizeFavoriteTeamId(command.favoriteTeamId(), MAX_FAVORITE_TEAM_ID_LENGTH);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
         Optional<LiveActivityPushToStartToken> tokenMatch = repository.findByPlatformAndEnvironmentAndPushToStartToken(
@@ -106,13 +104,13 @@ public class LiveActivityPushToStartTokenService {
         repository.save(token);
         log.info(
                 "[LiveActivityStart] push-to-start token registered tokenHash={} environment={} notificationsAuthorized={} liveActivitiesEnabled={} autoStartEnabled={}",
-                tokenFingerprint(pushToStartToken),
+                RegistrationInputNormalizer.tokenFingerprint(pushToStartToken),
                 environment,
                 command.notificationsAuthorized(),
                 command.liveActivitiesEnabled(),
                 command.liveActivityAutoStartEnabled()
         );
-        return new PushToStartTokenRegistrationResult(token.getId(), environment, tokenPrefix(pushToStartToken), token.isActive());
+        return new PushToStartTokenRegistrationResult(token.getId(), environment, RegistrationInputNormalizer.tokenPrefix(pushToStartToken), token.isActive());
     }
 
     public LiveActivityStartDeliveryResult deliverStart(Game game) {
@@ -263,75 +261,6 @@ public class LiveActivityPushToStartTokenService {
             return "provider:" + game.getProviderGameId().trim();
         }
         return "database:" + game.getId();
-    }
-
-    private String normalizePlatform(String platform) {
-        if (platform == null || platform.isBlank()) {
-            return "ios";
-        }
-        String normalized = platform.trim().toLowerCase(Locale.ROOT);
-        if (!"ios".equals(normalized)) {
-            throw new IllegalArgumentException("platform must be ios");
-        }
-        return normalized;
-    }
-
-    private String normalizeEnvironment(String environment) {
-        if (environment == null || environment.isBlank()) {
-            return "sandbox";
-        }
-        String normalized = environment.trim().toLowerCase(Locale.ROOT);
-        if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
-            throw new IllegalArgumentException("environment must be sandbox or production");
-        }
-        return normalized;
-    }
-
-    private String normalizeFavoriteTeamId(String favoriteTeamId) {
-        String normalized = blankToNull(favoriteTeamId);
-        if (normalized == null) {
-            return null;
-        }
-        normalized = normalized.toLowerCase(Locale.ROOT);
-        if (!TeamCatalog.isSupportedTeamCode(normalized)) {
-            throw new IllegalArgumentException("favoriteTeamId is invalid");
-        }
-        return normalized;
-    }
-
-    private String requireText(String value, String name, int maxLength) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(name + " is required");
-        }
-        String normalized = value.trim();
-        if (normalized.length() > maxLength) {
-            throw new IllegalArgumentException(name + " is too long");
-        }
-        return normalized;
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    private String tokenPrefix(String token) {
-        return token == null ? null : token.substring(0, Math.min(8, token.length()));
-    }
-
-    private String tokenFingerprint(String token) {
-        if (token == null || token.isBlank()) {
-            return null;
-        }
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder();
-            for (int index = 0; index < Math.min(6, digest.length); index++) {
-                builder.append(String.format("%02x", digest[index]));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            return "unavailable";
-        }
     }
 
     public record PushToStartTokenRegistrationCommand(

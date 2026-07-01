@@ -10,6 +10,7 @@ import com.kbo.crawlerapi.domain.LiveActivityPushToStartToken;
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
+import com.kbo.crawlerapi.support.RegistrationInputNormalizer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -32,6 +33,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -136,9 +138,9 @@ public class ApnsPushService {
         try {
             String token = providerToken();
             HttpRequest request = buildRequest(event, device, token);
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            ApnsHttpResult result = sendApnsRequest(request, this::mapApnsFailureReason, this::isInvalidLiveActivityTokenResponse);
             String selectedApnsEnvironment = selectedApnsEnvironment(device.getEnvironment());
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            if (result.result().sent()) {
                 log.info(
                         "[APNs] push sent eventId={} deviceId={} installationId={} configuredEnv={} deviceEnv={} selectedApnsEnvironment={} statusCode={} reason={}",
                         event.getId(),
@@ -147,15 +149,11 @@ public class ApnsPushService {
                         configuredEnvironment(),
                         device.getEnvironment(),
                         selectedApnsEnvironment,
-                        response.statusCode(),
-                        null
+                        result.statusCode(),
+                        result.reason()
                 );
-                return ApnsSendResult.sentResult();
+                return result.result();
             }
-            String reason = response.body() == null || response.body().isBlank()
-                    ? "status_" + response.statusCode()
-                    : response.body();
-            String mappedReason = mapApnsFailureReason(reason);
             log.warn(
                     "[APNs] push failed eventId={} deviceId={} installationId={} configuredEnv={} deviceEnv={} selectedApnsEnvironment={} statusCode={} reason={}",
                     event.getId(),
@@ -164,10 +162,10 @@ public class ApnsPushService {
                     configuredEnvironment(),
                     device.getEnvironment(),
                     selectedApnsEnvironment,
-                    response.statusCode(),
-                    mappedReason
+                    result.statusCode(),
+                    result.reason()
             );
-            return new ApnsSendResult(false, false, isInvalidLiveActivityTokenResponse(response.statusCode(), mappedReason), mappedReason);
+            return result.result();
         } catch (Exception exception) {
             log.warn(
                     "[APNs] push exception eventId={} deviceId={} installationId={} configuredEnv={} deviceEnv={} selectedApnsEnvironment={} statusCode={} reason={} exceptionMessage={}",
@@ -219,9 +217,9 @@ public class ApnsPushService {
         try {
             String token = providerToken();
             HttpRequest request = buildLiveActivityUpdateRequest(liveActivityToken, contentState, token);
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            ApnsHttpResult result = sendApnsRequest(request, this::mapLiveActivityStartFailureReason, this::isInvalidLiveActivityTokenResponse);
             String selectedApnsEnvironment = selectedApnsEnvironment(liveActivityToken.getEnvironment());
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            if (result.result().sent()) {
                 log.info(
                         "[LiveActivity] APNs sent publicGameId={} providerGameId={} databaseId={} activityId={} tokenEnv={} selectedApnsEnvironment={} statusCode={} reason={}",
                         game.getPublicGameId(),
@@ -230,15 +228,11 @@ public class ApnsPushService {
                         liveActivityToken.getActivityId(),
                         liveActivityToken.getEnvironment(),
                         selectedApnsEnvironment,
-                        response.statusCode(),
-                        null
+                        result.statusCode(),
+                        result.reason()
                 );
-                return ApnsSendResult.sentResult();
+                return result.result();
             }
-            String reason = response.body() == null || response.body().isBlank()
-                    ? "status_" + response.statusCode()
-                    : response.body();
-            String mappedReason = mapLiveActivityStartFailureReason(reason);
             log.warn(
                     "[LiveActivity] APNs failed publicGameId={} providerGameId={} databaseId={} activityId={} tokenEnv={} selectedApnsEnvironment={} statusCode={} reason={}",
                     game.getPublicGameId(),
@@ -247,10 +241,10 @@ public class ApnsPushService {
                     liveActivityToken.getActivityId(),
                     liveActivityToken.getEnvironment(),
                     selectedApnsEnvironment,
-                    response.statusCode(),
-                    mappedReason
+                    result.statusCode(),
+                    result.reason()
             );
-            return new ApnsSendResult(false, false, isInvalidLiveActivityTokenResponse(response.statusCode(), mappedReason), mappedReason);
+            return result.result();
         } catch (Exception exception) {
             log.warn(
                     "[LiveActivity] APNs exception publicGameId={} providerGameId={} databaseId={} activityId={} tokenEnv={} selectedApnsEnvironment={} statusCode={} reason={} exceptionMessage={}",
@@ -307,9 +301,9 @@ public class ApnsPushService {
         try {
             String token = providerToken();
             HttpRequest request = buildLiveActivityStartRequest(pushToStartToken, attributes, contentState, token);
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            ApnsHttpResult result = sendApnsRequest(request, this::mapApnsFailureReason, this::isInvalidTokenResponse);
             String selectedApnsEnvironment = selectedApnsEnvironment(pushToStartToken.getEnvironment());
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            if (result.result().sent()) {
                 log.info(
                         "[LiveActivityStart] APNs sent publicGameId={} providerGameId={} databaseId={} installationId={} tokenEnv={} selectedApnsEnvironment={} statusCode={} reason={}",
                         game.getPublicGameId(),
@@ -318,15 +312,11 @@ public class ApnsPushService {
                         pushToStartToken.getInstallationId(),
                         pushToStartToken.getEnvironment(),
                         selectedApnsEnvironment,
-                        response.statusCode(),
-                        null
+                        result.statusCode(),
+                        result.reason()
                 );
-                return ApnsSendResult.sentResult();
+                return result.result();
             }
-            String reason = response.body() == null || response.body().isBlank()
-                    ? "status_" + response.statusCode()
-                    : response.body();
-            String mappedReason = mapApnsFailureReason(reason);
             log.warn(
                     "[LiveActivityStart] APNs failed publicGameId={} providerGameId={} databaseId={} installationId={} tokenEnv={} selectedApnsEnvironment={} statusCode={} reason={}",
                     game.getPublicGameId(),
@@ -335,10 +325,10 @@ public class ApnsPushService {
                     pushToStartToken.getInstallationId(),
                     pushToStartToken.getEnvironment(),
                     selectedApnsEnvironment,
-                    response.statusCode(),
-                    mappedReason
+                    result.statusCode(),
+                    result.reason()
             );
-            return new ApnsSendResult(false, false, isInvalidTokenResponse(response.statusCode(), mappedReason), mappedReason);
+            return result.result();
         } catch (Exception exception) {
             log.warn(
                     "[LiveActivityStart] APNs exception publicGameId={} providerGameId={} databaseId={} installationId={} tokenEnv={} selectedApnsEnvironment={} statusCode={} reason={} exceptionMessage={}",
@@ -394,12 +384,8 @@ public class ApnsPushService {
         );
     }
 
-    public boolean environmentMatches(String deviceEnvironment) {
-        return true;
-    }
-
     public String configuredEnvironment() {
-        return normalizeEnvironment(properties.getEnv());
+        return RegistrationInputNormalizer.normalizeApnsEnvironment(properties.getEnv());
     }
 
     private String deviceSkipReason(NotificationDevice device) {
@@ -468,7 +454,7 @@ public class ApnsPushService {
     }
 
     String selectedApnsEnvironment(String environment) {
-        return "production".equals(normalizeEnvironment(environment)) ? "production" : "sandbox";
+        return "production".equals(RegistrationInputNormalizer.normalizeApnsEnvironment(environment)) ? "production" : "sandbox";
     }
 
     HttpRequest buildRequest(NotificationEvent event, NotificationDevice device, String token) {
@@ -541,20 +527,6 @@ public class ApnsPushService {
         }
     }
 
-    private String normalizeEnvironment(String environment) {
-        if (environment == null || environment.isBlank()) {
-            return "sandbox";
-        }
-        String normalized = environment.trim().toLowerCase(java.util.Locale.ROOT);
-        if ("development".equals(normalized) || "debug".equals(normalized)) {
-            return "sandbox";
-        }
-        if ("release".equals(normalized)) {
-            return "production";
-        }
-        return normalized;
-    }
-
     private boolean isInvalidTokenResponse(int statusCode, String reason) {
         return statusCode == 410
                 || reason.contains("BadDeviceToken")
@@ -593,6 +565,26 @@ public class ApnsPushService {
             return APNS_BAD_TOKEN;
         }
         return mappedReason;
+    }
+
+    private ApnsHttpResult sendApnsRequest(
+            HttpRequest request,
+            Function<String, String> reasonMapper,
+            InvalidTokenResponse invalidTokenResponse
+    ) throws IOException, InterruptedException {
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            return new ApnsHttpResult(ApnsSendResult.sentResult(), response.statusCode(), null);
+        }
+        String reason = response.body() == null || response.body().isBlank()
+                ? "status_" + response.statusCode()
+                : response.body();
+        String mappedReason = reasonMapper.apply(reason);
+        return new ApnsHttpResult(
+                new ApnsSendResult(false, false, invalidTokenResponse.isInvalid(response.statusCode(), mappedReason), mappedReason),
+                response.statusCode(),
+                mappedReason
+        );
     }
 
     private synchronized String providerToken() throws Exception {
@@ -790,6 +782,18 @@ public class ApnsPushService {
             Instant refreshAfter,
             Instant expiresAt
     ) {
+    }
+
+    private record ApnsHttpResult(
+            ApnsSendResult result,
+            int statusCode,
+            String reason
+    ) {
+    }
+
+    @FunctionalInterface
+    private interface InvalidTokenResponse {
+        boolean isInvalid(int statusCode, String reason);
     }
 
     private static final class PrivateKeyLoadException extends RuntimeException {

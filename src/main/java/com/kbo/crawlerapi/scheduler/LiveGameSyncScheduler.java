@@ -166,24 +166,6 @@ public class LiveGameSyncScheduler {
                 .map(OffsetDateTime::toInstant);
     }
 
-//    private void runPreGameHalfHourCheckIfDue() {
-//        LocalDateTime nowKst = LocalDateTime.now(applicationClock.withZone(KST));
-//        if (nowKst.getMinute() != 0 && nowKst.getMinute() != 30) {
-//            log.debug("[LiveGameSync] skipped pre-game not half-hour slot now_kst={}", nowKst);
-//            return;
-//        }
-//
-//        LocalDateTime currentSlot = nowKst.truncatedTo(ChronoUnit.MINUTES);
-//        if (currentSlot.equals(lastPreGameCheckSlot)) {
-//            log.debug("[LiveGameSync] skipped pre-game half-hour slot already checked slot={}", currentSlot);
-//            return;
-//        }
-//
-//        log.info("[LiveGameSync] running pre-game half-hour check");
-//        liveGameSyncService.syncToday();
-//        lastPreGameCheckSlot = currentSlot;
-//    }
-
     private void runPreGameHalfHourCheckIfDue() {
         LocalDateTime nowKst = LocalDateTime.now(applicationClock.withZone(KST));
         LocalDateTime currentSlot = nowKst.truncatedTo(ChronoUnit.MINUTES);

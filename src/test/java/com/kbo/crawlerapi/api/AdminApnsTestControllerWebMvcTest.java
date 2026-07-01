@@ -185,11 +185,6 @@ class AdminApnsTestControllerWebMvcTest {
         }
 
         @Override
-        public boolean environmentMatches(String deviceEnvironment) {
-            return configuredEnvironment.equalsIgnoreCase(deviceEnvironment);
-        }
-
-        @Override
         public String configuredEnvironment() {
             return configuredEnvironment;
         }

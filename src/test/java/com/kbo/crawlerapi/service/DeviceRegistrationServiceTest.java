@@ -101,12 +101,12 @@ class DeviceRegistrationServiceTest {
         assertThat(device.isGameEndEnabled()).isTrue();
         assertThat(device.isOnBaseEnabled()).isFalse();
         assertThat(device.isInningChangeEnabled()).isFalse();
-        assertThat(device.isFavoriteTeamOnlyEnabled()).isTrue();
+        assertThat(device.isFavoriteTeamOnlyEnabled()).isFalse();
         assertThat(device.isMuteWhenLosingEnabled()).isFalse();
     }
 
     @Test
-    void favoriteTeamRegistrationForcesFavoriteTeamOnlyWhenClientSendsFalse() {
+    void favoriteTeamRegistrationKeepsFavoriteTeamOnlyDisabledWhenClientSendsFalse() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.empty());
@@ -125,7 +125,30 @@ class DeviceRegistrationServiceTest {
 
         ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
         verify(notificationDeviceRepository).save(deviceCaptor.capture());
-        assertThat(deviceCaptor.getValue().isFavoriteTeamOnlyEnabled()).isTrue();
+        assertThat(deviceCaptor.getValue().isFavoriteTeamOnlyEnabled()).isFalse();
+    }
+
+    @Test
+    void missingFavoriteTeamDisablesFavoriteTeamOnlyEvenWhenClientSendsTrue() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
+                .thenReturn(Optional.empty());
+
+        service.register(
+                "ios",
+                "sandbox",
+                "token-123",
+                "install-1",
+                null,
+                true,
+                new DeviceRegistrationService.DeviceNotificationSettings(true, true, true, true, true, true, true, false)
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().isFavoriteTeamOnlyEnabled()).isFalse();
     }
 
     @Test

@@ -2,15 +2,11 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
-import com.kbo.crawlerapi.support.TeamCatalog;
+import com.kbo.crawlerapi.support.RegistrationInputNormalizer;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -52,11 +48,11 @@ public class DeviceRegistrationService {
             boolean notificationsEnabled,
             DeviceNotificationSettings settings
     ) {
-        String normalizedPlatform = normalizePlatform(platform);
-        String normalizedEnvironment = normalizeEnvironment(environment);
-        String normalizedToken = requireDeviceToken(deviceToken);
-        String normalizedInstallationId = requireInstallationId(installationId);
-        String normalizedFavoriteTeamId = normalizeFavoriteTeamId(favoriteTeamId);
+        String normalizedPlatform = RegistrationInputNormalizer.normalizePlatform(platform);
+        String normalizedEnvironment = RegistrationInputNormalizer.normalizeClientEnvironment(environment);
+        String normalizedToken = RegistrationInputNormalizer.requireText(deviceToken, "deviceToken", MAX_DEVICE_TOKEN_LENGTH);
+        String normalizedInstallationId = RegistrationInputNormalizer.requireText(installationId, "installationId", MAX_INSTALLATION_ID_LENGTH);
+        String normalizedFavoriteTeamId = RegistrationInputNormalizer.normalizeFavoriteTeamId(favoriteTeamId, MAX_FAVORITE_TEAM_ID_LENGTH);
         DeviceNotificationSettings normalizedSettings = normalizeSettings(settings, normalizedFavoriteTeamId);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
@@ -102,7 +98,7 @@ public class DeviceRegistrationService {
                 });
 
         boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
-        String previousTokenHash = tokenChanged ? tokenFingerprint(device.getDeviceToken()) : null;
+        String previousTokenHash = tokenChanged ? RegistrationInputNormalizer.tokenFingerprint(device.getDeviceToken()) : null;
         device.update(
                 normalizedPlatform,
                 normalizedEnvironment,
@@ -132,79 +128,20 @@ public class DeviceRegistrationService {
 
     @Transactional
     public void unregister(String platform, String environment, String deviceToken, String installationId) {
-        String normalizedPlatform = normalizePlatform(platform);
-        String normalizedEnvironment = normalizeEnvironment(environment);
+        String normalizedPlatform = RegistrationInputNormalizer.normalizePlatform(platform);
+        String normalizedEnvironment = RegistrationInputNormalizer.normalizeClientEnvironment(environment);
+        String normalizedInstallationId = RegistrationInputNormalizer.optionalText(installationId, "installationId", MAX_INSTALLATION_ID_LENGTH);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, requireDeviceToken(deviceToken))
-                .or(() -> installationId == null || installationId.isBlank()
+        notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, RegistrationInputNormalizer.requireText(deviceToken, "deviceToken", MAX_DEVICE_TOKEN_LENGTH))
+                .or(() -> normalizedInstallationId == null
                         ? java.util.Optional.empty()
-                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, installationId))
+                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, normalizedInstallationId))
                 .ifPresent(device -> device.disable(now));
-    }
-
-    private String normalizePlatform(String platform) {
-        if (platform == null || platform.isBlank()) {
-            return "ios";
-        }
-        String normalized = platform.trim().toLowerCase(Locale.ROOT);
-        if (!"ios".equals(normalized)) {
-            throw new IllegalArgumentException("platform must be ios");
-        }
-        return normalized;
-    }
-
-    private String normalizeEnvironment(String environment) {
-        if (environment == null || environment.isBlank()) {
-            return "sandbox";
-        }
-        String normalized = environment.trim().toLowerCase(Locale.ROOT);
-        if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
-            throw new IllegalArgumentException("environment must be sandbox or production");
-        }
-        return normalized;
-    }
-
-    private String requireDeviceToken(String deviceToken) {
-        if (deviceToken == null || deviceToken.isBlank()) {
-            throw new IllegalArgumentException("deviceToken is required");
-        }
-        String normalized = deviceToken.trim();
-        if (normalized.length() > MAX_DEVICE_TOKEN_LENGTH) {
-            throw new IllegalArgumentException("deviceToken is too long");
-        }
-        return normalized;
-    }
-
-    private String requireInstallationId(String installationId) {
-        if (installationId == null || installationId.isBlank()) {
-            throw new IllegalArgumentException("installationId is required");
-        }
-        String normalized = installationId.trim();
-        if (normalized.length() > MAX_INSTALLATION_ID_LENGTH) {
-            throw new IllegalArgumentException("installationId is too long");
-        }
-        return normalized;
-    }
-
-    private String normalizeFavoriteTeamId(String favoriteTeamId) {
-        String normalized = blankToNull(favoriteTeamId);
-        if (normalized == null) {
-            return null;
-        }
-        normalized = normalized.toLowerCase(Locale.ROOT);
-        if (normalized.length() > MAX_FAVORITE_TEAM_ID_LENGTH || !TeamCatalog.isSupportedTeamCode(normalized)) {
-            throw new IllegalArgumentException("favoriteTeamId is invalid");
-        }
-        return normalized;
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private DeviceNotificationSettings normalizeSettings(DeviceNotificationSettings settings, String favoriteTeamId) {
         DeviceNotificationSettings normalized = settings == null ? DeviceNotificationSettings.defaults() : settings;
-        if (favoriteTeamId == null || normalized.favoriteTeamOnlyEnabled()) {
+        if (favoriteTeamId != null || !normalized.favoriteTeamOnlyEnabled()) {
             return normalized;
         }
         return new DeviceNotificationSettings(
@@ -214,7 +151,7 @@ public class DeviceRegistrationService {
                 normalized.gameEndEnabled(),
                 normalized.onBaseEnabled(),
                 normalized.inningChangeEnabled(),
-                true,
+                false,
                 normalized.muteWhenLosingEnabled()
         );
     }
@@ -223,28 +160,12 @@ public class DeviceRegistrationService {
         return "****";
     }
 
-    private String tokenFingerprint(String token) {
-        if (token == null || token.isBlank()) {
-            return null;
-        }
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder();
-            for (int index = 0; index < Math.min(6, digest.length); index++) {
-                builder.append(String.format("%02x", digest[index]));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            return "unavailable";
-        }
-    }
-
     private void logRegistration(String token, String previousTokenHash, String environment, boolean created) {
         if (previousTokenHash == null) {
             log.info(
                     "device registration {} token_hash={} environment={}",
                     created ? "created" : "updated",
-                    tokenFingerprint(token),
+                    RegistrationInputNormalizer.tokenFingerprint(token),
                     environment
             );
             return;
@@ -252,7 +173,7 @@ public class DeviceRegistrationService {
         log.info(
                 "device registration {} token_hash={} previous_token_hash={} environment={}",
                 created ? "created" : "updated",
-                tokenFingerprint(token),
+                RegistrationInputNormalizer.tokenFingerprint(token),
                 previousTokenHash,
                 environment
         );
