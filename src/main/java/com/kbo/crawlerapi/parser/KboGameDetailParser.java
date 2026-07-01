@@ -1,9 +1,6 @@
 package com.kbo.crawlerapi.parser;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -17,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.support.HashSupport;
 
 @Component
 public class KboGameDetailParser {
@@ -34,7 +32,7 @@ public class KboGameDetailParser {
             JsonNode root = objectMapper.readTree(responseBody);
             JsonNode groups = root.path("arrHitter");
             if (!groups.isArray() || groups.size() < 2) {
-                return ParsedLineupData.empty(hash(responseBody));
+                return ParsedLineupData.empty(HashSupport.sha256Hex(responseBody));
             }
 
             String awayTeamCode = officialTeamCode(root, "AWAY_ID", "T_ID", "AWAY_TEAM_ID");
@@ -42,9 +40,9 @@ public class KboGameDetailParser {
             List<ParsedLineupPlayer> away = parseLineupGroup(groups.get(0), awayTeamCode);
             List<ParsedLineupPlayer> home = parseLineupGroup(groups.get(1), homeTeamCode);
             if (away.isEmpty() && home.isEmpty()) {
-                return ParsedLineupData.empty(hash(responseBody));
+                return ParsedLineupData.empty(HashSupport.sha256Hex(responseBody));
             }
-            return new ParsedLineupData(away, home, hash(responseBody), awayTeamCode, homeTeamCode);
+            return new ParsedLineupData(away, home, HashSupport.sha256Hex(responseBody), awayTeamCode, homeTeamCode);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse KBO lineup response", exception);
         }
@@ -174,7 +172,7 @@ public class KboGameDetailParser {
                         lineupAvailable,
                         statusReason,
                         null,
-                        hash(row.toString())
+                        HashSupport.sha256Hex(row.toString())
                 ));
             }
 
@@ -867,20 +865,6 @@ public class KboGameDetailParser {
                 .map(this::clean)
                 .filter(java.util.Objects::nonNull)
                 .collect(java.util.stream.Collectors.joining(" "));
-    }
-
-    private String hash(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder(hash.length * 2);
-            for (byte current : hash) {
-                builder.append(String.format("%02x", current));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is not available", exception);
-        }
     }
 
     public record ParsedGameDetail(

@@ -1,8 +1,5 @@
 package com.kbo.crawlerapi.support;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 
 public final class RegistrationInputNormalizer {
@@ -90,13 +87,8 @@ public final class RegistrationInputNormalizer {
             return null;
         }
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder();
-            for (int index = 0; index < Math.min(6, digest.length); index++) {
-                builder.append(String.format("%02x", digest[index]));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
+            return HashSupport.sha256BytePrefix(token, 6);
+        } catch (RuntimeException exception) {
             return "unavailable";
         }
     }

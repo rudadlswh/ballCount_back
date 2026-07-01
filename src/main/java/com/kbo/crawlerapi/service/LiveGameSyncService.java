@@ -13,8 +13,7 @@ import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraf
 import com.kbo.crawlerapi.service.OnBasePlayDetailExtractor.OnBasePlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayDetailExtractor.ScoringPlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayNotificationFormatter.NotificationText;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import com.kbo.crawlerapi.support.HashSupport;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -27,7 +26,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -237,7 +235,7 @@ public class LiveGameSyncService {
                 draft = startedDraft(game);
                 started = true;
                 logGameStartTiming(game, draft, "schedule-refresh");
-            } else if (isScheduleCancellationTransition(before.status(), afterScheduleState.status())) {
+            } else if (isCancellationTransition(before.status(), afterScheduleState.status())) {
                 log.info(
                         "[LiveGameSync] schedule-level cancellation detected game={} previousStatus={} scheduleStatus={} cancelReason={} rawCancelText={}",
                         game.getPublicGameId(),
@@ -1679,12 +1677,6 @@ public class LiveGameSyncService {
         return status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
     }
 
-    private boolean isScheduleCancellationTransition(GameStatus before, GameStatus after) {
-        return before != after
-                && isCancellationTarget(after)
-                && (before == GameStatus.SCHEDULED || before == GameStatus.UNKNOWN || isLiveLike(before));
-    }
-
     private boolean isInterruptionTransition(GameState before, GameState after) {
         return before.status() != after.status()
                 && (before.status() == GameStatus.SCHEDULED || before.status() == GameStatus.UNKNOWN || isLiveLike(before.status()) || isWeakFinal(before))
@@ -2094,7 +2086,7 @@ public class LiveGameSyncService {
     }
 
     private String runnerNamesHash(GameState state) {
-        return sha256(runnerNamesKey(state)).substring(0, 16);
+        return HashSupport.sha256Prefix(runnerNamesKey(state), 8);
     }
 
     private String runnerNamesKey(GameState state) {
@@ -2183,14 +2175,6 @@ public class LiveGameSyncService {
             return null;
         }
         return snapshot.getFetchedAt() != null ? snapshot.getFetchedAt() : snapshot.getCreatedAt();
-    }
-
-    private String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception exception) {
-            throw new IllegalStateException(exception);
-        }
     }
 
     private record GameState(

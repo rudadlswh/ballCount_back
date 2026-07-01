@@ -9,11 +9,9 @@ import com.kbo.crawlerapi.parser.KboLiveTextParser.ParsedLiveText;
 import com.kbo.crawlerapi.parser.KboLiveTextParser.ParsedLiveTextBatterRecord;
 import com.kbo.crawlerapi.repository.GameEventWriteRepository;
 import com.kbo.crawlerapi.repository.GameEventWriteRepository.GameEventWriteRow;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import com.kbo.crawlerapi.support.HashSupport;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -317,8 +315,7 @@ public class GameLiveTextRecordService {
 
     private String hash(String value) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8))).substring(0, 16);
+            return HashSupport.sha256HexPrefix(value, 16);
         } catch (Exception exception) {
             return Integer.toHexString(value.hashCode());
         }

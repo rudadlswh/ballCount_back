@@ -23,10 +23,8 @@ import com.kbo.crawlerapi.parser.KboLiveTextParser;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
+import com.kbo.crawlerapi.support.HashSupport;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -48,6 +46,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class GameDetailImportService {
 
     private static final Logger log = LoggerFactory.getLogger(GameDetailImportService.class);
+    private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
     private static final DateTimeFormatter OFFICIAL_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
     private static final Map<String, String> OFFICIAL_TEAM_CODES_BY_TEAM_CODE = Map.ofEntries(
             Map.entry("doosan", "OB"),
@@ -104,7 +103,8 @@ public class GameDetailImportService {
                 null,
                 null,
                 crawlJobTrackingService,
-                baseRunnerNameResolver
+                baseRunnerNameResolver,
+                DEFAULT_OBJECT_MAPPER
         );
     }
 
@@ -137,7 +137,8 @@ public class GameDetailImportService {
                 gameLiveTextRecordService,
                 null,
                 crawlJobTrackingService,
-                baseRunnerNameResolver
+                baseRunnerNameResolver,
+                DEFAULT_OBJECT_MAPPER
         );
     }
 
@@ -156,7 +157,8 @@ public class GameDetailImportService {
             GameLiveTextRecordService gameLiveTextRecordService,
             LiveActivityUpdateService liveActivityUpdateService,
             CrawlJobTrackingService crawlJobTrackingService,
-            BaseRunnerNameResolver baseRunnerNameResolver
+            BaseRunnerNameResolver baseRunnerNameResolver,
+            ObjectMapper objectMapper
     ) {
         this.gameRepository = gameRepository;
         this.gameSnapshotRepository = gameSnapshotRepository;
@@ -172,7 +174,42 @@ public class GameDetailImportService {
         this.liveActivityUpdateService = liveActivityUpdateService;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.baseRunnerNameResolver = baseRunnerNameResolver;
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = objectMapper;
+    }
+
+    public GameDetailImportService(
+            GameRepository gameRepository,
+            GameSnapshotRepository gameSnapshotRepository,
+            LineScoreRepository lineScoreRepository,
+            KboGameDetailClient kboGameDetailClient,
+            KboGameDetailParser kboGameDetailParser,
+            KboLineScoreParser kboLineScoreParser,
+            KboBoxscoreParser kboBoxscoreParser,
+            KboLiveTextClient kboLiveTextClient,
+            KboLiveTextParser kboLiveTextParser,
+            GameBoxscoreRecordService gameBoxscoreRecordService,
+            GameLiveTextRecordService gameLiveTextRecordService,
+            LiveActivityUpdateService liveActivityUpdateService,
+            CrawlJobTrackingService crawlJobTrackingService,
+            BaseRunnerNameResolver baseRunnerNameResolver
+    ) {
+        this(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                kboLiveTextClient,
+                kboLiveTextParser,
+                gameBoxscoreRecordService,
+                gameLiveTextRecordService,
+                liveActivityUpdateService,
+                crawlJobTrackingService,
+                baseRunnerNameResolver,
+                DEFAULT_OBJECT_MAPPER
+        );
     }
 
     @Transactional
@@ -239,7 +276,7 @@ public class GameDetailImportService {
             backfillProviderGameIdIfNeeded(game, resolvedOfficialDetail.providerGameId());
             OffsetDateTime fetchedAt = OffsetDateTime.now();
             SelectedScore selectedScore = selectScore(game, parsedDetail, lineScoreResult);
-            String combinedRawHash = hash(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore());
+            String combinedRawHash = HashSupport.sha256Hex(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore());
             boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
             LiveActivityContentAffectingState beforeLiveActivityState = LiveActivityContentAffectingState.from(game);
@@ -1248,20 +1285,6 @@ public class GameDetailImportService {
             }
         }
         return true;
-    }
-
-    private String hash(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder(hash.length * 2);
-            for (byte current : hash) {
-                builder.append(String.format("%02x", current));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is not available", exception);
-        }
     }
 
     private String officialTeamCode(String teamCode) {

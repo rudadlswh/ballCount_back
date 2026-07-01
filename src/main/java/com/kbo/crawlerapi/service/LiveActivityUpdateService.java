@@ -6,9 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.repository.LiveActivityTokenRepository;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import com.kbo.crawlerapi.support.HashSupport;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
@@ -218,13 +216,7 @@ public class LiveActivityUpdateService {
     }
 
     private String sha256(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashed = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            return java.util.HexFormat.of().formatHex(hashed);
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 not available", exception);
-        }
+        return HashSupport.sha256Hex(value);
     }
 
     private Set<String> changedFields(String previousContentStateJson, Map<String, Object> newContentState) {
