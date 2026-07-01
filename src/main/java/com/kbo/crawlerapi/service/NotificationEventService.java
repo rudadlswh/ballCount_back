@@ -306,7 +306,6 @@ public class NotificationEventService {
             return favoriteTeamGameSkipReason;
         }
         if (!eventSettingEnabled(device, draft.eventType())
-                || !favoriteTeamOnlyAllows(device, draft)
                 || !muteWhenLosingAllows(device, draft.eventType(), game)) {
             return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
         }
@@ -402,7 +401,6 @@ public class NotificationEventService {
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> favoriteTeamGameSkipReason(device, game) == null)
                 .filter(device -> eventSettingEnabled(device, draft.eventType()))
-                .filter(device -> favoriteTeamOnlyAllows(device, draft))
                 .filter(device -> muteWhenLosingAllows(device, draft.eventType(), game))
                 .toList();
     }
@@ -461,17 +459,12 @@ public class NotificationEventService {
         };
     }
 
-    private boolean favoriteTeamOnlyAllows(NotificationDevice device, NotificationEventDraft draft) {
-        if (!device.isFavoriteTeamOnlyEnabled() || !isTeamScopedRealtimeEvent(draft.eventType())) {
-            return true;
-        }
-        String eventTeamId = payloadText(draft, PAYLOAD_EVENT_TEAM_ID);
-        return eventTeamId != null && eventTeamId.equalsIgnoreCase(device.getFavoriteTeamId());
-    }
-
     private String favoriteTeamGameSkipReason(NotificationDevice device, Game game) {
+        if (!device.isFavoriteTeamOnlyEnabled()) {
+            return null;
+        }
         String favoriteTeamId = device.getFavoriteTeamId();
-        if (favoriteTeamId == null || favoriteTeamId.isBlank() || isRelevant(device, game)) {
+        if (favoriteTeamId != null && !favoriteTeamId.isBlank() && isRelevant(device, game)) {
             return null;
         }
         return ApnsPushService.FAVORITE_TEAM_MISMATCH;
@@ -498,15 +491,6 @@ public class NotificationEventService {
         return EVENT_SCORE_CHANGED.equals(eventType)
                 || EVENT_ON_BASE.equals(eventType)
                 || EVENT_LEAD_CHANGED.equals(eventType);
-    }
-
-    private String payloadText(NotificationEventDraft draft, String key) {
-        Object value = draft.payload().get(key);
-        if (value == null) {
-            return null;
-        }
-        String text = String.valueOf(value).trim();
-        return text.isEmpty() ? null : text;
     }
 
     private List<String> legacyEventKeys(NotificationEventDraft draft) {

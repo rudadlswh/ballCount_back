@@ -24,11 +24,13 @@ public interface NotificationDeviceRepository extends JpaRepository<Notification
             SELECT device
             FROM NotificationDevice device
             WHERE lower(device.platform) = lower(:platform)
-              AND device.notificationsEnabled = true
               AND lower(device.environment) = lower(:environment)
               AND (
-                  device.favoriteTeamId IS NULL
-                  OR lower(device.favoriteTeamId) IN :favoriteTeamIds
+                  device.favoriteTeamOnlyEnabled = false
+                  OR (
+                      device.favoriteTeamId IS NOT NULL
+                      AND lower(device.favoriteTeamId) IN :favoriteTeamIds
+                  )
               )
             """)
     List<NotificationDevice> findDeliveryTargets(
