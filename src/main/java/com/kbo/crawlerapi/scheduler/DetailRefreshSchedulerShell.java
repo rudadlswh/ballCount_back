@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.EnumMap;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,6 +26,7 @@ import com.kbo.crawlerapi.service.DetailRefreshOrchestratorService.RefreshPhase;
 public class DetailRefreshSchedulerShell {
 
     private static final Logger log = LoggerFactory.getLogger(DetailRefreshSchedulerShell.class);
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     private final DetailRefreshOrchestratorService detailRefreshOrchestratorService;
     private final CrawlJobTrackingService crawlJobTrackingService;
@@ -109,7 +111,7 @@ public class DetailRefreshSchedulerShell {
                 return;
             }
 
-            LocalDate targetDate = LocalDate.now(applicationClock);
+            LocalDate targetDate = LocalDate.now(applicationClock.withZone(KST));
             crawlJob = crawlJobTrackingService.createRunningDetailRefreshOrchestrationJob(
                     phase.phaseName(),
                     targetDate.toString()

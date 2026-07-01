@@ -95,6 +95,27 @@ class DetailRefreshSchedulerShellTest {
         assertThat(orchestrator.invocationCount()).isZero();
     }
 
+    @Test
+    void usesKstDateForTargetDate() {
+        SchedulerShellProperties properties = new SchedulerShellProperties();
+        properties.setEnabled(true);
+        properties.setPregameEnabled(true);
+        Clock utcClockBeforeKstMidnight = Clock.fixed(Instant.parse("2026-04-08T15:30:00Z"), ZoneId.of("UTC"));
+        RecordingOrchestrator orchestrator = new RecordingOrchestrator(null, null, successResult(), null);
+        RecordingTrackingService trackingService = new RecordingTrackingService();
+        DetailRefreshSchedulerShell shell = new DetailRefreshSchedulerShell(
+                orchestrator,
+                trackingService,
+                properties,
+                utcClockBeforeKstMidnight
+        );
+
+        shell.runPregamePass();
+
+        assertThat(orchestrator.lastDate()).isEqualTo(LocalDate.of(2026, 4, 9));
+        assertThat(trackingService.lastTargetKey()).isEqualTo("2026-04-09");
+    }
+
     private static DetailRefreshPassResult successResult() {
         return new DetailRefreshPassResult(
                 LocalDate.of(2026, 4, 9),
@@ -124,6 +145,7 @@ class DetailRefreshSchedulerShellTest {
         private final DetailRefreshPassResult fallbackResult;
         private final List<DetailRefreshPassResult> scriptedResults;
         private final AtomicInteger invocationCount = new AtomicInteger();
+        private LocalDate lastDate;
 
         private RecordingOrchestrator(
                 CountDownLatch started,
@@ -141,6 +163,7 @@ class DetailRefreshSchedulerShellTest {
         @Override
         public DetailRefreshPassResult runPass(LocalDate date, boolean execute, Set<RefreshPhase> allowedPhases) {
             int invocationIndex = invocationCount.getAndIncrement();
+            lastDate = date;
             if (started != null) {
                 started.countDown();
             }
@@ -161,9 +184,15 @@ class DetailRefreshSchedulerShellTest {
         private int invocationCount() {
             return invocationCount.get();
         }
+
+        private LocalDate lastDate() {
+            return lastDate;
+        }
     }
 
     private static final class RecordingTrackingService extends CrawlJobTrackingService {
+
+        private String lastTargetKey;
 
         private RecordingTrackingService() {
             super(null, null);
@@ -171,6 +200,7 @@ class DetailRefreshSchedulerShellTest {
 
         @Override
         public CrawlJob createRunningDetailRefreshOrchestrationJob(String phase, String targetKey) {
+            lastTargetKey = targetKey;
             CrawlJob crawlJob = new CrawlJob(
                     java.util.UUID.randomUUID(),
                     "detail-refresh-orchestration-pass",
@@ -182,6 +212,10 @@ class DetailRefreshSchedulerShellTest {
             );
             crawlJob.assignOrchestrationPhase(phase);
             return crawlJob;
+        }
+
+        private String lastTargetKey() {
+            return lastTargetKey;
         }
 
         @Override

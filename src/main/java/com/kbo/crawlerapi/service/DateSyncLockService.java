@@ -8,6 +8,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -15,6 +17,7 @@ public class DateSyncLockService {
 
     private static final String LIVE_SYNC_LOCK_NAMESPACE = "kbo-live-sync";
     private static final String DETAIL_REFRESH_LOCK_NAMESPACE = "kbo-detail-refresh";
+    private static final Logger log = LoggerFactory.getLogger(DateSyncLockService.class);
 
     private final DataSource dataSource;
     private final Set<String> inMemoryLocks = ConcurrentHashMap.newKeySet();
@@ -78,7 +81,8 @@ public class DateSyncLockService {
         public void close() {
             try {
                 release.run();
-            } catch (Exception ignored) {
+            } catch (Exception exception) {
+                log.warn("Failed to release date sync lock.", exception);
             }
         }
     }

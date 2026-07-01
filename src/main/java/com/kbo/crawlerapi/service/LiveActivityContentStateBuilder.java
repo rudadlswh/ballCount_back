@@ -11,10 +11,14 @@ import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class LiveActivityContentStateBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(LiveActivityContentStateBuilder.class);
 
     private final GameSnapshotRepository gameSnapshotRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -155,7 +159,8 @@ public class LiveActivityContentStateBuilder {
         }
         try {
             return objectMapper.readValue(event.getPayload(), new TypeReference<>() {});
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            log.debug("Failed to parse live activity event payload. eventId={}", event.getId(), exception);
             return Map.of();
         }
     }

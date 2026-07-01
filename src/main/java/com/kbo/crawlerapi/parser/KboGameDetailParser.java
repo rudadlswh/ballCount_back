@@ -517,7 +517,8 @@ public class KboGameDetailParser {
         if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
             try {
                 collectTextValues(objectMapper.readTree(trimmed), values);
-            } catch (IOException ignored) {
+            } catch (IOException exception) {
+                log.debug("[ScoreBoardStatus] failed to parse JSON status body; falling back to raw text.", exception);
                 values.add(trimmed);
             }
         } else {
