@@ -263,9 +263,6 @@ public class GameDetailImportService {
             lineScoreResponseBody = lineScoreFetchResult.responseBody();
             lineScoreResult = lineScoreFetchResult.lineScoreResult();
             parsedDetail = applyScoreBoardStatusIfNeeded(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineScoreResponseBody);
-            boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
-            lineupData = boxscoreFetchResult.lineupData();
-            parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
         } catch (Exception exception) {
             logDetailParseFailure(game, detailResponse, officialProviderGameId, exception);
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
@@ -277,6 +274,35 @@ public class GameDetailImportService {
             OffsetDateTime fetchedAt = OffsetDateTime.now();
             SelectedScore selectedScore = selectScore(game, parsedDetail, lineScoreResult);
             String combinedRawHash = HashSupport.sha256Hex(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore());
+            if (rawHashUnchanged(game, parsedDetail, combinedRawHash)) {
+                int existingLineScoreCount = existingLineScoreCount(game);
+                log.info(
+                        "[RealtimeFlow] source unchanged publicGameId={} providerGameId={} rawHash={} action=skip_snapshot_line_score_notification_live_activity",
+                        game.getPublicGameId(),
+                        resolvedOfficialDetail.providerGameId(),
+                        combinedRawHash
+                );
+                markDetailImportJob(crawlJob.getId(), false, existingLineScoreCount, parsedDetail, BoxscoreImportResult.skipped("unchangedRawHash"));
+                return new GameDetailImportResult(
+                        game.getPublicGameId(),
+                        game.getProviderGameId(),
+                        game.getGameDate(),
+                        parsedDetail.status().getApiValue(),
+                        false,
+                        false,
+                        existingLineScoreCount,
+                        selectedScore.awayScore(),
+                        selectedScore.homeScore(),
+                        parsedDetail.inning(),
+                        parsedDetail.inningHalf(),
+                        parsedDetail.inningLabel(),
+                        parsedDetail.sourceUpdatedAt(),
+                        fetchedAt
+                );
+            }
+            boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
+            lineupData = boxscoreFetchResult.lineupData();
+            parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
             boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
             LiveActivityContentAffectingState beforeLiveActivityState = LiveActivityContentAffectingState.from(game);
@@ -305,6 +331,16 @@ public class GameDetailImportService {
             );
             markDetailImportJob(crawlJob.getId(), snapshotCreated, lineScoreResult.innings().size(), parsedDetail, boxscoreImportResult);
             boolean liveActivityContentMayHaveChanged = snapshotCreated || lineScoresUpdated || gameContentStateChanged;
+            log.info(
+                    "[RealtimeFlow] source changed publicGameId={} providerGameId={} rawHash={} snapshotCreated={} lineScoresUpdated={} gameContentStateChanged={} liveActivityUpdateQueued={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    combinedRawHash,
+                    snapshotCreated,
+                    lineScoresUpdated,
+                    gameContentStateChanged,
+                    liveActivityContentMayHaveChanged && liveActivityUpdateService != null
+            );
             scheduleLiveActivityUpdateAfterCommit(game, parsedDetail, liveActivityContentMayHaveChanged);
 
             return new GameDetailImportResult(
@@ -474,7 +510,7 @@ public class GameDetailImportService {
             );
             return;
         }
-        if (!isLiveLike(parsedDetail.status())) {
+        if (!isLiveActivityUpdateTarget(parsedDetail.status())) {
             log.debug(
                     "[LiveActivity] update skipped publicGameId={} providerGameId={} databaseId={} reason=non_live_status status={}",
                     game.getPublicGameId(),
@@ -501,6 +537,30 @@ public class GameDetailImportService {
             return;
         }
         delivery.run();
+    }
+
+    private boolean rawHashUnchanged(Game game, ParsedGameDetail parsedDetail, String combinedRawHash) {
+        if (!hasMeaningfulLiveState(parsedDetail)
+                && !isLiveLike(parsedDetail.status())
+                && !isTerminalOrCancellationStatus(parsedDetail.status())) {
+            return false;
+        }
+        return gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())
+                .map(GameSnapshot::getRawHash)
+                .filter(combinedRawHash::equals)
+                .isPresent();
+    }
+
+    private int existingLineScoreCount(Game game) {
+        return lineScoreRepository.findByGame_IdOrderByInningNumberAsc(game.getId()).size();
+    }
+
+    private boolean isLiveActivityUpdateTarget(GameStatus status) {
+        return isLiveLike(status) || isTerminalOrCancellationStatus(status);
+    }
+
+    private boolean isTerminalOrCancellationStatus(GameStatus status) {
+        return status == GameStatus.FINAL || status == GameStatus.CANCELLED || status == GameStatus.POSTPONED;
     }
 
     private void deliverLiveActivityUpdate(Game game, ParsedGameDetail parsedDetail) {

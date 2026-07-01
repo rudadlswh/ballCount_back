@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
+import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
 import com.kbo.crawlerapi.api.dto.GamesByDateResponse;
 import com.kbo.crawlerapi.api.dto.GamesByMonthResponse;
 import com.kbo.crawlerapi.api.dto.ScoreboardResponse;
@@ -86,6 +87,32 @@ public class GameReadController {
     ) {
         validateGameId(gameId);
         return gameReadService.getGameDetail(gameId);
+    }
+
+    @GetMapping({"/games/{publicGameId}/live-state", "/games/{publicGameId}/realtime"})
+    @Operation(
+            summary = "Get one game live state",
+            description = "Returns the compact live state needed for fast in-game detail polling. "
+                    + "Clients can compare rawHash and skip UI updates when unchanged."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Compact latest game state",
+                    content = @Content(schema = @Schema(implementation = GameLiveStateResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Game not found",
+                    content = @Content(schema = @Schema(implementation = ApiErrorResponse.class))
+            )
+    })
+    public GameLiveStateResponse getGameLiveState(
+            @Parameter(description = "Public game identifier exposed by the app-facing API.", example = "20260401-LG-KIA")
+            @PathVariable("publicGameId") String gameId
+    ) {
+        validateGameId(gameId);
+        return gameReadService.getGameLiveState(gameId);
     }
 
     @GetMapping("/games/{gameId}/linescore")

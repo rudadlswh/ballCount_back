@@ -329,6 +329,36 @@ class ApnsPushServiceTest {
     }
 
     @Test
+    void tooManyRequestsResponseIsRetryableFailure() throws Exception {
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(429, "{\"reason\":\"TooManyRequests\"}")
+        );
+
+        ApnsPushService.ApnsSendResult result = service.sendLiveActivityUpdate(game(), liveActivityToken(), Map.of("isPreGame", false));
+
+        assertThat(result.reason()).isEqualTo(ApnsPushService.APNS_TOO_MANY_REQUESTS);
+        assertThat(result.retryableFailure()).isTrue();
+        assertThat(result.invalidToken()).isFalse();
+    }
+
+    @Test
+    void serverErrorResponseIsRetryableFailure() throws Exception {
+        ApnsPushService service = new ApnsPushService(
+                configuredProperties(),
+                Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")),
+                new RecordingHttpClient(503, "{\"reason\":\"ServiceUnavailable\"}")
+        );
+
+        ApnsPushService.ApnsSendResult result = service.sendLiveActivityUpdate(game(), liveActivityToken(), Map.of("isPreGame", false));
+
+        assertThat(result.reason()).isEqualTo(ApnsPushService.APNS_SERVER_ERROR);
+        assertThat(result.retryableFailure()).isTrue();
+        assertThat(result.invalidToken()).isFalse();
+    }
+
+    @Test
     void invalidProviderTokenResponseMapsToExplicitReason() {
         ApnsPushService service = new ApnsPushService(new ApnsProperties(), Clock.systemUTC());
 

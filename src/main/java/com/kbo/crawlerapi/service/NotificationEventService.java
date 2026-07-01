@@ -16,9 +16,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -47,6 +49,7 @@ public class NotificationEventService {
     private final ObjectMapper objectMapper;
     private final Clock applicationClock;
     private final TransactionTemplate transactionTemplate;
+    private final Executor notificationDeliveryExecutor;
 
     public NotificationEventService(
             NotificationEventRepository notificationEventRepository,
@@ -55,7 +58,7 @@ public class NotificationEventService {
             ObjectMapper objectMapper,
             Clock applicationClock
     ) {
-        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, objectMapper, applicationClock, null);
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, objectMapper, applicationClock, null, Runnable::run);
     }
 
     @Autowired
@@ -65,7 +68,8 @@ public class NotificationEventService {
             ApnsPushService apnsPushService,
             ObjectMapper objectMapper,
             Clock applicationClock,
-            PlatformTransactionManager transactionManager
+            PlatformTransactionManager transactionManager,
+            @Qualifier("notificationDeliveryExecutor") Executor notificationDeliveryExecutor
     ) {
         this.notificationEventRepository = notificationEventRepository;
         this.notificationDeviceRepository = notificationDeviceRepository;
@@ -73,6 +77,18 @@ public class NotificationEventService {
         this.objectMapper = objectMapper;
         this.applicationClock = applicationClock;
         this.transactionTemplate = transactionManager == null ? null : new TransactionTemplate(transactionManager);
+        this.notificationDeliveryExecutor = notificationDeliveryExecutor == null ? Runnable::run : notificationDeliveryExecutor;
+    }
+
+    public NotificationEventService(
+            NotificationEventRepository notificationEventRepository,
+            NotificationDeviceRepository notificationDeviceRepository,
+            ApnsPushService apnsPushService,
+            ObjectMapper objectMapper,
+            Clock applicationClock,
+            PlatformTransactionManager transactionManager
+    ) {
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, objectMapper, applicationClock, transactionManager, Runnable::run);
     }
 
     public EventDeliveryResult createAndDeliver(Game game, NotificationEventDraft draft) {
@@ -90,7 +106,7 @@ public class NotificationEventService {
             );
             return EventDeliveryResult.skipped(draft.eventKey());
         }
-        PreparedDelivery prepared = inTransaction(() -> prepareDelivery(game, draft));
+        PreparedDelivery prepared = inTransaction(() -> prepareDelivery(game, draft, false));
         if (prepared.duplicated()) {
             return EventDeliveryResult.duplicate(draft.eventKey());
         }
@@ -98,6 +114,63 @@ public class NotificationEventService {
         List<String> eventTeamIds = prepared.eventTeamIds();
         List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
 
+        return deliverPrepared(game, draft, event, eventTeamIds, relevantTeamDevices);
+    }
+
+    public EventDeliveryResult createAndDeliverAsync(Game game, NotificationEventDraft draft) {
+        if (notificationEventRepository == null || notificationDeviceRepository == null || apnsPushService == null) {
+            return createAndDeliver(game, draft);
+        }
+        if (!isDeliverableEventType(draft.eventType())) {
+            return EventDeliveryResult.skipped(draft.eventKey());
+        }
+        String initialApnsSkipReason = apnsPushService.readinessSkipReason();
+        if (initialApnsSkipReason != null) {
+            log.warn(
+                    "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
+                    draft.eventKey(),
+                    draft.eventType(),
+                    initialApnsSkipReason,
+                    apnsPushService.configuredEnvironment()
+            );
+            return EventDeliveryResult.skipped(draft.eventKey());
+        }
+        PreparedDelivery prepared = inTransaction(() -> prepareDelivery(game, draft, true));
+        if (prepared.duplicated()) {
+            return EventDeliveryResult.duplicate(draft.eventKey());
+        }
+        NotificationEvent event = prepared.event();
+        List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
+        if (relevantTeamDevices.isEmpty()) {
+            markEventDelivery(event, "skipped", ApnsPushService.NO_RELEVANT_DEVICES);
+            return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 1, 0);
+        }
+        List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices, draft, game);
+        String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices, game);
+        if (deviceSkipReason != null) {
+            markEventDelivery(event, "skipped", deviceSkipReason);
+            return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, relevantTeamDevices.size(), 0);
+        }
+        markEventDelivery(event, "queued", null);
+        log.info(
+                "[Notifications] APNs queued eventId={} eventKey={} eventType={} deliverableDeviceCount={} deliverableDeviceEnvCounts={}",
+                event.getId(),
+                draft.eventKey(),
+                draft.eventType(),
+                deliverableDevices.size(),
+                environmentCounts(deliverableDevices)
+        );
+        notificationDeliveryExecutor.execute(() -> deliverPrepared(game, draft, event, prepared.eventTeamIds(), relevantTeamDevices));
+        return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 0, 0);
+    }
+
+    private EventDeliveryResult deliverPrepared(
+            Game game,
+            NotificationEventDraft draft,
+            NotificationEvent event,
+            List<String> eventTeamIds,
+            List<NotificationDevice> relevantTeamDevices
+    ) {
         ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
         log.info(
                 "[Notifications] delivery diagnostics eventId={} eventKey={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} eventTeamIds={} relevantDeviceCount={} relevantDeviceEnvCounts={}",
@@ -240,7 +313,7 @@ public class NotificationEventService {
         return null;
     }
 
-    private PreparedDelivery prepareDelivery(Game game, NotificationEventDraft draft) {
+    private PreparedDelivery prepareDelivery(Game game, NotificationEventDraft draft, boolean optimizedTargetLookup) {
         if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()
                 || legacyEventKeys(draft).stream().anyMatch(notificationEventRepository::existsByEventKey)) {
             return PreparedDelivery.duplicateResult();
@@ -264,7 +337,15 @@ public class NotificationEventService {
                 Instant.now(applicationClock)
         );
         List<String> eventTeamIds = eventTeamIds(game);
-        List<NotificationDevice> relevantTeamDevices = notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue("ios");
+        List<NotificationDevice> relevantTeamDevices = optimizedTargetLookup
+                ? notificationDeviceRepository.findDeliveryTargets(
+                        "ios",
+                        apnsPushService.configuredEnvironment(),
+                        eventTeamIds.stream()
+                                .map(teamId -> teamId.toLowerCase(java.util.Locale.ROOT))
+                                .toList()
+                )
+                : notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue("ios");
         return new PreparedDelivery(false, event, eventTeamIds, relevantTeamDevices);
     }
 

@@ -58,7 +58,10 @@ public class ApnsPushService {
     public static final String APNS_BAD_DEVICE_TOKEN = "apns_bad_device_token";
     public static final String APNS_BAD_TOKEN = "apns_bad_token";
     public static final String APNS_BAD_ENVIRONMENT = "apns_bad_environment";
+    public static final String APNS_BAD_ENVIRONMENT_KEY_IN_TOKEN = "apns_bad_environment_key_in_token";
     public static final String APNS_TOO_MANY_PROVIDER_TOKEN_UPDATES = "apns_too_many_provider_token_updates";
+    public static final String APNS_TOO_MANY_REQUESTS = "apns_too_many_requests";
+    public static final String APNS_SERVER_ERROR = "apns_server_error";
     private static final Duration PROVIDER_TOKEN_REFRESH_AFTER = Duration.ofMinutes(50);
     private static final Duration PROVIDER_TOKEN_MAX_AGE = Duration.ofMinutes(60);
 
@@ -515,6 +518,8 @@ public class ApnsPushService {
         return statusCode == 410
                 || reason.contains("BadDeviceToken")
                 || reason.contains("Unregistered")
+                || reason.contains("BadEnvironmentKeyInToken")
+                || APNS_BAD_ENVIRONMENT_KEY_IN_TOKEN.equals(reason)
                 || reason.contains("DeviceTokenNotForTopic")
                 || APNS_BAD_DEVICE_TOKEN.equals(reason);
     }
@@ -523,7 +528,9 @@ public class ApnsPushService {
         return statusCode == 410
                 || (reason != null && reason.contains("BadDeviceToken"))
                 || (reason != null && reason.contains("Unregistered"))
+                || (reason != null && reason.contains("BadEnvironmentKeyInToken"))
                 || APNS_BAD_DEVICE_TOKEN.equals(reason)
+                || APNS_BAD_ENVIRONMENT_KEY_IN_TOKEN.equals(reason)
                 || APNS_BAD_TOKEN.equals(reason);
     }
 
@@ -537,8 +544,14 @@ public class ApnsPushService {
         if (reason != null && reason.contains("DeviceTokenNotForTopic")) {
             return APNS_BAD_ENVIRONMENT;
         }
+        if (reason != null && reason.contains("BadEnvironmentKeyInToken")) {
+            return APNS_BAD_ENVIRONMENT_KEY_IN_TOKEN;
+        }
         if (reason != null && reason.contains("TooManyProviderTokenUpdates")) {
             return APNS_TOO_MANY_PROVIDER_TOKEN_UPDATES;
+        }
+        if (reason != null && reason.contains("TooManyRequests")) {
+            return APNS_TOO_MANY_REQUESTS;
         }
         return reason;
     }
@@ -563,12 +576,22 @@ public class ApnsPushService {
         String reason = response.body() == null || response.body().isBlank()
                 ? "status_" + response.statusCode()
                 : response.body();
-        String mappedReason = reasonMapper.apply(reason);
+        String mappedReason = mapHttpStatusFailureReason(response.statusCode(), reasonMapper.apply(reason));
         return new ApnsHttpResult(
                 new ApnsSendResult(false, false, invalidTokenResponse.isInvalid(response.statusCode(), mappedReason), mappedReason),
                 response.statusCode(),
                 mappedReason
         );
+    }
+
+    private String mapHttpStatusFailureReason(int statusCode, String mappedReason) {
+        if (statusCode == 429) {
+            return APNS_TOO_MANY_REQUESTS;
+        }
+        if (statusCode == 500 || statusCode == 503) {
+            return APNS_SERVER_ERROR;
+        }
+        return mappedReason;
     }
 
     private synchronized String providerToken() throws Exception {
@@ -732,6 +755,13 @@ public class ApnsPushService {
 
         public static ApnsSendResult skipped(String reason) {
             return new ApnsSendResult(false, true, false, reason);
+        }
+
+        public boolean retryableFailure() {
+            return !sent
+                    && !skipped
+                    && !invalidToken
+                    && (APNS_TOO_MANY_REQUESTS.equals(reason) || APNS_SERVER_ERROR.equals(reason));
         }
     }
 

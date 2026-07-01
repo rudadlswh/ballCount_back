@@ -258,7 +258,7 @@ public class LiveGameSyncService {
             } else {
                 continue;
             }
-            EventDeliveryResult delivery = notificationEventService.createAndDeliver(game, draft);
+            EventDeliveryResult delivery = notificationEventService.createAndDeliverAsync(game, draft);
             updatedCount++;
             updatedGames.add(game.getPublicGameId());
             if (delivery.eventCreated()) {
@@ -354,7 +354,7 @@ public class LiveGameSyncService {
                             draft.eventKey(),
                             after.getPublicGameId()
                     );
-                    EventDeliveryResult delivery = notificationEventService.createAndDeliver(after, draft);
+                    EventDeliveryResult delivery = notificationEventService.createAndDeliverAsync(after, draft);
                     handledEventKeys.add(draft.eventKey());
                     if (delivery.eventCreated()) {
                         eventCreatedCount++;
@@ -445,7 +445,7 @@ public class LiveGameSyncService {
                 continue;
             }
             logSnapshotRecoveryDecision(game, null, null, draft, "candidate", null);
-            EventDeliveryResult delivery = notificationEventService.createAndDeliver(game, draft);
+            EventDeliveryResult delivery = notificationEventService.createAndDeliverAsync(game, draft);
             handledEventKeys.add(draft.eventKey());
             if (!delivery.eventCreated()) {
                 logSnapshotRecoveryDecision(game, null, null, draft, "duplicate_event_key", "duplicate_event_key");

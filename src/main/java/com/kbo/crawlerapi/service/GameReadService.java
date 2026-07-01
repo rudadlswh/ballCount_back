@@ -13,6 +13,7 @@ import com.kbo.crawlerapi.api.dto.GameBatterRecordDto;
 import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
+import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
 import com.kbo.crawlerapi.api.dto.GamePitcherRecordDto;
 import com.kbo.crawlerapi.api.dto.GameTotalsDto;
 import com.kbo.crawlerapi.api.dto.GameStateDto;
@@ -32,6 +33,7 @@ import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.PitcherRec
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import com.kbo.crawlerapi.repository.LineScoreRepository;
+import com.kbo.crawlerapi.support.HashSupport;
 
 @Service
 public class GameReadService {
@@ -105,6 +107,35 @@ public class GameReadService {
                 latestUpdatedAt(game, latestSnapshot),
                 toKst(latestSourceUpdatedAt(game, latestSnapshot)),
                 false
+        );
+    }
+
+    public GameLiveStateResponse getGameLiveState(String gameId) {
+        Game game = gameRepository.findByPublicGameId(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found: " + gameId));
+        GameSnapshot latestSnapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())
+                .orElse(null);
+        Integer awayScore = latestSnapshot != null && latestSnapshot.getAwayScore() != null ? latestSnapshot.getAwayScore() : game.getAwayScore();
+        Integer homeScore = latestSnapshot != null && latestSnapshot.getHomeScore() != null ? latestSnapshot.getHomeScore() : game.getHomeScore();
+        return new GameLiveStateResponse(
+                game.getPublicGameId(),
+                game.getStatus().getApiValue(),
+                latestSnapshot == null ? null : latestSnapshot.getInning(),
+                latestSnapshot == null ? null : latestSnapshot.getInningHalf(),
+                awayScore,
+                homeScore,
+                latestSnapshot == null ? null : latestSnapshot.getBalls(),
+                latestSnapshot == null ? null : latestSnapshot.getStrikes(),
+                latestSnapshot == null ? null : latestSnapshot.getOuts(),
+                new GameLiveStateResponse.BasesDto(
+                        latestSnapshot != null && latestSnapshot.isRunnerOnFirst(),
+                        latestSnapshot != null && latestSnapshot.isRunnerOnSecond(),
+                        latestSnapshot != null && latestSnapshot.isRunnerOnThird()
+                ),
+                latestSnapshot == null ? null : latestSnapshot.getCurrentPitcherName(),
+                latestSnapshot == null ? null : latestSnapshot.getCurrentBatterName(),
+                liveStateHash(game, latestSnapshot, awayScore, homeScore),
+                latestUpdatedAt(game, latestSnapshot)
         );
     }
 
@@ -353,5 +384,27 @@ public class GameReadService {
 
     private OffsetDateTime toKst(OffsetDateTime value) {
         return value == null ? null : value.atZoneSameInstant(KST).toOffsetDateTime();
+    }
+
+    private String liveStateHash(Game game, GameSnapshot snapshot, Integer awayScore, Integer homeScore) {
+        String sourceHash = snapshot == null || snapshot.getRawHash() == null ? "" : snapshot.getRawHash();
+        String value = String.join("|",
+                sourceHash,
+                game.getPublicGameId(),
+                game.getStatus().getApiValue(),
+                String.valueOf(snapshot == null ? null : snapshot.getInning()),
+                String.valueOf(snapshot == null ? null : snapshot.getInningHalf()),
+                String.valueOf(awayScore),
+                String.valueOf(homeScore),
+                String.valueOf(snapshot == null ? null : snapshot.getBalls()),
+                String.valueOf(snapshot == null ? null : snapshot.getStrikes()),
+                String.valueOf(snapshot == null ? null : snapshot.getOuts()),
+                String.valueOf(snapshot != null && snapshot.isRunnerOnFirst()),
+                String.valueOf(snapshot != null && snapshot.isRunnerOnSecond()),
+                String.valueOf(snapshot != null && snapshot.isRunnerOnThird()),
+                String.valueOf(snapshot == null ? null : snapshot.getCurrentPitcherName()),
+                String.valueOf(snapshot == null ? null : snapshot.getCurrentBatterName())
+        );
+        return HashSupport.sha256Hex(value);
     }
 }

@@ -124,6 +124,62 @@ class LiveActivityUpdateServiceTest {
     }
 
     @Test
+    void volatileCountChangeWithinDebounceDoesNotSendApns() {
+        Game game = fixtureGame();
+        Map<String, Object> previousContentState = contentState(1, 1, 0, "김타자");
+        previousContentState.put("favoriteScoreText", "1");
+        previousContentState.put("opponentScoreText", "1");
+        Map<String, Object> nextContentState = contentState(2, 1, 0, "김타자");
+        nextContentState.put("favoriteScoreText", "1");
+        nextContentState.put("opponentScoreText", "1");
+        LiveActivityToken token = liveActivityToken();
+        token.markContentStateDelivered(hash(stableJson(previousContentState)), stableJson(previousContentState), OffsetDateTime.now(CLOCK));
+        mockActiveMatches(game, List.of(token));
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(nextContentState),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverUpdate(game);
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(apnsPushService.contentStates).isEmpty();
+    }
+
+    @Test
+    void inningChangeBypassesDebounceAndSendsApns() {
+        Game game = fixtureGame();
+        Map<String, Object> previousContentState = contentState(1, 1, 0, "김타자");
+        previousContentState.put("favoriteScoreText", "1");
+        previousContentState.put("opponentScoreText", "1");
+        previousContentState.put("inningText", "2회 초");
+        Map<String, Object> nextContentState = contentState(1, 1, 0, "김타자");
+        nextContentState.put("favoriteScoreText", "1");
+        nextContentState.put("opponentScoreText", "1");
+        nextContentState.put("inningText", "2회 말");
+        LiveActivityToken token = liveActivityToken();
+        token.markContentStateDelivered(hash(stableJson(previousContentState)), stableJson(previousContentState), OffsetDateTime.now(CLOCK));
+        mockActiveMatches(game, List.of(token));
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(nextContentState),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverUpdate(game);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(apnsPushService.contentStates).hasSize(1);
+        assertThat(apnsPushService.contentStates.get(0)).containsEntry("inningText", "2회 말");
+    }
+
+    @Test
     void invalidLiveActivityApnsTokenMarksTokenInactive() {
         Game game = fixtureGame();
         LiveActivityToken token = liveActivityToken();

@@ -8,6 +8,8 @@ import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.repository.LiveActivityTokenRepository;
 import com.kbo.crawlerapi.support.HashSupport;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,6 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class LiveActivityUpdateService {
 
     private static final Logger log = LoggerFactory.getLogger(LiveActivityUpdateService.class);
+    private static final Duration VOLATILE_UPDATE_DEBOUNCE = Duration.ofSeconds(3);
 
     private final LiveActivityTokenRepository liveActivityTokenRepository;
     private final LiveActivityContentStateBuilder contentStateBuilder;
@@ -123,6 +126,19 @@ public class LiveActivityUpdateService {
                 );
                 continue;
             }
+            if (shouldDebounce(token, changedFields)) {
+                skipped++;
+                log.info(
+                        "[LiveActivity] APNs skipped publicGameId={} providerGameId={} databaseId={} activityId={} changedFields={} reason=debounced_volatile_content_state debounceSeconds={}",
+                        game.getPublicGameId(),
+                        game.getProviderGameId(),
+                        game.getId(),
+                        token.getActivityId(),
+                        changedFields,
+                        VOLATILE_UPDATE_DEBOUNCE.toSeconds()
+                );
+                continue;
+            }
 
             log.info(
                     "[LiveActivity] APNs update candidate publicGameId={} providerGameId={} databaseId={} activityId={} oldContentStateHash={} newContentStateHash={} changedFields={} matchedCount={}",
@@ -148,7 +164,7 @@ public class LiveActivityUpdateService {
                 }
             }
             log.info(
-                    "[LiveActivity] APNs token result publicGameId={} providerGameId={} databaseId={} activityId={} oldContentStateHash={} newContentStateHash={} changedFields={} matchedCount={} sent={} skipped={} failed={} reason={}",
+                    "[LiveActivity] APNs token result publicGameId={} providerGameId={} databaseId={} activityId={} oldContentStateHash={} newContentStateHash={} changedFields={} matchedCount={} sent={} skipped={} failed={} reason={} retryable={}",
                     game.getPublicGameId(),
                     game.getProviderGameId(),
                     game.getId(),
@@ -160,7 +176,8 @@ public class LiveActivityUpdateService {
                     result.sent() ? 1 : 0,
                     result.skipped() ? 1 : 0,
                     !result.sent() && !result.skipped() ? 1 : 0,
-                    result.reason()
+                    result.reason(),
+                    result.retryableFailure()
             );
         }
         log.info(
@@ -231,6 +248,39 @@ public class LiveActivityUpdateService {
             }
         }
         return changed;
+    }
+
+    private boolean shouldDebounce(LiveActivityToken token, Set<String> changedFields) {
+        if (changedFields.isEmpty() || containsImmediateField(changedFields)) {
+            return false;
+        }
+        String previousPayload = token.getContentStateJson();
+        if (previousPayload == null || !previousPayload.contains("favoriteScoreText")) {
+            return false;
+        }
+        if (!changedFields.stream().allMatch(this::isVolatileField)) {
+            return false;
+        }
+        OffsetDateTime lastSeenAt = token.getLastSeenAt();
+        if (lastSeenAt == null) {
+            return false;
+        }
+        Instant nextAllowedAt = lastSeenAt.toInstant().plus(VOLATILE_UPDATE_DEBOUNCE);
+        return Instant.now(applicationClock).isBefore(nextAllowedAt);
+    }
+
+    private boolean containsImmediateField(Set<String> changedFields) {
+        return changedFields.stream().anyMatch(field -> switch (field) {
+            case "favoriteScoreText", "opponentScoreText", "summaryText", "isPreGame", "inningText" -> true;
+            default -> false;
+        });
+    }
+
+    private boolean isVolatileField(String field) {
+        return switch (field) {
+            case "inningText", "balls", "strikes", "outs", "runnerOnFirst", "runnerOnSecond", "runnerOnThird", "currentBatterName", "currentPitcherName" -> true;
+            default -> false;
+        };
     }
 
     private Map<String, Object> readContentState(String contentStateJson) {

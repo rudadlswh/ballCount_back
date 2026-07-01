@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 
 public interface NotificationDeviceRepository extends JpaRepository<NotificationDevice, UUID> {
@@ -17,6 +19,23 @@ public interface NotificationDeviceRepository extends JpaRepository<Notification
     Optional<NotificationDevice> findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(String installationId, String environment);
 
     List<NotificationDevice> findByPlatformAndNotificationsEnabledTrue(String platform);
+
+    @Query("""
+            SELECT device
+            FROM NotificationDevice device
+            WHERE lower(device.platform) = lower(:platform)
+              AND device.notificationsEnabled = true
+              AND lower(device.environment) = lower(:environment)
+              AND (
+                  device.favoriteTeamId IS NULL
+                  OR lower(device.favoriteTeamId) IN :favoriteTeamIds
+              )
+            """)
+    List<NotificationDevice> findDeliveryTargets(
+            @Param("platform") String platform,
+            @Param("environment") String environment,
+            @Param("favoriteTeamIds") List<String> favoriteTeamIds
+    );
 
     List<NotificationDevice> findByFavoriteTeamIdIn(List<String> favoriteTeamIds);
 

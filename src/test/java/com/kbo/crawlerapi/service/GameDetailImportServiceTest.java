@@ -227,7 +227,7 @@ class GameDetailImportServiceTest {
     }
 
     @Test
-    void savesSnapshotWhenOnlySelectedScoreChangedEvenIfRawHashMatches() {
+    void skipsSnapshotWhenSelectedScoreIsUnchangedByRawHashPolicy() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
         kboGameDetailClient.detailBody = "{\"game\":[]}";
@@ -269,12 +269,9 @@ class GameDetailImportServiceTest {
 
         GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
 
-        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
-        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
-        assertThat(result.snapshotCreated()).isTrue();
-        assertThat(snapshotCaptor.getValue().getRawHash()).isEqualTo(latestSnapshot.getRawHash());
-        assertThat(snapshotCaptor.getValue().getAwayScore()).isEqualTo(11);
-        assertThat(snapshotCaptor.getValue().getHomeScore()).isEqualTo(9);
+        verify(gameSnapshotRepository, never()).save(any(GameSnapshot.class));
+        assertThat(result.snapshotCreated()).isFalse();
+        assertThat(result.lineScoresUpdated()).isFalse();
     }
 
     @Test
@@ -1504,7 +1501,7 @@ class GameDetailImportServiceTest {
     }
 
     @Test
-    void createsCorrectedSnapshotWhenRawHashIsUnchangedButCurrentPlayersWereMissing() {
+    void skipsCorrectedSnapshotWhenRawHashIsUnchangedByPolicy() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
         kboGameDetailClient.detailBody = "{\"game\":[]}";
@@ -1572,12 +1569,9 @@ class GameDetailImportServiceTest {
 
         GameDetailImportResult result = gameDetailImportService.importGameDetail(game.getPublicGameId());
 
-        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
-        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
-        assertThat(result.snapshotCreated()).isTrue();
-        assertThat(snapshotCaptor.getValue().getRawHash()).isEqualTo(latestSnapshot.getRawHash());
-        assertThat(snapshotCaptor.getValue().getCurrentPitcherName()).isEqualTo("홈투수");
-        assertThat(snapshotCaptor.getValue().getCurrentBatterName()).isEqualTo("원정타자");
+        verify(gameSnapshotRepository, never()).save(any(GameSnapshot.class));
+        assertThat(result.snapshotCreated()).isFalse();
+        assertThat(result.lineScoresUpdated()).isFalse();
     }
 
     @Test
