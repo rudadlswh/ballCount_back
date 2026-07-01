@@ -564,7 +564,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void muteWhenLosingSkipsScoreNotificationsWhenFavoriteTeamTiesGame() {
+    void muteWhenLosingAllowsScoreNotificationsWhenFavoriteTeamTiesGame() {
         Game tiedGame = fixtureGame(3, 3);
         NotificationDevice device = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
@@ -577,9 +577,8 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(tiedGame, draft);
 
-        assertThat(result.sentCount()).isZero();
-        assertThat(result.skippedCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).isEmpty();
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(device);
     }
 
     @Test

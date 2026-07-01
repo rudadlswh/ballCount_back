@@ -429,28 +429,12 @@ public class ApnsPushService {
         }
     }
 
-    private String endpoint(NotificationDevice device) {
-        String env = selectedApnsEnvironment(device.getEnvironment());
+    private String endpoint(String environment, String token) {
+        String env = selectedApnsEnvironment(environment);
         String host = "production".equals(env)
                 ? "https://api.push.apple.com"
                 : "https://api.sandbox.push.apple.com";
-        return host + "/3/device/" + device.getDeviceToken();
-    }
-
-    private String endpoint(LiveActivityToken token) {
-        String env = selectedApnsEnvironment(token.getEnvironment());
-        String host = "production".equals(env)
-                ? "https://api.push.apple.com"
-                : "https://api.sandbox.push.apple.com";
-        return host + "/3/device/" + token.getActivityToken();
-    }
-
-    private String endpoint(LiveActivityPushToStartToken token) {
-        String env = selectedApnsEnvironment(token.getEnvironment());
-        String host = "production".equals(env)
-                ? "https://api.push.apple.com"
-                : "https://api.sandbox.push.apple.com";
-        return host + "/3/device/" + token.getPushToStartToken();
+        return host + "/3/device/" + token;
     }
 
     String selectedApnsEnvironment(String environment) {
@@ -462,7 +446,7 @@ public class ApnsPushService {
                 {"aps":{"alert":{"title":%s,"body":%s},"sound":"default"},"data":%s}
                 """.formatted(jsonString(event.getTitle()), jsonString(event.getBody()), event.getPayload());
         return HttpRequest.newBuilder()
-                .uri(URI.create(endpoint(device)))
+                .uri(URI.create(endpoint(device.getEnvironment(), device.getDeviceToken())))
                 .timeout(requestTimeout)
                 .header("authorization", "bearer " + token)
                 .header("apns-topic", properties.getBundleId())
@@ -481,7 +465,7 @@ public class ApnsPushService {
         aps.put("stale-date", Instant.now(applicationClock).plusSeconds(120).getEpochSecond());
         Map<String, Object> payload = Map.of("aps", aps);
         return HttpRequest.newBuilder()
-                .uri(URI.create(endpoint(liveActivityToken)))
+                .uri(URI.create(endpoint(liveActivityToken.getEnvironment(), liveActivityToken.getActivityToken())))
                 .timeout(requestTimeout)
                 .header("authorization", "bearer " + token)
                 .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")
@@ -508,7 +492,7 @@ public class ApnsPushService {
         aps.put("input-push-token", 1);
         Map<String, Object> payload = Map.of("aps", aps);
         return HttpRequest.newBuilder()
-                .uri(URI.create(endpoint(pushToStartToken)))
+                .uri(URI.create(endpoint(pushToStartToken.getEnvironment(), pushToStartToken.getPushToStartToken())))
                 .timeout(requestTimeout)
                 .header("authorization", "bearer " + token)
                 .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")

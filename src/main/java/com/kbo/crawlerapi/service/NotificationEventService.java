@@ -381,7 +381,7 @@ public class NotificationEventService {
     }
 
     private boolean favoriteTeamOnlyAllows(NotificationDevice device, NotificationEventDraft draft) {
-        if (!device.isFavoriteTeamOnlyEnabled() || !isOpponentScopedEvent(draft.eventType())) {
+        if (!device.isFavoriteTeamOnlyEnabled() || !isTeamScopedRealtimeEvent(draft.eventType())) {
             return true;
         }
         String eventTeamId = payloadText(draft, PAYLOAD_EVENT_TEAM_ID);
@@ -397,7 +397,7 @@ public class NotificationEventService {
     }
 
     private boolean muteWhenLosingAllows(NotificationDevice device, String eventType, Game game) {
-        if (!device.isMuteWhenLosingEnabled() || !isRealtimeTeamEvent(eventType)) {
+        if (!device.isMuteWhenLosingEnabled() || !isTeamScopedRealtimeEvent(eventType)) {
             return true;
         }
         String favoriteTeamId = device.getFavoriteTeamId();
@@ -405,21 +405,15 @@ public class NotificationEventService {
             return false;
         }
         if (favoriteTeamId.equals(game.getHomeTeam().getTeamCode())) {
-            return game.getHomeScore() > game.getAwayScore();
+            return game.getHomeScore() >= game.getAwayScore();
         }
         if (favoriteTeamId.equals(game.getAwayTeam().getTeamCode())) {
-            return game.getAwayScore() > game.getHomeScore();
+            return game.getAwayScore() >= game.getHomeScore();
         }
         return false;
     }
 
-    private boolean isOpponentScopedEvent(String eventType) {
-        return EVENT_SCORE_CHANGED.equals(eventType)
-                || EVENT_ON_BASE.equals(eventType)
-                || EVENT_LEAD_CHANGED.equals(eventType);
-    }
-
-    private boolean isRealtimeTeamEvent(String eventType) {
+    private boolean isTeamScopedRealtimeEvent(String eventType) {
         return EVENT_SCORE_CHANGED.equals(eventType)
                 || EVENT_ON_BASE.equals(eventType)
                 || EVENT_LEAD_CHANGED.equals(eventType);
