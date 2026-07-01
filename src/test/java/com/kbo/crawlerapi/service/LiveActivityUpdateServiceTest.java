@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.config.ApnsProperties;
 import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.domain.Team;
@@ -244,6 +245,105 @@ class LiveActivityUpdateServiceTest {
     }
 
     @Test
+    void gameEndEventSendsLiveActivityEndPush() {
+        Game game = fixtureGame(GameStatus.FINAL, null, null);
+        LiveActivityToken token = liveActivityToken();
+        mockActiveMatches(game, List.of(token));
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of(
+                        "isPreGame", false,
+                        "favoriteScoreText", "1",
+                        "opponentScoreText", "1",
+                        "summaryText", "종료"
+                )),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverEnd(game, NotificationEventService.EVENT_GAME_END);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(apnsPushService.endedTokens).containsExactly(token);
+        assertThat(apnsPushService.endContentStates.get(0))
+                .containsEntry("favoriteScoreText", "1")
+                .containsEntry("opponentScoreText", "1")
+                .containsEntry("gameStatus", "final")
+                .containsEntry("endText", "종료");
+        assertThat(token.isActive()).isFalse();
+    }
+
+    @Test
+    void gameCancelledEventSendsLiveActivityEndPush() {
+        Game game = fixtureGame(GameStatus.CANCELLED, GameCancelReason.RAIN, "우천취소");
+        LiveActivityToken token = liveActivityToken();
+        mockActiveMatches(game, List.of(token));
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of(
+                        "isPreGame", false,
+                        "favoriteScoreText", "-",
+                        "opponentScoreText", "-",
+                        "summaryText", "취소"
+                )),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverEnd(game, NotificationEventService.EVENT_GAME_CANCELLED);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(apnsPushService.endedTokens).containsExactly(token);
+        assertThat(apnsPushService.endContentStates.get(0))
+                .containsEntry("gameStatus", "cancelled")
+                .containsEntry("endText", "우천취소")
+                .containsEntry("summaryText", "우천취소");
+        assertThat(token.isActive()).isFalse();
+    }
+
+    @Test
+    void inactiveLiveActivityDoesNotReceiveDuplicateEndPush() {
+        Game game = fixtureGame(GameStatus.FINAL, null, null);
+        LiveActivityToken inactiveToken = liveActivityToken();
+        inactiveToken.disable(OffsetDateTime.now(CLOCK));
+        mockActiveMatches(game, List.of());
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of("isPreGame", false)),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverEnd(game, NotificationEventService.EVENT_GAME_END);
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(apnsPushService.endedTokens).isEmpty();
+        assertThat(inactiveToken.isActive()).isFalse();
+    }
+
+    @Test
+    void invalidLiveActivityEndTokenMarksTokenInactive() {
+        Game game = fixtureGame(GameStatus.FINAL, null, null);
+        LiveActivityToken token = liveActivityToken();
+        mockActiveMatches(game, List.of(token));
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService(new ApnsPushService.ApnsSendResult(false, false, true, "Unregistered"));
+        LiveActivityUpdateService service = new LiveActivityUpdateService(
+                repository,
+                new StubLiveActivityContentStateBuilder(Map.of("isPreGame", false, "summaryText", "종료")),
+                apnsPushService,
+                CLOCK
+        );
+
+        var result = service.deliverEnd(game, NotificationEventService.EVENT_GAME_END);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(token.isActive()).isFalse();
+    }
+
+    @Test
     void topicEnvironmentMismatchDoesNotDisableLiveActivityToken() {
         Game game = fixtureGame();
         LiveActivityToken token = liveActivityToken();
@@ -281,6 +381,10 @@ class LiveActivityUpdateServiceTest {
     }
 
     private Game fixtureGame() {
+        return fixtureGame(GameStatus.LIVE, null, null);
+    }
+
+    private Game fixtureGame(GameStatus status, GameCancelReason cancelReason, String rawCancelText) {
         Team homeTeam = new Team(UUID.randomUUID(), "hanwha", "한화 이글스", "HAN", "Hanwha Eagles", null);
         Team awayTeam = new Team(UUID.randomUUID(), "lotte", "롯데 자이언츠", "LOT", "Lotte Giants", null);
         return new Game(
@@ -291,16 +395,16 @@ class LiveActivityUpdateServiceTest {
                 LocalDate.of(2026, 6, 5),
                 OffsetDateTime.of(2026, 6, 5, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
                 "대전",
-                GameStatus.LIVE,
+                status,
                 homeTeam,
                 awayTeam,
                 1,
                 1,
                 "1회 초",
-                false,
-                false,
-                null,
-                null,
+                status == GameStatus.CANCELLED,
+                status == GameStatus.POSTPONED,
+                cancelReason,
+                rawCancelText,
                 null
         );
     }
@@ -366,6 +470,8 @@ class LiveActivityUpdateServiceTest {
         private final ApnsSendResult result;
         private final List<Map<String, Object>> contentStates = new ArrayList<>();
         private final List<LiveActivityToken> updatedTokens = new ArrayList<>();
+        private final List<Map<String, Object>> endContentStates = new ArrayList<>();
+        private final List<LiveActivityToken> endedTokens = new ArrayList<>();
 
         private RecordingApnsPushService(ApnsSendResult result) {
             super(new ApnsProperties(), CLOCK);
@@ -381,6 +487,13 @@ class LiveActivityUpdateServiceTest {
         public ApnsSendResult sendLiveActivityUpdate(Game game, LiveActivityToken liveActivityToken, Map<String, Object> contentState) {
             contentStates.add(contentState);
             updatedTokens.add(liveActivityToken);
+            return result;
+        }
+
+        @Override
+        public ApnsSendResult sendLiveActivityEnd(Game game, LiveActivityToken liveActivityToken, Map<String, Object> contentState) {
+            endContentStates.add(contentState);
+            endedTokens.add(liveActivityToken);
             return result;
         }
     }

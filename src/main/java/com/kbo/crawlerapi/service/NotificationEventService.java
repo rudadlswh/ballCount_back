@@ -36,6 +36,8 @@ public class NotificationEventService {
     public static final String EVENT_LEAD_CHANGED = "LEAD_CHANGED";
     public static final String EVENT_GAME_END = "GAME_END";
     public static final String EVENT_GAME_CANCELLED = "GAME_CANCELLED";
+    public static final String EVENT_CANCELLED = "CANCELLED";
+    public static final String EVENT_POSTPONED = "POSTPONED";
     public static final String EVENT_GAME_INTERRUPTED = "GAME_INTERRUPTED";
     public static final String EVENT_GAME_RESUME_SCHEDULED = "GAME_RESUME_SCHEDULED";
     public static final String EVENT_GAME_RESUMED = "GAME_RESUMED";
@@ -46,6 +48,7 @@ public class NotificationEventService {
     private final NotificationEventRepository notificationEventRepository;
     private final NotificationDeviceRepository notificationDeviceRepository;
     private final ApnsPushService apnsPushService;
+    private final LiveActivityUpdateService liveActivityUpdateService;
     private final ObjectMapper objectMapper;
     private final Clock applicationClock;
     private final TransactionTemplate transactionTemplate;
@@ -58,7 +61,7 @@ public class NotificationEventService {
             ObjectMapper objectMapper,
             Clock applicationClock
     ) {
-        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, objectMapper, applicationClock, null, Runnable::run);
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, objectMapper, applicationClock, null, Runnable::run);
     }
 
     @Autowired
@@ -66,6 +69,7 @@ public class NotificationEventService {
             NotificationEventRepository notificationEventRepository,
             NotificationDeviceRepository notificationDeviceRepository,
             ApnsPushService apnsPushService,
+            LiveActivityUpdateService liveActivityUpdateService,
             ObjectMapper objectMapper,
             Clock applicationClock,
             PlatformTransactionManager transactionManager,
@@ -74,6 +78,7 @@ public class NotificationEventService {
         this.notificationEventRepository = notificationEventRepository;
         this.notificationDeviceRepository = notificationDeviceRepository;
         this.apnsPushService = apnsPushService;
+        this.liveActivityUpdateService = liveActivityUpdateService;
         this.objectMapper = objectMapper;
         this.applicationClock = applicationClock;
         this.transactionTemplate = transactionManager == null ? null : new TransactionTemplate(transactionManager);
@@ -88,7 +93,18 @@ public class NotificationEventService {
             Clock applicationClock,
             PlatformTransactionManager transactionManager
     ) {
-        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, objectMapper, applicationClock, transactionManager, Runnable::run);
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, objectMapper, applicationClock, transactionManager, Runnable::run);
+    }
+
+    public NotificationEventService(
+            NotificationEventRepository notificationEventRepository,
+            NotificationDeviceRepository notificationDeviceRepository,
+            ApnsPushService apnsPushService,
+            LiveActivityUpdateService liveActivityUpdateService,
+            ObjectMapper objectMapper,
+            Clock applicationClock
+    ) {
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, liveActivityUpdateService, objectMapper, applicationClock, null, Runnable::run);
     }
 
     public EventDeliveryResult createAndDeliver(Game game, NotificationEventDraft draft) {
@@ -97,6 +113,7 @@ public class NotificationEventService {
         }
         String initialApnsSkipReason = apnsPushService.readinessSkipReason();
         if (initialApnsSkipReason != null) {
+            deliverLiveActivityEnd(game, draft.eventType());
             log.warn(
                     "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
                     draft.eventKey(),
@@ -113,6 +130,7 @@ public class NotificationEventService {
         NotificationEvent event = prepared.event();
         List<String> eventTeamIds = prepared.eventTeamIds();
         List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
+        deliverLiveActivityEnd(game, draft.eventType());
 
         return deliverPrepared(game, draft, event, eventTeamIds, relevantTeamDevices);
     }
@@ -126,6 +144,7 @@ public class NotificationEventService {
         }
         String initialApnsSkipReason = apnsPushService.readinessSkipReason();
         if (initialApnsSkipReason != null) {
+            deliverLiveActivityEnd(game, draft.eventType());
             log.warn(
                     "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
                     draft.eventKey(),
@@ -141,6 +160,7 @@ public class NotificationEventService {
         }
         NotificationEvent event = prepared.event();
         List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
+        deliverLiveActivityEnd(game, draft.eventType());
         if (relevantTeamDevices.isEmpty()) {
             markEventDelivery(event, "skipped", ApnsPushService.NO_RELEVANT_DEVICES);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 1, 0);
@@ -264,6 +284,22 @@ public class NotificationEventService {
                 Math.max(0, Duration.between(apnsSendRequestedAt, apnsResultAt).toMillis())
         );
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
+    }
+
+    private void deliverLiveActivityEnd(Game game, String eventType) {
+        if (liveActivityUpdateService == null || !isLiveActivityEndEventType(eventType)) {
+            return;
+        }
+        try {
+            liveActivityUpdateService.deliverEnd(game, eventType);
+        } catch (Exception exception) {
+            log.warn(
+                    "[LiveActivityEnd] delivery failed publicGameId={} eventType={} reason={}",
+                    game.getPublicGameId(),
+                    eventType,
+                    exception.getMessage()
+            );
+        }
     }
 
     public boolean eventExists(String eventKey) {
@@ -450,6 +486,8 @@ public class NotificationEventService {
             case EVENT_LEAD_CHANGED -> device.isLeadChangeEnabled();
             case EVENT_GAME_END -> device.isGameEndEnabled();
             case EVENT_GAME_CANCELLED -> device.isGameEndEnabled();
+            case EVENT_CANCELLED -> device.isGameEndEnabled();
+            case EVENT_POSTPONED -> device.isGameEndEnabled();
             case EVENT_GAME_INTERRUPTED -> device.isGameEndEnabled();
             case EVENT_GAME_RESUME_SCHEDULED -> device.isGameStartEnabled();
             case EVENT_GAME_RESUMED -> device.isGameStartEnabled();
@@ -528,9 +566,16 @@ public class NotificationEventService {
 
     private boolean isDeliverableEventType(String eventType) {
         return switch (eventType) {
-            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_GAME_CANCELLED, EVENT_GAME_INTERRUPTED, EVENT_GAME_RESUME_SCHEDULED, EVENT_GAME_RESUMED, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
+            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_GAME_CANCELLED, EVENT_CANCELLED, EVENT_POSTPONED, EVENT_GAME_INTERRUPTED, EVENT_GAME_RESUME_SCHEDULED, EVENT_GAME_RESUMED, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
             default -> false;
         };
+    }
+
+    private boolean isLiveActivityEndEventType(String eventType) {
+        return EVENT_GAME_END.equals(eventType)
+                || EVENT_GAME_CANCELLED.equals(eventType)
+                || EVENT_CANCELLED.equals(eventType)
+                || EVENT_POSTPONED.equals(eventType);
     }
 
     private String toJson(Map<String, Object> payload) {

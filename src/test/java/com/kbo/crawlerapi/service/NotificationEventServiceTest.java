@@ -719,6 +719,45 @@ class NotificationEventServiceTest {
     }
 
     @Test
+    void notificationFailureDoesNotBlockLiveActivityEnd() {
+        Game game = fixtureGame();
+        RecordingApnsPushService pushService = new RecordingApnsPushService(new ApnsPushService.ApnsSendResult(false, false, false, "apns_failed"));
+        RecordingLiveActivityUpdateService liveActivityUpdateService = new RecordingLiveActivityUpdateService();
+        NotificationEventService service = service(pushService, liveActivityUpdateService);
+        NotificationDevice device = device("kia", "token-a");
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_GAME_END, null);
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(liveActivityUpdateService.eventTypes).containsExactly(NotificationEventService.EVENT_GAME_END);
+    }
+
+    @Test
+    void liveActivityEndFailureDoesNotBlockNotificationDelivery() {
+        Game game = fixtureGame();
+        RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        RecordingLiveActivityUpdateService liveActivityUpdateService = new RecordingLiveActivityUpdateService(true);
+        NotificationEventService service = service(pushService, liveActivityUpdateService);
+        NotificationDevice device = device("kia", "token-a");
+        NotificationEventService.NotificationEventDraft draft = draft(NotificationEventService.EVENT_GAME_CANCELLED, null);
+
+        when(notificationEventRepository.findByEventKey(eq(draft.eventKey()))).thenReturn(Optional.empty());
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue(eq("ios"))).thenReturn(List.of(device));
+
+        var result = service.createAndDeliver(game, draft);
+
+        assertThat(result.sentCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(liveActivityUpdateService.eventTypes).containsExactly(NotificationEventService.EVENT_GAME_CANCELLED);
+    }
+
+    @Test
     void favoriteTeamOnlyFiltersUnrelatedCancelledGameDevices() {
         NotificationDevice unrelatedDevice = deviceWithSettings("ssg", "token-a", true, true, true, true, true, true, true, false);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
@@ -790,10 +829,15 @@ class NotificationEventServiceTest {
 
 
     private NotificationEventService service(RecordingApnsPushService pushService) {
+        return service(pushService, null);
+    }
+
+    private NotificationEventService service(RecordingApnsPushService pushService, LiveActivityUpdateService liveActivityUpdateService) {
         return new NotificationEventService(
                 notificationEventRepository,
                 notificationDeviceRepository,
                 pushService,
+                liveActivityUpdateService,
                 new ObjectMapper(),
                 CLOCK
         );
@@ -969,6 +1013,29 @@ class NotificationEventServiceTest {
         public ApnsSendResult send(NotificationEvent event, NotificationDevice device) {
             transactionActiveDuringSend.add(TransactionSynchronizationManager.isActualTransactionActive());
             return super.send(event, device);
+        }
+    }
+
+    private static final class RecordingLiveActivityUpdateService extends LiveActivityUpdateService {
+        private final boolean fails;
+        private final List<String> eventTypes = new java.util.ArrayList<>();
+
+        private RecordingLiveActivityUpdateService() {
+            this(false);
+        }
+
+        private RecordingLiveActivityUpdateService(boolean fails) {
+            super(null, null, null, CLOCK);
+            this.fails = fails;
+        }
+
+        @Override
+        public LiveActivityDeliveryResult deliverEnd(Game game, String eventType) {
+            eventTypes.add(eventType);
+            if (fails) {
+                throw new IllegalStateException("live activity end failed");
+            }
+            return new LiveActivityDeliveryResult(1, 0, 0);
         }
     }
 

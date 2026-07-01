@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameCancelReason;
+import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.LiveActivityToken;
 import com.kbo.crawlerapi.repository.LiveActivityTokenRepository;
 import com.kbo.crawlerapi.support.HashSupport;
@@ -191,6 +193,85 @@ public class LiveActivityUpdateService {
                 failed
         );
         return new LiveActivityDeliveryResult(sent, skipped, failed);
+    }
+
+    public LiveActivityDeliveryResult deliverEnd(Game game, String eventType) {
+        List<LiveActivityToken> matches = inTransaction(() -> liveActivityTokenRepository.findActiveMatchesForGame(
+                textOrNull(game.getPublicGameId()),
+                textOrNull(game.getProviderGameId()),
+                game.getId().toString(),
+                stableProviderIdentity(game),
+                stablePublicIdentity(game)
+        ));
+
+        int attempted = 0;
+        int ended = 0;
+        int skipped = 0;
+        int failed = 0;
+        Set<String> failureReasons = new LinkedHashSet<>();
+        for (LiveActivityToken token : matches) {
+            attempted++;
+            Map<String, Object> contentState = endContentState(game, token);
+            ApnsPushService.ApnsSendResult result = apnsPushService.sendLiveActivityEnd(game, token, contentState);
+            if (result.sent()) {
+                ended++;
+                disableToken(token);
+            } else if (result.skipped()) {
+                skipped++;
+                failureReasons.add(result.reason());
+            } else {
+                failed++;
+                failureReasons.add(result.reason());
+                if (result.invalidToken()) {
+                    disableToken(token);
+                }
+            }
+        }
+
+        log.info(
+                "[LiveActivityEnd] APNs result publicGameId={} eventType={} matchedLiveActivityCount={} attemptedEndPushCount={} endedCount={} failedCount={} failureReasons={}",
+                game.getPublicGameId(),
+                eventType,
+                matches.size(),
+                attempted,
+                ended,
+                failed,
+                failureReasons
+        );
+        return new LiveActivityDeliveryResult(ended, skipped, failed);
+    }
+
+    private Map<String, Object> endContentState(Game game, LiveActivityToken token) {
+        Map<String, Object> contentState = new java.util.LinkedHashMap<>(contentStateBuilder.build(game, token));
+        String gameStatus = endGameStatus(game);
+        String endText = endText(game);
+        contentState.put("isPreGame", false);
+        contentState.put("summaryText", endText);
+        contentState.put("inningText", endText);
+        contentState.put("gameStatus", gameStatus);
+        contentState.put("endText", endText);
+        return contentState;
+    }
+
+    private String endGameStatus(Game game) {
+        return switch (game.getStatus()) {
+            case CANCELLED, POSTPONED -> "cancelled";
+            case FINAL -> "final";
+            default -> game.getStatus().getApiValue();
+        };
+    }
+
+    private String endText(Game game) {
+        if (game.getStatus() == GameStatus.POSTPONED) {
+            return "순연";
+        }
+        if (game.getStatus() == GameStatus.CANCELLED) {
+            if (game.getRawCancelText() != null && !game.getRawCancelText().isBlank()) {
+                return game.getRawCancelText().trim();
+            }
+            return game.getCancelReason() == GameCancelReason.RAIN ? "우천취소" : "취소";
+        }
+        return "종료";
     }
 
     private void markContentStateDelivered(LiveActivityToken token, String contentStateHash, String contentStateJson) {

@@ -265,6 +265,38 @@ public class ApnsPushService {
         }
     }
 
+    public ApnsSendResult sendLiveActivityEnd(Game game, LiveActivityToken liveActivityToken, Map<String, Object> contentState) {
+        String tokenSkipReason = liveActivityTokenSkipReason(liveActivityToken);
+        if (tokenSkipReason != null) {
+            return ApnsSendResult.skipped(tokenSkipReason);
+        }
+
+        String readinessSkipReason = readinessSkipReason();
+        if (readinessSkipReason != null) {
+            return ApnsSendResult.skipped(readinessSkipReason);
+        }
+
+        try {
+            String token = providerToken();
+            HttpRequest request = buildLiveActivityEndRequest(liveActivityToken, contentState, token);
+            ApnsHttpResult result = sendApnsRequest(request, this::mapLiveActivityStartFailureReason, this::isInvalidLiveActivityTokenResponse);
+            return result.result();
+        } catch (Exception exception) {
+            log.warn(
+                    "[LiveActivityEnd] APNs exception publicGameId={} providerGameId={} databaseId={} activityId={} tokenEnv={} selectedApnsEnvironment={} reason={} exceptionMessage={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getId(),
+                    liveActivityToken.getActivityId(),
+                    liveActivityToken.getEnvironment(),
+                    selectedApnsEnvironment(liveActivityToken.getEnvironment()),
+                    exception.getClass().getSimpleName(),
+                    exception.getMessage()
+            );
+            return new ApnsSendResult(false, false, false, exception.getMessage());
+        }
+    }
+
     public ApnsSendResult sendLiveActivityStart(
             Game game,
             LiveActivityPushToStartToken pushToStartToken,
@@ -466,6 +498,25 @@ public class ApnsPushService {
         aps.put("event", "update");
         aps.put("content-state", contentState);
         aps.put("stale-date", Instant.now(applicationClock).plusSeconds(120).getEpochSecond());
+        Map<String, Object> payload = Map.of("aps", aps);
+        return HttpRequest.newBuilder()
+                .uri(URI.create(endpoint(liveActivityToken.getEnvironment(), liveActivityToken.getActivityToken())))
+                .timeout(requestTimeout)
+                .header("authorization", "bearer " + token)
+                .header("apns-topic", properties.getBundleId() + ".push-type.liveactivity")
+                .header("apns-push-type", "liveactivity")
+                .header("apns-priority", "10")
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(toJson(payload)))
+                .build();
+    }
+
+    HttpRequest buildLiveActivityEndRequest(LiveActivityToken liveActivityToken, Map<String, Object> contentState, String token) {
+        Map<String, Object> aps = new LinkedHashMap<>();
+        aps.put("timestamp", Instant.now(applicationClock).getEpochSecond());
+        aps.put("event", "end");
+        aps.put("content-state", contentState);
+        aps.put("dismissal-date", Instant.now(applicationClock).plusSeconds(60).getEpochSecond());
         Map<String, Object> payload = Map.of("aps", aps);
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(liveActivityToken.getEnvironment(), liveActivityToken.getActivityToken())))

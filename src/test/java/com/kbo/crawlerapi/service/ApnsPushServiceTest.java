@@ -115,6 +115,34 @@ class ApnsPushServiceTest {
     }
 
     @Test
+    void buildsLiveActivityEndRequestWithDismissalDate() throws Exception {
+        ApnsProperties properties = new ApnsProperties();
+        properties.setBundleId("com.chogm.kboScore");
+        ApnsPushService service = new ApnsPushService(properties, Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("UTC")));
+
+        HttpRequest request = service.buildLiveActivityEndRequest(
+                liveActivityToken(),
+                Map.of(
+                        "isPreGame", false,
+                        "favoriteScoreText", "3",
+                        "opponentScoreText", "2",
+                        "summaryText", "종료"
+                ),
+                "jwt-token"
+        );
+
+        assertThat(request.headers().firstValue("apns-topic")).contains("com.chogm.kboScore.push-type.liveactivity");
+        assertThat(request.headers().firstValue("apns-push-type")).contains("liveactivity");
+        assertThat(body(request)).contains(
+                "\"event\":\"end\"",
+                "\"favoriteScoreText\":\"3\"",
+                "\"opponentScoreText\":\"2\"",
+                "\"summaryText\":\"종료\"",
+                "\"dismissal-date\":1780653660"
+        );
+    }
+
+    @Test
     void liveActivityUpdateEndpointFollowsTokenEnvironment() {
         ApnsProperties properties = new ApnsProperties();
         properties.setBundleId("com.chogm.kboScore");
