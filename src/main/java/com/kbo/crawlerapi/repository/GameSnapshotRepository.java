@@ -13,6 +13,8 @@ public interface GameSnapshotRepository extends JpaRepository<GameSnapshot, UUID
 
     Optional<GameSnapshot> findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(UUID gameId);
 
+    long countByGame_Id(UUID gameId);
+
     @Query("""
             SELECT snapshot
             FROM GameSnapshot snapshot

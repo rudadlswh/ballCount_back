@@ -130,6 +130,7 @@ public class LiveActivityContentStateBuilder {
     private String statusText(GameStatus status) {
         return switch (status) {
             case SCHEDULED -> "예정";
+            case DELAYED -> "지연";
             case LIVE -> "LIVE";
             case FINAL -> "종료";
             case POSTPONED -> "연기";

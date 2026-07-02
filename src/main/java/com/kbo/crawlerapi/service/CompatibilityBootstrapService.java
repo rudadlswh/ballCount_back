@@ -130,7 +130,7 @@ public class CompatibilityBootstrapService {
             case SCHEDULED -> "PRE";
             case LIVE -> "LIVE";
             case FINAL -> "FINAL";
-            case POSTPONED, SUSPENDED -> "DELAY";
+            case POSTPONED, DELAYED, SUSPENDED -> "DELAY";
             case CANCELLED -> "CANCELLED";
             case UNKNOWN -> "PRE";
         };
@@ -141,7 +141,8 @@ public class CompatibilityBootstrapService {
             case SCHEDULED -> "예정";
             case LIVE -> "LIVE";
             case FINAL -> "종료";
-            case POSTPONED, SUSPENDED -> "우천 중단";
+            case POSTPONED, DELAYED -> "경기 지연";
+            case SUSPENDED -> "우천 중단";
             case CANCELLED -> "취소";
             case UNKNOWN -> "예정";
         };

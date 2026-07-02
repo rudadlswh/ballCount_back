@@ -540,6 +540,9 @@ public class GameDetailImportService {
     }
 
     private boolean rawHashUnchanged(Game game, ParsedGameDetail parsedDetail, String combinedRawHash) {
+        if (hasStatusReasonStateChange(game, parsedDetail)) {
+            return false;
+        }
         if (!hasMeaningfulLiveState(parsedDetail)
                 && !isLiveLike(parsedDetail.status())
                 && !isTerminalOrCancellationStatus(parsedDetail.status())) {
@@ -553,6 +556,20 @@ public class GameDetailImportService {
 
     private int existingLineScoreCount(Game game) {
         return lineScoreRepository.findByGame_IdOrderByInningNumberAsc(game.getId()).size();
+    }
+
+    private boolean hasStatusReasonStateChange(Game game, ParsedGameDetail parsedDetail) {
+        boolean trackedStatus = isInterruptedStatus(game.getStatus())
+                || isInterruptedStatus(parsedDetail.status())
+                || isTerminalOrCancellationStatus(parsedDetail.status());
+        if (!trackedStatus) {
+            return false;
+        }
+        return game.getStatus() != parsedDetail.status()
+                || !Objects.equals(clean(game.getStatusReason()), clean(parsedDetail.statusReason()))
+                || game.isCancelled() != parsedDetail.isCancelled()
+                || game.isPostponed() != parsedDetail.isPostponed()
+                || !Objects.equals(clean(game.getRawCancelText()), clean(parsedDetail.rawCancelText()));
     }
 
     private boolean isLiveActivityUpdateTarget(GameStatus status) {
@@ -659,7 +676,7 @@ public class GameDetailImportService {
     ) {
         ParsedScoreBoardStatus scoreBoardStatus = kboGameDetailParser.parseScoreBoardStatus(providerGameId, lineScoreResponseBody)
                 .orElseGet(() -> fetchScoreBoardPageStatus(game, providerGameId));
-        if (scoreBoardStatus == null || scoreBoardStatus.status() != GameStatus.SUSPENDED) {
+        if (scoreBoardStatus == null || !isInterruptedStatus(scoreBoardStatus.status())) {
             return parsedDetail;
         }
         if (parsedDetail.status() == GameStatus.CANCELLED || parsedDetail.status() == GameStatus.POSTPONED) {
@@ -668,15 +685,28 @@ public class GameDetailImportService {
         if (parsedDetail.status() == GameStatus.FINAL && hasReliableFinalStatusReason(parsedDetail.statusReason())) {
             return parsedDetail;
         }
+        ParsedScoreBoardStatus effectiveScoreBoardStatus = effectiveScoreBoardStatus(game, parsedDetail, scoreBoardStatus);
         log.info(
                 "[GameDetailImport] scoreboard interruption applied publicGameId={} providerGameId={} previousStatus={} normalizedStatus={} statusReason={}",
                 game.getPublicGameId(),
                 providerGameId,
                 parsedDetail.status(),
-                scoreBoardStatus.status(),
-                scoreBoardStatus.statusReason()
+                effectiveScoreBoardStatus.status(),
+                effectiveScoreBoardStatus.statusReason()
         );
-        return parsedDetail.withScoreBoardStatus(scoreBoardStatus);
+        return parsedDetail.withScoreBoardStatus(effectiveScoreBoardStatus);
+    }
+
+    private ParsedScoreBoardStatus effectiveScoreBoardStatus(
+            Game game,
+            ParsedGameDetail parsedDetail,
+            ParsedScoreBoardStatus scoreBoardStatus
+    ) {
+        if (scoreBoardStatus.status() == GameStatus.DELAYED
+                && (game.getStatus() == GameStatus.LIVE || hasMeaningfulLiveState(parsedDetail))) {
+            return new ParsedScoreBoardStatus(GameStatus.SUSPENDED, scoreBoardStatus.statusReason());
+        }
+        return scoreBoardStatus;
     }
 
     private ParsedScoreBoardStatus fetchScoreBoardPageStatus(Game game, String providerGameId) {
@@ -1170,6 +1200,10 @@ public class GameDetailImportService {
 
     private boolean isLiveLike(GameStatus status) {
         return status == GameStatus.LIVE || status == GameStatus.SUSPENDED;
+    }
+
+    private boolean isInterruptedStatus(GameStatus status) {
+        return status == GameStatus.DELAYED || status == GameStatus.SUSPENDED;
     }
 
     private boolean snapshotContentStateMatches(

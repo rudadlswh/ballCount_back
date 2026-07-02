@@ -186,6 +186,7 @@ public class KboScheduleParser {
         boolean isPostponed = status == GameStatus.POSTPONED;
         boolean isCancelled = status == GameStatus.CANCELLED;
         String rawCancelText = isCancelled || isPostponed ? firstNonBlank(cancelText, normalizeRawCancelText(rawStatusText)) : null;
+        String statusReason = isDelayedOrSuspended(status) ? firstNonBlank(clean(rawStatusText), cancelText) : null;
         GameCancelReason cancelReason = resolveCancelReason(isCancelled, rawCancelText);
 
         ParsedScheduleGame parsedScheduleGame = new ParsedScheduleGame(
@@ -205,6 +206,7 @@ public class KboScheduleParser {
                 rawCancelText,
                 awayStartingPitcherName,
                 homeStartingPitcherName,
+                statusReason,
                 null
         );
 
@@ -253,6 +255,7 @@ public class KboScheduleParser {
         boolean isCancelled = status == GameStatus.CANCELLED;
         GameCancelReason cancelReason = resolveCancelReason(isCancelled, note);
         String rawCancelText = isCancelled ? normalizeRawCancelText(note) : null;
+        String statusReason = isDelayedOrSuspended(status) ? normalizeRawCancelText(note) : null;
 
         ParsedScheduleGame parsedScheduleGame = new ParsedScheduleGame(
                 "kbo",
@@ -271,6 +274,7 @@ public class KboScheduleParser {
                 rawCancelText,
                 null,
                 null,
+                statusReason,
                 null
         );
 
@@ -324,8 +328,11 @@ public class KboScheduleParser {
         if (note.contains("연기") || note.contains("순연") || normalizedNote.contains("postponed")) {
             return GameStatus.POSTPONED;
         }
-        if (isInterruptedText(note)) {
+        if (isSuspensionText(note)) {
             return GameStatus.SUSPENDED;
+        }
+        if (isDelayText(note)) {
+            return GameStatus.DELAYED;
         }
         if (note.contains("우천취소")
                 || note.contains("경기취소")
@@ -377,7 +384,24 @@ public class KboScheduleParser {
         return GameCancelReason.ETC;
     }
 
-    private boolean isInterruptedText(String value) {
+    private boolean isDelayText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return value.contains("우천지연")
+                || value.contains("우천 지연")
+                || value.contains("경기지연")
+                || value.contains("경기 지연")
+                || value.contains("개시지연")
+                || value.contains("개시 지연")
+                || value.contains("지연")
+                || lower.contains("delay")
+                || lower.contains("delayed")
+                || lower.contains("rain delay");
+    }
+
+    private boolean isSuspensionText(String value) {
         if (value == null) {
             return false;
         }
@@ -385,21 +409,20 @@ public class KboScheduleParser {
         return value.contains("서스펜")
                 || value.contains("우천중단")
                 || value.contains("우천 중단")
-                || value.contains("우천지연")
-                || value.contains("우천 지연")
                 || value.contains("강우중단")
                 || value.contains("강우 중단")
                 || value.contains("경기중단")
                 || value.contains("경기 중단")
                 || value.contains("일시중단")
                 || value.contains("일시 중단")
-                || value.contains("지연")
                 || value.contains("중단")
                 || lower.contains("suspend")
-                || lower.contains("delay")
-                || lower.contains("delayed")
-                || lower.contains("interrupted")
-                || lower.contains("rain delay");
+                || lower.contains("suspended")
+                || lower.contains("interrupted");
+    }
+
+    private boolean isDelayedOrSuspended(GameStatus status) {
+        return status == GameStatus.DELAYED || status == GameStatus.SUSPENDED;
     }
 
     private String normalizeRawCancelText(String note) {
@@ -694,6 +717,7 @@ public class KboScheduleParser {
             String rawCancelText,
             String awayStartingPitcherName,
             String homeStartingPitcherName,
+            String statusReason,
             OffsetDateTime sourceUpdatedAt
     ) {
         public ParsedScheduleGame(
@@ -730,21 +754,33 @@ public class KboScheduleParser {
                     rawCancelText,
                     null,
                     null,
+                    null,
                     sourceUpdatedAt
             );
         }
 
-        public ParsedScheduleGame withGameListStarterNames(ParsedGameListGame gameListGame) {
-            String enrichedProviderGameId = hasText(providerGameId) ? providerGameId : gameListGame.providerGameId();
-            String enrichedAwayStartingPitcherName = hasText(gameListGame.awayStartingPitcherName())
-                    ? gameListGame.awayStartingPitcherName()
-                    : awayStartingPitcherName;
-            String enrichedHomeStartingPitcherName = hasText(gameListGame.homeStartingPitcherName())
-                    ? gameListGame.homeStartingPitcherName()
-                    : homeStartingPitcherName;
-            return new ParsedScheduleGame(
+        public ParsedScheduleGame(
+                String provider,
+                String providerGameId,
+                LocalDate gameDate,
+                OffsetDateTime scheduledAt,
+                String stadium,
+                GameStatus status,
+                boolean isCancelled,
+                boolean isPostponed,
+                String awayProviderTeamName,
+                String homeProviderTeamName,
+                Integer awayScore,
+                Integer homeScore,
+                GameCancelReason cancelReason,
+                String rawCancelText,
+                String awayStartingPitcherName,
+                String homeStartingPitcherName,
+                OffsetDateTime sourceUpdatedAt
+        ) {
+            this(
                     provider,
-                    enrichedProviderGameId,
+                    providerGameId,
                     gameDate,
                     scheduledAt,
                     stadium,
@@ -757,8 +793,41 @@ public class KboScheduleParser {
                     homeScore,
                     cancelReason,
                     rawCancelText,
+                    awayStartingPitcherName,
+                    homeStartingPitcherName,
+                    null,
+                    sourceUpdatedAt
+            );
+        }
+
+        public ParsedScheduleGame withGameListStarterNames(ParsedGameListGame gameListGame) {
+            String enrichedProviderGameId = hasText(providerGameId) ? providerGameId : gameListGame.providerGameId();
+            String enrichedAwayStartingPitcherName = hasText(gameListGame.awayStartingPitcherName())
+                    ? gameListGame.awayStartingPitcherName()
+                    : awayStartingPitcherName;
+            String enrichedHomeStartingPitcherName = hasText(gameListGame.homeStartingPitcherName())
+                    ? gameListGame.homeStartingPitcherName()
+                    : homeStartingPitcherName;
+            GameStatus enrichedStatus = gameListGame.status() == null ? status : gameListGame.status();
+            String enrichedStatusReason = hasText(gameListGame.statusReason()) ? gameListGame.statusReason() : statusReason;
+            return new ParsedScheduleGame(
+                    provider,
+                    enrichedProviderGameId,
+                    gameDate,
+                    scheduledAt,
+                    stadium,
+                    enrichedStatus,
+                    enrichedStatus == GameStatus.CANCELLED,
+                    enrichedStatus == GameStatus.POSTPONED,
+                    awayProviderTeamName,
+                    homeProviderTeamName,
+                    awayScore,
+                    homeScore,
+                    enrichedStatus == GameStatus.CANCELLED ? cancelReason : null,
+                    enrichedStatus == GameStatus.CANCELLED || enrichedStatus == GameStatus.POSTPONED ? rawCancelText : null,
                     enrichedAwayStartingPitcherName,
                     enrichedHomeStartingPitcherName,
+                    enrichedStatus == GameStatus.DELAYED || enrichedStatus == GameStatus.SUSPENDED ? enrichedStatusReason : null,
                     sourceUpdatedAt
             );
         }
@@ -781,6 +850,7 @@ public class KboScheduleParser {
                     status == GameStatus.CANCELLED || status == GameStatus.POSTPONED ? rawCancelText : null,
                     awayStartingPitcherName,
                     homeStartingPitcherName,
+                    status == GameStatus.DELAYED || status == GameStatus.SUSPENDED ? statusReason : null,
                     sourceUpdatedAt
             );
         }

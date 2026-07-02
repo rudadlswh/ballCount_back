@@ -38,6 +38,8 @@ public class NotificationEventService {
     public static final String EVENT_GAME_CANCELLED = "GAME_CANCELLED";
     public static final String EVENT_CANCELLED = "CANCELLED";
     public static final String EVENT_POSTPONED = "POSTPONED";
+    public static final String EVENT_GAME_DELAYED = "GAME_DELAYED";
+    public static final String EVENT_GAME_SUSPENDED = "GAME_SUSPENDED";
     public static final String EVENT_GAME_INTERRUPTED = "GAME_INTERRUPTED";
     public static final String EVENT_GAME_RESUME_SCHEDULED = "GAME_RESUME_SCHEDULED";
     public static final String EVENT_GAME_RESUMED = "GAME_RESUMED";
@@ -488,6 +490,8 @@ public class NotificationEventService {
             case EVENT_GAME_CANCELLED -> device.isGameEndEnabled();
             case EVENT_CANCELLED -> device.isGameEndEnabled();
             case EVENT_POSTPONED -> device.isGameEndEnabled();
+            case EVENT_GAME_DELAYED -> device.isGameStartEnabled();
+            case EVENT_GAME_SUSPENDED -> device.isGameEndEnabled();
             case EVENT_GAME_INTERRUPTED -> device.isGameEndEnabled();
             case EVENT_GAME_RESUME_SCHEDULED -> device.isGameStartEnabled();
             case EVENT_GAME_RESUMED -> device.isGameStartEnabled();
@@ -566,7 +570,7 @@ public class NotificationEventService {
 
     private boolean isDeliverableEventType(String eventType) {
         return switch (eventType) {
-            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_GAME_CANCELLED, EVENT_CANCELLED, EVENT_POSTPONED, EVENT_GAME_INTERRUPTED, EVENT_GAME_RESUME_SCHEDULED, EVENT_GAME_RESUMED, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
+            case EVENT_GAME_START, EVENT_SCORE_CHANGED, EVENT_LEAD_CHANGED, EVENT_GAME_END, EVENT_GAME_CANCELLED, EVENT_CANCELLED, EVENT_POSTPONED, EVENT_GAME_DELAYED, EVENT_GAME_SUSPENDED, EVENT_GAME_INTERRUPTED, EVENT_GAME_RESUME_SCHEDULED, EVENT_GAME_RESUMED, EVENT_ON_BASE, EVENT_INNING_CHANGED -> true;
             default -> false;
         };
     }

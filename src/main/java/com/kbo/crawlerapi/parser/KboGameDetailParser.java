@@ -434,8 +434,11 @@ public class KboGameDetailParser {
         if (isCancelledText(statusText)) {
             return GameStatus.CANCELLED;
         }
-        if (isSuspendedText(statusText)) {
+        if (isSuspensionText(statusText)) {
             return GameStatus.SUSPENDED;
+        }
+        if (isDelayText(statusText)) {
+            return hasLiveProgress(row) ? GameStatus.SUSPENDED : GameStatus.DELAYED;
         }
 
         String gameState = text(row, "GAME_STATE_SC");
@@ -500,10 +503,10 @@ public class KboGameDetailParser {
                 "[ScoreBoardStatus] providerGameId={} rawStatusText={} normalizedStatus={} statusReason={}",
                 providerGameId,
                 abbreviate(clean(rawText), 500),
-                GameStatus.SUSPENDED.getApiValue(),
+                statusFromInterruptionReason(reason).getApiValue(),
                 reason
         );
-        return Optional.of(new ParsedScoreBoardStatus(GameStatus.SUSPENDED, reason));
+        return Optional.of(new ParsedScoreBoardStatus(statusFromInterruptionReason(reason), reason));
     }
 
     private String scoreBoardStatusText(String responseBody) {
@@ -572,7 +575,7 @@ public class KboGameDetailParser {
                 return phrase;
             }
         }
-        for (String phrase : List.of("우천 지연", "우천지연", "우천 중단", "강우 중단", "경기 중단", "일시 중단", "지연")) {
+        for (String phrase : List.of("우천 지연", "우천지연", "경기지연", "경기 지연", "개시지연", "개시 지연", "우천 중단", "강우 중단", "경기 중단", "일시 중단", "지연")) {
             if (value.contains(phrase)) {
                 return phrase;
             }
@@ -593,6 +596,10 @@ public class KboGameDetailParser {
             return "interrupted";
         }
         return null;
+    }
+
+    private GameStatus statusFromInterruptionReason(String reason) {
+        return isSuspensionText(reason) ? GameStatus.SUSPENDED : GameStatus.DELAYED;
     }
 
     private void logStatusDiagnostics(
@@ -640,7 +647,24 @@ public class KboGameDetailParser {
         return value.contains("취소") || value.contains("노게임") || lower.contains("cancel") || lower.contains("no game") || lower.contains("nogame");
     }
 
-    private boolean isSuspendedText(String value) {
+    private boolean isDelayText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        return value.contains("우천지연")
+                || value.contains("우천 지연")
+                || value.contains("경기지연")
+                || value.contains("경기 지연")
+                || value.contains("개시지연")
+                || value.contains("개시 지연")
+                || value.contains("지연")
+                || lower.contains("delay")
+                || lower.contains("delayed")
+                || lower.contains("rain delay");
+    }
+
+    private boolean isSuspensionText(String value) {
         if (value == null) {
             return false;
         }
@@ -648,21 +672,16 @@ public class KboGameDetailParser {
         return value.contains("서스펜")
                 || value.contains("우천중단")
                 || value.contains("우천 중단")
-                || value.contains("우천지연")
-                || value.contains("우천 지연")
                 || value.contains("강우중단")
                 || value.contains("강우 중단")
                 || value.contains("경기중단")
                 || value.contains("경기 중단")
                 || value.contains("일시중단")
                 || value.contains("일시 중단")
-                || value.contains("지연")
                 || value.contains("중단")
                 || lower.contains("suspend")
-                || lower.contains("delay")
-                || lower.contains("delayed")
-                || lower.contains("interrupted")
-                || lower.contains("rain delay");
+                || lower.contains("suspended")
+                || lower.contains("interrupted");
     }
 
     private boolean hasReliableFinalMarker(JsonNode row) {
@@ -760,7 +779,7 @@ public class KboGameDetailParser {
         if (status == GameStatus.FINAL) {
             return finalStatusReason(row);
         }
-        if (status != GameStatus.CANCELLED && status != GameStatus.POSTPONED && status != GameStatus.SUSPENDED) {
+        if (status != GameStatus.CANCELLED && status != GameStatus.POSTPONED && status != GameStatus.SUSPENDED && status != GameStatus.DELAYED) {
             return null;
         }
         String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");

@@ -848,10 +848,10 @@ class LiveGameSyncServiceTest {
         assertThat(result.eventCreatedCount()).isEqualTo(1);
         assertThat(notificationEventService.drafts).hasSize(1);
         NotificationEventDraft draft = notificationEventService.drafts.get(0);
-        assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_GAME_INTERRUPTED);
-        assertThat(draft.eventKey()).isEqualTo("game:%s:interrupted:우천중단".formatted(after.getId()));
+        assertThat(draft.eventType()).isEqualTo(NotificationEventService.EVENT_GAME_SUSPENDED);
+        assertThat(draft.eventKey()).isEqualTo("game:%s:suspended".formatted(after.getId()));
         assertThat(draft.title()).isEqualTo("경기 중단");
-        assertThat(draft.body()).isEqualTo("KIA vs LG 경기가 우천으로 지연되었습니다. 재개 시간은 미정입니다.");
+        assertThat(draft.body()).isEqualTo("KIA vs LG 경기가 우천으로 일시 중단되었습니다.");
         assertThat(draft.payload())
                 .containsEntry("status", "suspended")
                 .containsEntry("statusReason", "우천중단");
@@ -879,7 +879,7 @@ class LiveGameSyncServiceTest {
         assertThat(result.eventCreatedCount()).isEqualTo(1);
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
-                .containsExactly(NotificationEventService.EVENT_GAME_INTERRUPTED);
+                .containsExactly(NotificationEventService.EVENT_GAME_SUSPENDED);
     }
 
     @Test
@@ -929,7 +929,7 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
-    void scheduledRainDelayCreatesInterruptedDraftWithoutGameStart() {
+    void scheduledRainDelayCreatesDelayedDraftWithoutGameStart() {
         Clock clock = Clock.fixed(Instant.parse("2026-06-25T09:35:00Z"), ZoneId.of("Asia/Seoul"));
         OffsetDateTime scheduledAt = OffsetDateTime.of(2026, 6, 25, 18, 30, 0, 0, ZoneOffset.ofHours(9));
         Game before = fixtureGameWithTeamsAndSchedule(
@@ -938,25 +938,27 @@ class LiveGameSyncServiceTest {
                 null,
                 null,
                 scheduledAt,
-                "nc",
-                "NC 다이노스",
-                "NC",
                 "lotte",
                 "롯데 자이언츠",
-                "롯데"
+                "롯데",
+                "doosan",
+                "두산 베어스",
+                "두산",
+                "잠실"
         );
         Game afterSchedule = withStatusReason(fixtureGameWithTeamsAndSchedule(
-                GameStatus.SUSPENDED,
+                GameStatus.DELAYED,
                 null,
                 null,
                 null,
                 scheduledAt,
-                "nc",
-                "NC 다이노스",
-                "NC",
                 "lotte",
                 "롯데 자이언츠",
-                "롯데"
+                "롯데",
+                "doosan",
+                "두산 베어스",
+                "두산",
+                "잠실"
         ), "우천 지연");
 
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
@@ -972,10 +974,68 @@ class LiveGameSyncServiceTest {
         assertThat(result.eventCreatedCount()).isEqualTo(1);
         assertThat(notificationEventService.drafts)
                 .extracting(NotificationEventDraft::eventType)
-                .containsExactly(NotificationEventService.EVENT_GAME_INTERRUPTED);
+                .containsExactly(NotificationEventService.EVENT_GAME_DELAYED);
         NotificationEventDraft draft = notificationEventService.drafts.get(0);
-        assertThat(draft.body()).isEqualTo("NC vs 롯데 경기가 우천으로 지연되었습니다. 재개 시간은 미정입니다.");
-        assertThat(draft.eventKey()).isEqualTo("game:%s:interrupted:우천_지연".formatted(afterSchedule.getId()));
+        assertThat(draft.title()).isEqualTo("경기 지연");
+        assertThat(draft.body()).isEqualTo("롯데 vs 두산 경기가 우천으로 지연되고 있습니다. (잠실, 18:30)");
+        assertThat(draft.eventKey()).isEqualTo("game:%s:delayed".formatted(afterSchedule.getId()));
+    }
+
+    @Test
+    void repeatedRainDelayedStateDoesNotCreateDelayedDraft() {
+        Game before = withStatusReason(fixtureGame(GameStatus.DELAYED, 0, 0, null), "우천 지연");
+        Game after = withStatusReason(fixtureGame(GameStatus.DELAYED, 0, 0, null), "우천 지연");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(before.getGameDate())))
+                .thenReturn(List.of(before));
+        when(gameRepository.findByPublicGameId(eq(before.getPublicGameId()))).thenReturn(Optional.of(after));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(before.getId()))).thenReturn(Optional.empty());
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(after.getId()))).thenReturn(Optional.empty());
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        LiveGameSyncService.LiveSyncSummary result = service.sync(before.getGameDate(), false);
+
+        assertThat(result.eventCreatedCount()).isZero();
+        assertThat(notificationEventService.drafts).isEmpty();
+    }
+
+    @Test
+    void scheduledTopFirstWithSingleSnapshotLogsSuspiciousStall(CapturedOutput output) {
+        Game scheduled = fixtureGame(GameStatus.SCHEDULED, 0, 0, "Top 1");
+        scheduled.markLiveChecked(OffsetDateTime.of(2026, 4, 9, 18, 42, 38, 0, ZoneOffset.ofHours(9)));
+        GameSnapshot snapshot = snapshotAt(
+                scheduled,
+                null,
+                null,
+                0,
+                false,
+                false,
+                false,
+                0,
+                0,
+                1,
+                "top",
+                "Top 1",
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 12, 0, ZoneOffset.ofHours(9))
+        );
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(scheduled.getGameDate())))
+                .thenReturn(List.of(scheduled), List.of(scheduled));
+        when(gameRepository.findByPublicGameId(eq(scheduled.getPublicGameId()))).thenReturn(Optional.of(scheduled));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(scheduled.getId()))).thenReturn(Optional.of(snapshot));
+        when(gameSnapshotRepository.countByGame_Id(eq(scheduled.getId()))).thenReturn(1L);
+
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), new StubScheduleImportService(), new StubNotificationEventService());
+
+        service.sync(scheduled.getGameDate(), false);
+
+        assertThat(output.getOut()).contains("suspicious scheduled stall");
+        assertThat(output.getOut()).contains("scheduled_after_start");
+        assertThat(output.getOut()).contains("inning_top_or_bottom_1_or_later");
+        assertThat(output.getOut()).contains("snapshot_count_le_1");
+        assertThat(output.getOut()).contains("live_last_checked_only");
     }
 
     @Test
@@ -2357,6 +2417,36 @@ class LiveGameSyncServiceTest {
             String homeTeamName,
             String homeTeamShortName
     ) {
+        return fixtureGameWithTeamsAndSchedule(
+                status,
+                awayScore,
+                homeScore,
+                inningState,
+                scheduledAt,
+                awayTeamCode,
+                awayTeamName,
+                awayTeamShortName,
+                homeTeamCode,
+                homeTeamName,
+                homeTeamShortName,
+                "사직"
+        );
+    }
+
+    private Game fixtureGameWithTeamsAndSchedule(
+            GameStatus status,
+            Integer awayScore,
+            Integer homeScore,
+            String inningState,
+            OffsetDateTime scheduledAt,
+            String awayTeamCode,
+            String awayTeamName,
+            String awayTeamShortName,
+            String homeTeamCode,
+            String homeTeamName,
+            String homeTeamShortName,
+            String stadium
+    ) {
         Team homeTeam = new Team(UUID.randomUUID(), homeTeamCode, homeTeamName, homeTeamShortName, homeTeamName, null);
         Team awayTeam = new Team(UUID.randomUUID(), awayTeamCode, awayTeamName, awayTeamShortName, awayTeamName, null);
         return new Game(
@@ -2366,7 +2456,7 @@ class LiveGameSyncServiceTest {
                 "20260625%s%s0".formatted(awayTeamCode.toUpperCase(), homeTeamCode.toUpperCase()),
                 LocalDate.of(2026, 6, 25),
                 scheduledAt,
-                "사직",
+                stadium,
                 status,
                 homeTeam,
                 awayTeam,

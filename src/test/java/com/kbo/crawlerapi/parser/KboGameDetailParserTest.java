@@ -32,7 +32,7 @@ class KboGameDetailParserTest {
     }
 
     @Test
-    void scoreBoardRainDelayMapsToSuspended() {
+    void scoreBoardRainDelayMapsToDelayed() {
         String html = """
                 <html>
                   <body>
@@ -46,7 +46,7 @@ class KboGameDetailParserTest {
         var status = parser.parseScoreBoardStatus("20260625NCLT0", html);
 
         assertThat(status).isPresent();
-        assertThat(status.get().status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(status.get().status()).isEqualTo(GameStatus.DELAYED);
         assertThat(status.get().statusReason()).isEqualTo("우천 지연");
     }
 
@@ -92,7 +92,7 @@ class KboGameDetailParserTest {
     }
 
     @Test
-    void gameListRainDelayTextWinsOverLiveGameState() {
+    void gameListRainDelayTextBeforeProgressMapsToDelayed() {
         String payload = """
                 {
                   "game": [
@@ -113,7 +113,7 @@ class KboGameDetailParserTest {
         var result = parser.parseGameList(payload);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(result.get(0).status()).isEqualTo(GameStatus.DELAYED);
         assertThat(result.get(0).statusReason()).isEqualTo("우천 지연");
     }
 

@@ -229,7 +229,7 @@ class KboScheduleParserTest {
     }
 
     @Test
-    void parsesRainDelayScheduleRowAsSuspendedNotCancelled() {
+    void parsesRainDelayScheduleRowAsDelayedNotCancelled() {
         String payload = """
                 {
                   "gameList": [
@@ -251,7 +251,8 @@ class KboScheduleParserTest {
         var games = parser.parseMonthlySchedule(payload, YearMonth.of(2026, 5));
 
         assertThat(games).hasSize(1);
-        assertThat(games.get(0).status()).isEqualTo(GameStatus.SUSPENDED);
+        assertThat(games.get(0).status()).isEqualTo(GameStatus.DELAYED);
+        assertThat(games.get(0).statusReason()).isEqualTo("rain delay");
         assertThat(games.get(0).isCancelled()).isFalse();
         assertThat(games.get(0).isPostponed()).isFalse();
         assertThat(games.get(0).rawCancelText()).isNull();

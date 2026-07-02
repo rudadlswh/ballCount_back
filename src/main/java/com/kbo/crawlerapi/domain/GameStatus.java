@@ -4,6 +4,7 @@ import java.util.Arrays;
 
 public enum GameStatus {
     SCHEDULED("scheduled"),
+    DELAYED("delayed"),
     LIVE("live"),
     FINAL("final"),
     POSTPONED("postponed"),
