@@ -1101,6 +1101,7 @@ public class GameDetailImportService {
                 parsedDetail.sourceUpdatedAt(),
                 fetchedAt
         );
+        logLatestSnapshotSaveInputs(game, parsedDetail, resolvedBaseRunners, snapshot);
         gameSnapshotRepository.save(snapshot);
         log.debug(
                 "snapshot persistence saved game_id={} raw_hash={} current_pitcher_name={} current_batter_name={}",
@@ -1214,6 +1215,9 @@ public class GameDetailImportService {
     ) {
         return Objects.equals(snapshot.getHomeScore(), selectedScore.homeScore())
                 && Objects.equals(snapshot.getAwayScore(), selectedScore.awayScore())
+                && snapshot.isRunnerOnFirst() == parsedDetail.runnerOnFirst()
+                && snapshot.isRunnerOnSecond() == parsedDetail.runnerOnSecond()
+                && snapshot.isRunnerOnThird() == parsedDetail.runnerOnThird()
                 && Objects.equals(clean(snapshot.getCurrentPitcherName()), clean(parsedDetail.currentPitcherName()))
                 && Objects.equals(clean(snapshot.getCurrentBatterName()), clean(parsedDetail.currentBatterName()))
                 && Objects.equals(clean(snapshot.getFirstBaseRunnerName()), clean(resolvedBaseRunners.firstBaseRunnerName()))
@@ -1222,6 +1226,80 @@ public class GameDetailImportService {
                 && Objects.equals(clean(snapshot.getFirstBaseRunnerId()), clean(resolvedBaseRunners.firstBaseRunnerId()))
                 && Objects.equals(clean(snapshot.getSecondBaseRunnerId()), clean(resolvedBaseRunners.secondBaseRunnerId()))
                 && Objects.equals(clean(snapshot.getThirdBaseRunnerId()), clean(resolvedBaseRunners.thirdBaseRunnerId()));
+    }
+
+    private void logLatestSnapshotSaveInputs(
+            Game game,
+            ParsedGameDetail parsedDetail,
+            BaseRunnerNameResolver.ResolvedBaseRunners resolvedBaseRunners,
+            GameSnapshot snapshot
+    ) {
+        log.info(
+                "[LiveSnapshot] raw base fields publicGameId={} providerGameId={} firstOrder={} secondOrder={} thirdOrder={} runner_on_first={} runner_on_second={} runner_on_third={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                parsedDetail.firstBaseBattingOrder(),
+                parsedDetail.secondBaseBattingOrder(),
+                parsedDetail.thirdBaseBattingOrder(),
+                parsedDetail.runnerOnFirst(),
+                parsedDetail.runnerOnSecond(),
+                parsedDetail.runnerOnThird()
+        );
+        log.info(
+                "[LiveSnapshot] raw runner ids publicGameId={} providerGameId={} first={} second={} third={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                displayName(parsedDetail.firstBaseRunnerId()),
+                displayName(parsedDetail.secondBaseRunnerId()),
+                displayName(parsedDetail.thirdBaseRunnerId())
+        );
+        log.info(
+                "[LiveSnapshot] raw runner names publicGameId={} providerGameId={} first={} second={} third={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                displayName(parsedDetail.firstBaseRunnerName()),
+                displayName(parsedDetail.secondBaseRunnerName()),
+                displayName(parsedDetail.thirdBaseRunnerName())
+        );
+        log.info(
+                "[LiveSnapshot] parsed base occupancy publicGameId={} providerGameId={} first={} second={} third={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                parsedDetail.runnerOnFirst(),
+                parsedDetail.runnerOnSecond(),
+                parsedDetail.runnerOnThird()
+        );
+        log.info(
+                "[LiveSnapshot] parsed runner names publicGameId={} providerGameId={} first={} second={} third={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                displayName(parsedDetail.firstBaseRunnerName()),
+                displayName(parsedDetail.secondBaseRunnerName()),
+                displayName(parsedDetail.thirdBaseRunnerName())
+        );
+        log.info(
+                "[LiveSnapshot] resolved runner source publicGameId={} providerGameId={} source={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                resolvedBaseRunners.source()
+        );
+        log.info(
+                "[LiveSnapshot] saved runner_on_first/second/third publicGameId={} providerGameId={} first={} second={} third={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                snapshot.isRunnerOnFirst(),
+                snapshot.isRunnerOnSecond(),
+                snapshot.isRunnerOnThird()
+        );
+        log.info(
+                "[LiveSnapshot] saved first/second/third_base_runner_name publicGameId={} providerGameId={} first={} second={} third={} current_batter_name={}",
+                game.getPublicGameId(),
+                parsedDetail.providerGameId(),
+                displayName(snapshot.getFirstBaseRunnerName()),
+                displayName(snapshot.getSecondBaseRunnerName()),
+                displayName(snapshot.getThirdBaseRunnerName()),
+                displayName(snapshot.getCurrentBatterName())
+        );
     }
 
     private String displayName(String value) {

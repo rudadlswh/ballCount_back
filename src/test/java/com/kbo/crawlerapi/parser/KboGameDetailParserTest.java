@@ -428,7 +428,7 @@ class KboGameDetailParserTest {
     }
 
     @Test
-    void doesNotUseGuessedOrStartingPitcherFieldsForCurrentPitcherAndBatter() {
+    void prefersExplicitCurrentPitcherAndBatterFields() {
         String payload = """
                 {
                   "game": [
@@ -450,8 +450,8 @@ class KboGameDetailParserTest {
         var result = parser.parseGameList(payload);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).currentPitcherName()).isNull();
-        assertThat(result.get(0).currentBatterName()).isNull();
+        assertThat(result.get(0).currentPitcherName()).isEqualTo("현재투수");
+        assertThat(result.get(0).currentBatterName()).isEqualTo("현재타자");
     }
 
     @Test

@@ -236,6 +236,18 @@ public class KboGameDetailParser {
     }
 
     private String currentPitcherName(JsonNode row, String inningHalf) {
+        String explicit = firstText(
+                row,
+                "PIT_P_NM",
+                "PIT_P_NAME",
+                "PITCHER_NM",
+                "PITCHER_NAME",
+                "CURRENT_PITCHER_NM",
+                "CURRENT_PITCHER_NAME"
+        );
+        if (explicit != null) {
+            return explicit;
+        }
         if ("top".equals(inningHalf)) {
             return text(row, "B_P_NM");
         }
@@ -246,6 +258,20 @@ public class KboGameDetailParser {
     }
 
     private String currentBatterName(JsonNode row, String inningHalf) {
+        String explicit = firstText(
+                row,
+                "BAT_P_NM",
+                "BAT_P_NAME",
+                "BATTER_NM",
+                "BATTER_NAME",
+                "CURRENT_BATTER_NM",
+                "CURRENT_BATTER_NAME",
+                "HITTER_NM",
+                "HITTER_NAME"
+        );
+        if (explicit != null) {
+            return explicit;
+        }
         if ("top".equals(inningHalf)) {
             return text(row, "T_P_NM");
         }
