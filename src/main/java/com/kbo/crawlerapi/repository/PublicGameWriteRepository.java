@@ -151,6 +151,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             String providerGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
+        EffectiveScheduleState effectiveState = effectiveState(existing, parsedGame);
         jdbcTemplate.update(
                 """
                         UPDATE games
@@ -180,16 +181,16 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 parsedGame.gameDate(),
                 parsedGame.scheduledAt(),
                 parsedGame.stadium(),
-                parsedGame.status().getApiValue(),
+                effectiveState.status().getApiValue(),
                 homeTeam.getId(),
                 awayTeam.getId(),
                 effectiveHomeScore(existing, parsedGame),
                 effectiveAwayScore(existing, parsedGame),
-                parsedGame.statusReason(),
-                parsedGame.isCancelled(),
-                parsedGame.isPostponed(),
-                cancelReasonValue(parsedGame.cancelReason()),
-                parsedGame.rawCancelText(),
+                effectiveState.statusReason(),
+                effectiveState.cancelled(),
+                effectiveState.postponed(),
+                cancelReasonValue(effectiveState.cancelReason()),
+                effectiveState.rawCancelText(),
                 normalizedText(parsedGame.awayStartingPitcherName()),
                 normalizedText(parsedGame.homeStartingPitcherName()),
                 sourceUpdatedAt,
@@ -208,24 +209,54 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     ) {
         Integer effectiveHomeScore = effectiveHomeScore(existing, parsedGame);
         Integer effectiveAwayScore = effectiveAwayScore(existing, parsedGame);
+        EffectiveScheduleState effectiveState = effectiveState(existing, parsedGame);
         return !Objects.equals(existing.publicGameId(), publicGameId)
                 || !Objects.equals(existing.providerGameId(), providerGameId)
                 || !Objects.equals(existing.gameDate(), parsedGame.gameDate())
                 || !sameInstant(existing.scheduledAt(), parsedGame.scheduledAt())
                 || !Objects.equals(existing.stadium(), parsedGame.stadium())
-                || !Objects.equals(existing.status(), parsedGame.status().getApiValue())
+                || !Objects.equals(existing.status(), effectiveState.status().getApiValue())
                 || !Objects.equals(existing.homeTeamId(), homeTeam.getId())
                 || !Objects.equals(existing.awayTeamId(), awayTeam.getId())
                 || !Objects.equals(existing.homeScore(), effectiveHomeScore)
                 || !Objects.equals(existing.awayScore(), effectiveAwayScore)
-                || !Objects.equals(existing.statusReason(), parsedGame.statusReason())
-                || existing.cancelled() != parsedGame.isCancelled()
-                || existing.postponed() != parsedGame.isPostponed()
-                || existing.cancelReason() != parsedGame.cancelReason()
-                || !Objects.equals(existing.rawCancelText(), parsedGame.rawCancelText())
+                || !Objects.equals(existing.statusReason(), effectiveState.statusReason())
+                || existing.cancelled() != effectiveState.cancelled()
+                || existing.postponed() != effectiveState.postponed()
+                || existing.cancelReason() != effectiveState.cancelReason()
+                || !Objects.equals(existing.rawCancelText(), effectiveState.rawCancelText())
                 || incomingTextDiffers(existing.awayStartingPitcherName(), parsedGame.awayStartingPitcherName())
                 || incomingTextDiffers(existing.homeStartingPitcherName(), parsedGame.homeStartingPitcherName())
                 || !sameInstant(existing.sourceUpdatedAt(), sourceUpdatedAt);
+    }
+
+    private EffectiveScheduleState effectiveState(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        if (shouldPreserveCancellation(existing, parsedGame)) {
+            return new EffectiveScheduleState(
+                    GameStatus.fromApiValue(existing.status()),
+                    existing.statusReason(),
+                    existing.cancelled(),
+                    existing.postponed(),
+                    existing.cancelReason(),
+                    existing.rawCancelText()
+            );
+        }
+        return new EffectiveScheduleState(
+                parsedGame.status(),
+                parsedGame.statusReason(),
+                parsedGame.isCancelled(),
+                parsedGame.isPostponed(),
+                parsedGame.cancelReason(),
+                parsedGame.rawCancelText()
+        );
+    }
+
+    private boolean shouldPreserveCancellation(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        boolean existingCancelledOrPostponed = existing.cancelled()
+                || existing.postponed()
+                || "cancelled".equals(existing.status())
+                || "postponed".equals(existing.status());
+        return existingCancelledOrPostponed && parsedGame.status() == GameStatus.SCHEDULED;
     }
 
     private String cancelReasonValue(GameCancelReason cancelReason) {
@@ -352,6 +383,16 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             String awayStartingPitcherName,
             String homeStartingPitcherName,
             OffsetDateTime sourceUpdatedAt
+    ) {
+    }
+
+    private record EffectiveScheduleState(
+            GameStatus status,
+            String statusReason,
+            boolean cancelled,
+            boolean postponed,
+            GameCancelReason cancelReason,
+            String rawCancelText
     ) {
     }
 }

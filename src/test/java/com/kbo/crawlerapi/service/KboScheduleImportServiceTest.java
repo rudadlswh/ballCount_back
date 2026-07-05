@@ -527,6 +527,109 @@ class KboScheduleImportServiceTest {
     }
 
     @Test
+    void crawlDayPersistsRainCancellationDetectedFromGameList() {
+        LocalDate requestedDate = LocalDate.of(2026, 7, 5);
+        Team hanwha = new Team(UUID.randomUUID(), "hanwha", "Hanwha Eagles", "Hanwha", "Hanwha Eagles", null);
+        Team lg = new Team(UUID.randomUUID(), "lg", "LG Twins", "LG", "LG Twins", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                "20260705LGHH0",
+                requestedDate,
+                OffsetDateTime.of(2026, 7, 5, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "한화",
+                "LG",
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(parsedGame), List.of());
+        kboGameDetailClient.gameListResponseBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260705LGHH0",
+                      "AWAY_NM": "한화",
+                      "HOME_NM": "LG",
+                      "CANCEL_SC_NM": "우천취소"
+                    }
+                  ]
+                }
+                """;
+
+        when(teamRepository.findByTeamCode("hanwha")).thenReturn(Optional.of(hanwha));
+        when(teamRepository.findByTeamCode("lg")).thenReturn(Optional.of(lg));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
+
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isEqualTo("20260705LGHH0");
+        assertThat(scheduleGameWriteRepository.parsedGame.status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(scheduleGameWriteRepository.parsedGame.isCancelled()).isTrue();
+        assertThat(scheduleGameWriteRepository.parsedGame.isPostponed()).isFalse();
+        assertThat(scheduleGameWriteRepository.parsedGame.cancelReason()).isEqualTo(GameCancelReason.RAIN);
+        assertThat(scheduleGameWriteRepository.parsedGame.rawCancelText()).isEqualTo("우천취소");
+        assertThat(scheduleGameWriteRepository.parsedGame.statusReason()).isEqualTo("우천취소");
+    }
+
+    @Test
+    void crawlDayPersistsCancellationEvenWhenOnlyGameListHasCancellationState() {
+        LocalDate requestedDate = LocalDate.of(2026, 7, 5);
+        Team nc = new Team(UUID.randomUUID(), "nc", "NC Dinos", "NC", "NC Dinos", null);
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                "20260705NCHT0",
+                requestedDate,
+                OffsetDateTime.of(2026, 7, 5, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "광주",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "NC",
+                "KIA",
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(parsedGame), List.of());
+        kboGameDetailClient.gameListResponseBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260705NCHT0",
+                      "AWAY_NM": "NC",
+                      "HOME_NM": "KIA",
+                      "GAME_STATE_SC_NM": "CANCELLED"
+                    }
+                  ]
+                }
+                """;
+
+        when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
+
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(scheduleGameWriteRepository.parsedGame.isCancelled()).isTrue();
+        assertThat(scheduleGameWriteRepository.parsedGame.rawCancelText()).isEqualTo("CANCELLED");
+        assertThat(scheduleGameWriteRepository.parsedGame.statusReason()).isEqualTo("CANCELLED");
+    }
+
+    @Test
     void crawlDayIgnoresPreviousDateMissingProviderCancellationWithoutWarn(CapturedOutput output) {
         LocalDate requestedDate = LocalDate.of(2026, 5, 21);
         kboScheduleParser.parseResult = new MonthlyScheduleParseResult(

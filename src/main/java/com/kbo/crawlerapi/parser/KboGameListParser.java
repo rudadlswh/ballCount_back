@@ -96,6 +96,12 @@ public class KboGameListParser {
         if (statusText == null) {
             return null;
         }
+        if (isPostponedText(statusText)) {
+            return GameStatus.POSTPONED;
+        }
+        if (isCancelledText(statusText)) {
+            return GameStatus.CANCELLED;
+        }
         if (isSuspensionText(statusText)) {
             return GameStatus.SUSPENDED;
         }
@@ -158,6 +164,33 @@ public class KboGameListParser {
                 || lower.contains("rain delay")
                 || lower.contains("delayed")
                 || lower.contains("delay");
+    }
+
+    private boolean isPostponedText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return value.contains("연기")
+                || value.contains("순연")
+                || lower.contains("postponed")
+                || lower.contains("postpone");
+    }
+
+    private boolean isCancelledText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return value.contains("우천취소")
+                || value.contains("경기취소")
+                || value.contains("취소")
+                || value.contains("노게임")
+                || lower.contains("cancelled")
+                || lower.contains("canceled")
+                || lower.contains("cancel")
+                || lower.contains("no game")
+                || lower.contains("nogame");
     }
 
     private boolean isSuspensionText(String value) {

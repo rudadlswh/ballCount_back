@@ -810,6 +810,12 @@ public class KboScheduleParser {
                     : homeStartingPitcherName;
             GameStatus enrichedStatus = gameListGame.status() == null ? status : gameListGame.status();
             String enrichedStatusReason = hasText(gameListGame.statusReason()) ? gameListGame.statusReason() : statusReason;
+            String enrichedRawCancelText = enrichedStatus == GameStatus.CANCELLED || enrichedStatus == GameStatus.POSTPONED
+                    ? firstText(rawCancelText, enrichedStatusReason)
+                    : null;
+            GameCancelReason enrichedCancelReason = enrichedStatus == GameStatus.CANCELLED
+                    ? firstCancelReason(cancelReason, cancelReasonFromText(enrichedRawCancelText))
+                    : null;
             return new ParsedScheduleGame(
                     provider,
                     enrichedProviderGameId,
@@ -823,11 +829,15 @@ public class KboScheduleParser {
                     homeProviderTeamName,
                     awayScore,
                     homeScore,
-                    enrichedStatus == GameStatus.CANCELLED ? cancelReason : null,
-                    enrichedStatus == GameStatus.CANCELLED || enrichedStatus == GameStatus.POSTPONED ? rawCancelText : null,
+                    enrichedCancelReason,
+                    enrichedRawCancelText,
                     enrichedAwayStartingPitcherName,
                     enrichedHomeStartingPitcherName,
-                    enrichedStatus == GameStatus.DELAYED || enrichedStatus == GameStatus.SUSPENDED ? enrichedStatusReason : null,
+                    enrichedStatus == GameStatus.DELAYED
+                            || enrichedStatus == GameStatus.SUSPENDED
+                            || enrichedStatus == GameStatus.CANCELLED
+                            || enrichedStatus == GameStatus.POSTPONED
+                            ? enrichedStatusReason : null,
                     sourceUpdatedAt
             );
         }
@@ -857,6 +867,41 @@ public class KboScheduleParser {
 
         private boolean hasText(String value) {
             return value != null && !value.isBlank();
+        }
+
+        private String firstText(String... values) {
+            for (String value : values) {
+                if (hasText(value)) {
+                    return value.trim();
+                }
+            }
+            return null;
+        }
+
+        private GameCancelReason firstCancelReason(GameCancelReason... values) {
+            for (GameCancelReason value : values) {
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        private GameCancelReason cancelReasonFromText(String value) {
+            if (!hasText(value)) {
+                return GameCancelReason.UNKNOWN;
+            }
+            String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+            if (normalized.contains("우천") || normalized.contains("rain")) {
+                return GameCancelReason.RAIN;
+            }
+            if (normalized.contains("그라운드") || normalized.contains("ground")) {
+                return GameCancelReason.GROUND;
+            }
+            if (normalized.contains("취소") || normalized.contains("cancel")) {
+                return GameCancelReason.UNKNOWN;
+            }
+            return GameCancelReason.ETC;
         }
     }
 
