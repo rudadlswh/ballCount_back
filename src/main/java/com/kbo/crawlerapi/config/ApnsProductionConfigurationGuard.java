@@ -14,35 +14,30 @@ public class ApnsProductionConfigurationGuard {
     private static final String EXPECTED_BUNDLE_ID = "com.chogm.kboScore";
 
     private final ApnsProperties apnsProperties;
-    private final SchedulerShellProperties schedulerShellProperties;
-    private final LiveSyncProperties liveSyncProperties;
+    private final SyncProperties syncProperties;
 
     public ApnsProductionConfigurationGuard(
             ApnsProperties apnsProperties,
-            SchedulerShellProperties schedulerShellProperties,
-            LiveSyncProperties liveSyncProperties
+            SyncProperties syncProperties
     ) {
         this.apnsProperties = apnsProperties;
-        this.schedulerShellProperties = schedulerShellProperties;
-        this.liveSyncProperties = liveSyncProperties;
+        this.syncProperties = syncProperties;
     }
 
     @PostConstruct
     public void validateProductionConfiguration() {
-        boolean schedulerEnabled = schedulerShellProperties.isEnabled();
-        boolean liveSyncEnabled = liveSyncProperties.isEnabled();
+        boolean syncEnabled = syncProperties.isEnabled();
         boolean pushEnabled = apnsProperties.isPushEnabled();
-        if ((schedulerEnabled || liveSyncEnabled) && !pushEnabled) {
+        if (syncEnabled && !pushEnabled) {
             log.error(
-                    "Production notification runtime misconfigured: schedulerEnabled={} liveSyncEnabled={} pushEnabled={} configuredEnv={} bundleIdPresent={}",
-                    schedulerEnabled,
-                    liveSyncEnabled,
+                    "Production notification runtime misconfigured: syncEnabled={} pushEnabled={} configuredEnv={} bundleIdPresent={}",
+                    syncEnabled,
                     pushEnabled,
                     apnsProperties.getEnv(),
                     apnsProperties.hasBundleId()
             );
             throw new IllegalStateException(
-                    "Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SCHEDULER_ENABLED=true or KBO_LIVE_SYNC_ENABLED=true."
+                    "Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SYNC_ENABLED=true."
             );
         }
 

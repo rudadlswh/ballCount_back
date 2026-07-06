@@ -28,11 +28,11 @@ class JdbcGameBoxscoreRecordWriteRepositoryTest {
     void publicGameBatterRecordsViewExposesBattingOrderAndPosition() throws Exception {
         String migrationSql = Files.readString(Path.of("src/main/resources/db/migration/V14__add_live_text_batter_extra_stats.sql"));
 
-        assertThat(migrationSql).contains("CREATE OR REPLACE VIEW ${appSchema}.public_game_batter_records AS");
+        assertThat(migrationSql).contains("CREATE OR REPLACE VIEW kbo_crawler_api.public_game_batter_records AS");
         assertThat(migrationSql).contains("source_order");
         assertThat(migrationSql).contains("batting_order");
         assertThat(migrationSql).contains("position");
-        assertThat(migrationSql).contains("FROM ${appSchema}.game_batter_records");
+        assertThat(migrationSql).contains("FROM kbo_crawler_api.game_batter_records");
     }
 
     private String batterUpsertSql() throws Exception {

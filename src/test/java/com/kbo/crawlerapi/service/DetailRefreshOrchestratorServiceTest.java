@@ -24,7 +24,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import com.kbo.crawlerapi.config.SchedulerShellProperties;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameSnapshot;
 import com.kbo.crawlerapi.domain.GameStatus;
@@ -64,8 +63,7 @@ class DetailRefreshOrchestratorServiceTest {
                 lineScoreRepository,
                 gameBoxscoreRecordReadRepository,
                 new StubGameDetailImportService(),
-                FIXED_CLOCK,
-                new SchedulerShellProperties()
+                FIXED_CLOCK
         );
     }
 
@@ -287,7 +285,6 @@ class DetailRefreshOrchestratorServiceTest {
                 gameBoxscoreRecordReadRepository,
                 importService,
                 FIXED_CLOCK,
-                new SchedulerShellProperties(),
                 lockService
         );
     }

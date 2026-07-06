@@ -6,6 +6,7 @@
 2. Set at least these keys in `.env`:
    - `SPRING_PROFILES_ACTIVE=local`
    - `APP_DB_SCHEMA=kbo_crawler_api_dev`
+   - `APP_RUNTIME_ROLE=reader`
    - `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/<database>?currentSchema=kbo_crawler_api_dev`
    - `SPRING_DATASOURCE_USERNAME`
    - `SPRING_DATASOURCE_PASSWORD`
@@ -15,6 +16,7 @@
 The application loads `.env` automatically through Spring Boot config import when you run from the repository root.
 Local, development, and test profiles use the dedicated `kbo_crawler_api_dev` schema. Production uses `kbo_crawler_api`.
 Startup fails when a non-production profile is configured with the production schema, or when local/development/test is configured with anything other than `kbo_crawler_api_dev`.
+`APP_RUNTIME_ROLE` defaults to reader behavior. Reader or unset local runs must keep `APP_SYNC_ENABLED=false`.
 
 ## Run locally
 
@@ -36,9 +38,9 @@ Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Start 
 - `APNS_PRIVATE_KEY_PATH`
 - `KBO_PUSH_ENABLED=true`
 
-The production profile disables Swagger/OpenAPI UI, keeps scheduler phases opt-in,
-and defaults APNs to the production gateway. Startup fails under the production
-profile unless `KBO_PUSH_ENABLED=true`, `APNS_ENV=production`,
+The production profile disables Swagger/OpenAPI UI, keeps automatic sync opt-in
+through `APP_SYNC_ENABLED`, and defaults APNs to the production gateway. Startup
+fails under the production profile when sync is enabled unless `KBO_PUSH_ENABLED=true`, `APNS_ENV=production`,
 `APNS_BUNDLE_ID=com.chogm.kboScore`, `APNS_TEAM_ID`, `APNS_KEY_ID`, and
 `APNS_PRIVATE_KEY_PATH` are all configured.
 
@@ -93,47 +95,51 @@ curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?d
 curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
 ```
 
-## Scheduler shell
+## Sync scheduler
 
-The scheduler shell is production-safe by default:
+The sync scheduler is production-safe by default:
 
-- `app.scheduler.enabled=false` by default, so normal startup performs no automatic refresh.
-- The scheduler requires an explicit Spring profile when enabled: `local`, `dev`, `staging`, or `production`.
-- `live` refresh stays disabled unless `app.scheduler.live-enabled=true` is set explicitly.
-- The `local` profile forbids live refresh entirely.
-- Each scheduler phase skips if the previous same-phase run is still active.
-- Each scheduler phase also skips one extra interval after a failed run to avoid tight failure loops.
-- Each executed scheduler pass creates one parent `crawl_jobs` row with `job_type=detail-refresh-orchestration-pass`.
-  These parent rows track the pass phase, date target, selected/executed/succeeded/failed counts, and skipped count above the child `game-detail-import` rows.
+- `app.sync.enabled=false` by default, so normal startup performs no automatic refresh.
+- Runtime writer jobs require `APP_RUNTIME_ROLE=writer` plus the profile's allowed schema.
+- `LiveGameSyncScheduler` is the single automatic scheduler. It handles pregame, live, and post-final confirmation cadence from game state.
+- Legacy `app.scheduler.*`, `APP_SCHEDULER_*`, `app.live-sync.enabled`, and old live-sync enabled env vars are not used as scheduler switches.
 
 Environment policy:
 
-- `local`: safe for disabled mode, pregame-only, or controlled post-final refresh. Live refresh is blocked.
-- `dev` / `staging`: safe for pregame or post-final refresh. Live refresh is allowed only when explicitly enabled.
-- `production`: all phases remain opt-in by config. Live refresh is still never implicit.
+- `local` / `development`: reader or unset role is safe only with `APP_SYNC_ENABLED=false`. Use `APP_RUNTIME_ROLE=writer` with `kbo_crawler_api_dev` for controlled write testing. The production schema is always blocked.
+- `test`: reader by default. The production schema is always blocked. Writer tests must explicitly use `APP_RUNTIME_ROLE=writer` with `kbo_crawler_api_dev`.
+- `production`: writer jobs require `APP_RUNTIME_ROLE=writer` with `kbo_crawler_api`. The development schema is blocked.
 
-Safe examples:
+Local reader example:
 
-Disabled mode:
+```env
+SPRING_PROFILES_ACTIVE=local
+APP_DB_SCHEMA=kbo_crawler_api_dev
+APP_RUNTIME_ROLE=reader
+APP_SYNC_ENABLED=false
+SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/postgres?sslmode=require&currentSchema=kbo_crawler_api_dev
+SPRING_DATASOURCE_USERNAME=<user>
+SPRING_DATASOURCE_PASSWORD=<password>
+```
 
 ```bash
 ./gradlew bootRun --args='--spring.profiles.active=local'
 ```
 
-Pregame-only mode:
+Local writer example:
 
-```bash
-./gradlew bootRun --args='--spring.profiles.active=local --app.scheduler.enabled=true --app.scheduler.pregame-enabled=true --app.scheduler.live-enabled=false --app.scheduler.post-final-enabled=false'
+```env
+SPRING_PROFILES_ACTIVE=local
+APP_DB_SCHEMA=kbo_crawler_api_dev
+APP_RUNTIME_ROLE=writer
+APP_SYNC_ENABLED=true
+SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/postgres?sslmode=require&currentSchema=kbo_crawler_api_dev
+SPRING_DATASOURCE_USERNAME=<user>
+SPRING_DATASOURCE_PASSWORD=<password>
 ```
 
-Controlled post-final mode:
+Writer mode:
 
 ```bash
-./gradlew bootRun --args='--spring.profiles.active=dev --app.scheduler.enabled=true --app.scheduler.pregame-enabled=false --app.scheduler.live-enabled=false --app.scheduler.post-final-enabled=true'
-```
-
-Explicitly enabled live mode:
-
-```bash
-./gradlew bootRun --args='--spring.profiles.active=staging --app.scheduler.enabled=true --app.scheduler.pregame-enabled=true --app.scheduler.live-enabled=true --app.scheduler.post-final-enabled=true'
+./gradlew bootRun --args='--spring.profiles.active=local --app.sync.enabled=true'
 ```

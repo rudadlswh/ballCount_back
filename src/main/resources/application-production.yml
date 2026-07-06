@@ -45,13 +45,17 @@ app:
     registration-rate-limit-enabled: ${REGISTRATION_RATE_LIMIT_ENABLED:true}
     registration-rate-limit-max-requests: ${REGISTRATION_RATE_LIMIT_MAX_REQUESTS:12}
     registration-rate-limit-window: ${REGISTRATION_RATE_LIMIT_WINDOW:1m}
-  scheduler:
-    enabled: ${APP_SCHEDULER_ENABLED:false}
-    pregame-enabled: ${APP_SCHEDULER_PREGAME_ENABLED:true}
-    live-enabled: ${APP_SCHEDULER_LIVE_ENABLED:false}
-    post-final-enabled: ${APP_SCHEDULER_POST_FINAL_ENABLED:true}
+  sync:
+    enabled: ${APP_SYNC_ENABLED:false}
   live-sync:
-    enabled: ${KBO_LIVE_SYNC_ENABLED:false}
+    idle-interval: ${KBO_LIVE_SYNC_IDLE_INTERVAL:PT30M}
+    pregame-check-interval: ${KBO_LIVE_SYNC_PREGAME_CHECK_INTERVAL:PT5M}
+    pregame-fast-polling-window: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_WINDOW:PT30M}
+    pregame-fast-polling-interval: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_INTERVAL:PT1M}
+    live-polling-interval: ${KBO_LIVE_SYNC_LIVE_POLLING_INTERVAL:${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}}
+    final-confirmation-polling-interval: ${KBO_LIVE_SYNC_FINAL_CONFIRMATION_POLLING_INTERVAL:PT30S}
+    live-ttl: ${KBO_LIVE_SYNC_LIVE_TTL:PT3S}
+    final-confirmation-ttl: ${KBO_LIVE_SYNC_FINAL_CONFIRMATION_TTL:PT30S}
   apns:
     push-enabled: ${KBO_PUSH_ENABLED:false}
     team-id: ${APNS_TEAM_ID:}

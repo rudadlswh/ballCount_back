@@ -76,6 +76,7 @@ public class LiveGameSyncService {
     private final Clock applicationClock;
     private final DateSyncLockService dateSyncLockService;
     private final Map<UUID, Instant> nextRefreshAtByGameId = new ConcurrentHashMap<>();
+    private final Set<UUID> suspiciousStallLoggedGameIds = ConcurrentHashMap.newKeySet();
 
     public LiveGameSyncService(
             GameRepository gameRepository,
@@ -175,7 +176,7 @@ public class LiveGameSyncService {
     }
 
     private LiveSyncSummary syncWithLock(LocalDate targetDate, boolean force) {
-        log.info("[LiveGameSync] started date={}", targetDate);
+        log.debug("[LiveGameSync] started date={}", targetDate);
         List<Game> gamesBeforeScheduleRefresh = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
         Map<String, GameState> beforeScheduleStates = new HashMap<>();
         for (Game game : gamesBeforeScheduleRefresh) {
@@ -199,7 +200,7 @@ public class LiveGameSyncService {
                 candidates.add(game);
             }
         }
-        log.info("[LiveGameSync] candidate count={}", candidates.size());
+        log.debug("[LiveGameSync] candidate count={}", candidates.size());
 
         int updatedCount = 0;
         int eventCreatedCount = 0;
@@ -411,10 +412,32 @@ public class LiveGameSyncService {
             }
         }
 
-        log.info("[LiveGameSync] updated count={}", updatedCount);
-        log.info("[LiveGameSync] event created count={}", eventCreatedCount);
-        log.info("[LiveGameSync] notification sent count={}", notificationSentCount);
-        log.info("[LiveGameSync] notification skipped count={}", notificationSkippedCount);
+        boolean notable = updatedCount > 0 || eventCreatedCount > 0 || notificationSentCount > 0 || failedCount > 0;
+        if (notable) {
+            log.info(
+                    "[LiveGameSync] summary date={} scanned={} candidates={} updated={} events={} sent={} skipped={} failed={}",
+                    targetDate,
+                    games.size(),
+                    candidates.size(),
+                    updatedCount,
+                    eventCreatedCount,
+                    notificationSentCount,
+                    notificationSkippedCount,
+                    failedCount
+            );
+        } else {
+            log.debug(
+                    "[LiveGameSync] summary date={} scanned={} candidates={} updated={} events={} sent={} skipped={} failed={}",
+                    targetDate,
+                    games.size(),
+                    candidates.size(),
+                    updatedCount,
+                    eventCreatedCount,
+                    notificationSentCount,
+                    notificationSkippedCount,
+                    failedCount
+            );
+        }
         return new LiveSyncSummary(
                 targetDate,
                 games.size(),
@@ -639,17 +662,31 @@ public class LiveGameSyncService {
     }
 
     private void logCandidateDiagnostics(Game game, boolean detailImportAttempted, String skipReason) {
-        log.info(
-                "[LiveGameSync] candidate diagnostics publicGameId={} providerGameId={} storedStatus={} storedStatusReason={} scheduledAt={} gameDate={} detailImport={} skipReason={}",
-                game.getPublicGameId(),
-                game.getProviderGameId(),
-                game.getStatus(),
-                game.getStatusReason(),
-                game.getScheduledAt(),
-                game.getGameDate(),
-                detailImportAttempted ? "attempted" : "skipped",
-                skipReason
-        );
+        if (detailImportAttempted) {
+            log.info(
+                    "[LiveGameSync] candidate diagnostics publicGameId={} providerGameId={} storedStatus={} storedStatusReason={} scheduledAt={} gameDate={} detailImport={} skipReason={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getStatus(),
+                    game.getStatusReason(),
+                    game.getScheduledAt(),
+                    game.getGameDate(),
+                    "attempted",
+                    skipReason
+            );
+        } else {
+            log.debug(
+                    "[LiveGameSync] candidate diagnostics publicGameId={} providerGameId={} storedStatus={} storedStatusReason={} scheduledAt={} gameDate={} detailImport={} skipReason={}",
+                    game.getPublicGameId(),
+                    game.getProviderGameId(),
+                    game.getStatus(),
+                    game.getStatusReason(),
+                    game.getScheduledAt(),
+                    game.getGameDate(),
+                    "skipped",
+                    skipReason
+            );
+        }
     }
 
     private void logSuspiciousScheduledStall(Game game) {
@@ -663,6 +700,9 @@ public class LiveGameSyncService {
         boolean snapshotStalled = snapshotCount <= 1;
         boolean liveCheckOnly = game.getLiveLastCheckedAt() != null;
         if (!inningLooksStarted && !snapshotStalled && !liveCheckOnly) {
+            return;
+        }
+        if (game.getId() != null && !suspiciousStallLoggedGameIds.add(game.getId())) {
             return;
         }
         log.warn(
@@ -852,7 +892,7 @@ public class LiveGameSyncService {
         }
         if ((game.getStatus() == GameStatus.SCHEDULED || game.getStatus() == GameStatus.UNKNOWN)
                 && hasScheduledStartReached(game)) {
-            log.info(
+            log.debug(
                     "[LiveGameSync] selected detail import game={} status={} scheduledAt={} now={} reason=scheduled_start_reached",
                     game.getPublicGameId(),
                     game.getStatus(),
@@ -901,6 +941,10 @@ public class LiveGameSyncService {
 
     private Duration ttlFor(Game game) {
         if (game.getStatus() == GameStatus.LIVE || game.getStatus() == GameStatus.SUSPENDED) {
+            return properties.getLiveTtl();
+        }
+        if ((game.getStatus() == GameStatus.SCHEDULED || game.getStatus() == GameStatus.UNKNOWN || game.getStatus() == GameStatus.DELAYED)
+                && hasScheduledStartReached(game)) {
             return properties.getLiveTtl();
         }
         if (game.getStatus() == GameStatus.FINAL && !shouldSkipFinalConfirmed(game)) {

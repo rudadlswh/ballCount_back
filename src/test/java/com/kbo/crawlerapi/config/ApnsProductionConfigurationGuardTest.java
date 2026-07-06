@@ -25,7 +25,7 @@ class ApnsProductionConfigurationGuardTest {
     }
 
     @Test
-    void productionConfigurationAllowsPushDisabledWhenSchedulersAreDisabled() {
+    void productionConfigurationAllowsPushDisabledWhenSyncIsDisabled() {
         ApnsProperties properties = configuredProperties();
         properties.setPushEnabled(false);
         properties.setEnv("sandbox");
@@ -38,34 +38,20 @@ class ApnsProductionConfigurationGuardTest {
     }
 
     @Test
-    void productionConfigurationRejectsSchedulerEnabledWithPushDisabled() {
+    void productionConfigurationRejectsSyncEnabledWithPushDisabled() {
         ApnsProperties properties = configuredProperties();
         properties.setPushEnabled(false);
-        SchedulerShellProperties schedulerProperties = schedulerProperties(true);
 
-        assertThatThrownBy(() -> guard(properties, schedulerProperties, new LiveSyncProperties()).validateProductionConfiguration())
+        assertThatThrownBy(() -> guard(properties, syncProperties(true)).validateProductionConfiguration())
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SCHEDULER_ENABLED=true or KBO_LIVE_SYNC_ENABLED=true.");
+                .hasMessage("Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SYNC_ENABLED=true.");
     }
 
     @Test
-    void productionConfigurationRejectsLiveSyncEnabledWithPushDisabled() {
+    void productionConfigurationAllowsPushEnabledWithSyncEnabled() {
         ApnsProperties properties = configuredProperties();
-        properties.setPushEnabled(false);
-        LiveSyncProperties liveSyncProperties = new LiveSyncProperties();
-        liveSyncProperties.setEnabled(true);
 
-        assertThatThrownBy(() -> guard(properties, new SchedulerShellProperties(), liveSyncProperties).validateProductionConfiguration())
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SCHEDULER_ENABLED=true or KBO_LIVE_SYNC_ENABLED=true.");
-    }
-
-    @Test
-    void productionConfigurationAllowsPushEnabledWithSchedulerEnabled() {
-        ApnsProperties properties = configuredProperties();
-        SchedulerShellProperties schedulerProperties = schedulerProperties(true);
-
-        assertThatCode(() -> guard(properties, schedulerProperties, new LiveSyncProperties()).validateProductionConfiguration())
+        assertThatCode(() -> guard(properties, syncProperties(true)).validateProductionConfiguration())
                 .doesNotThrowAnyException();
     }
 
@@ -90,21 +76,20 @@ class ApnsProductionConfigurationGuardTest {
         return properties;
     }
 
-    private SchedulerShellProperties schedulerProperties(boolean enabled) {
-        SchedulerShellProperties properties = new SchedulerShellProperties();
-        properties.setEnabled(enabled);
-        return properties;
-    }
-
     private ApnsProductionConfigurationGuard guard(ApnsProperties properties) {
-        return guard(properties, new SchedulerShellProperties(), new LiveSyncProperties());
+        return guard(properties, syncProperties(false));
     }
 
     private ApnsProductionConfigurationGuard guard(
             ApnsProperties properties,
-            SchedulerShellProperties schedulerProperties,
-            LiveSyncProperties liveSyncProperties
+            SyncProperties syncProperties
     ) {
-        return new ApnsProductionConfigurationGuard(properties, schedulerProperties, liveSyncProperties);
+        return new ApnsProductionConfigurationGuard(properties, syncProperties);
+    }
+
+    private SyncProperties syncProperties(boolean enabled) {
+        SyncProperties properties = new SyncProperties();
+        properties.setEnabled(enabled);
+        return properties;
     }
 }

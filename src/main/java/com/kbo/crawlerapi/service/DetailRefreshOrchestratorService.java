@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -22,13 +23,15 @@ import com.kbo.crawlerapi.repository.LineScoreRepository;
 public class DetailRefreshOrchestratorService {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    private static final Duration PREGAME_INTERVAL = Duration.ofMinutes(30);
+    private static final Duration LIVE_INTERVAL = Duration.ofSeconds(15);
+    private static final Duration POST_FINAL_INTERVAL = Duration.ofSeconds(60);
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
     private final LineScoreRepository lineScoreRepository;
     private final GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository;
     private final GameDetailImportService gameDetailImportService;
     private final Clock applicationClock;
-    private final com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties;
     private final DateSyncLockService dateSyncLockService;
 
     public DetailRefreshOrchestratorService(
@@ -37,8 +40,7 @@ public class DetailRefreshOrchestratorService {
             LineScoreRepository lineScoreRepository,
             GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository,
             GameDetailImportService gameDetailImportService,
-            Clock applicationClock,
-            com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties
+            Clock applicationClock
     ) {
         this(
                 gameRepository,
@@ -47,7 +49,6 @@ public class DetailRefreshOrchestratorService {
                 gameBoxscoreRecordReadRepository,
                 gameDetailImportService,
                 applicationClock,
-                schedulerShellProperties,
                 null
         );
     }
@@ -60,7 +61,6 @@ public class DetailRefreshOrchestratorService {
             GameBoxscoreRecordReadRepository gameBoxscoreRecordReadRepository,
             GameDetailImportService gameDetailImportService,
             Clock applicationClock,
-            com.kbo.crawlerapi.config.SchedulerShellProperties schedulerShellProperties,
             DateSyncLockService dateSyncLockService
     ) {
         this.gameRepository = gameRepository;
@@ -69,7 +69,6 @@ public class DetailRefreshOrchestratorService {
         this.gameBoxscoreRecordReadRepository = gameBoxscoreRecordReadRepository;
         this.gameDetailImportService = gameDetailImportService;
         this.applicationClock = applicationClock;
-        this.schedulerShellProperties = schedulerShellProperties;
         this.dateSyncLockService = dateSyncLockService == null ? new DateSyncLockService() : dateSyncLockService;
     }
 
@@ -161,7 +160,7 @@ public class DetailRefreshOrchestratorService {
                     toKst(game.getScheduledAt()),
                     allowedPhases.contains(RefreshPhase.LIVE),
                     RefreshPhase.LIVE.phaseName(),
-                    (int) schedulerShellProperties.getLiveInterval().toSeconds(),
+                    (int) LIVE_INTERVAL.toSeconds(),
                     "Game is live or suspended and should stay on the fastest refresh cadence.",
                     false,
                     lineScoreCount,
@@ -192,7 +191,7 @@ public class DetailRefreshOrchestratorService {
                     toKst(game.getScheduledAt()),
                     allowedPhases.contains(RefreshPhase.POST_FINAL),
                     RefreshPhase.POST_FINAL.phaseName(),
-                    (int) schedulerShellProperties.getPostFinalInterval().toSeconds(),
+                    (int) POST_FINAL_INTERVAL.toSeconds(),
                     "Game is final but final data is incomplete, so it remains eligible for 1-minute refresh.",
                     false,
                     lineScoreCount,
@@ -208,7 +207,7 @@ public class DetailRefreshOrchestratorService {
                     toKst(game.getScheduledAt()),
                     allowedPhases.contains(RefreshPhase.PREGAME),
                     RefreshPhase.PREGAME.phaseName(),
-                    (int) schedulerShellProperties.getPregameInterval().toSeconds(),
+                    (int) PREGAME_INTERVAL.toSeconds(),
                     "Game is not live yet and remains eligible for 30-minute pregame refresh.",
                     false,
                     lineScoreCount,

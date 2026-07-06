@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.config.LiveSyncProperties;
+import com.kbo.crawlerapi.config.SyncProperties;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
@@ -33,27 +34,29 @@ class LiveGameSyncSchedulerTest {
 
     @Test
     void skipsWhenLiveSyncIsDisabled() {
-        LiveSyncProperties properties = properties(false);
+        LiveSyncProperties properties = properties();
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         GameRepository repository = mock(GameRepository.class);
-        LiveGameSyncScheduler scheduler = scheduler(service, properties, repository, clockAt("2026-04-30T12:00:00+09:00"));
+        LiveGameSyncScheduler scheduler = scheduler(service, properties, repository, clockAt("2026-04-30T12:00:00+09:00"), false);
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
         verify(repository, never()).findByGameDateOrderByScheduledAtAscPublicGameIdAsc(any(LocalDate.class));
     }
 
     @Test
     void runsWhenLiveSyncIsEnabled() {
-        LiveSyncProperties properties = properties(true);
+        LiveSyncProperties properties = properties();
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         GameRepository repository = gameRepository(List.of(game(GameStatus.LIVE, "2026-04-30T18:30:00+09:00")));
         LiveGameSyncScheduler scheduler = scheduler(service, properties, repository, clockAt("2026-04-30T12:01:00+09:00"));
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofSeconds(1));
     }
 
     @Test
@@ -61,14 +64,15 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of()),
                 clockAt("2026-04-30T12:00:00+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
     }
 
     @Test
@@ -76,9 +80,9 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(
-                        game(GameStatus.FINAL, "2026-04-30T18:30:00+09:00"),
+                        finalConfirmedGame("2026-04-30T18:30:00+09:00"),
                         game(GameStatus.CANCELLED, "2026-04-30T18:30:00+09:00"),
                         game(GameStatus.POSTPONED, "2026-04-30T18:30:00+09:00"),
                         game(GameStatus.SUSPENDED, "2026-04-30T18:30:00+09:00")
@@ -86,9 +90,26 @@ class LiveGameSyncSchedulerTest {
                 clockAt("2026-04-30T20:00:00+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
+    }
+
+    @Test
+    void unconfirmedFinalGameUsesPostFinalInterval() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        LiveGameSyncScheduler scheduler = scheduler(
+                service,
+                properties(),
+                gameRepository(List.of(game(GameStatus.FINAL, "2026-04-30T18:30:00+09:00"))),
+                clockAt("2026-04-30T21:00:00+09:00")
+        );
+
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
+
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofSeconds(30));
     }
 
     @Test
@@ -96,14 +117,15 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
                 clockAt("2026-04-30T12:01:00+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(5));
     }
 
     @Test
@@ -111,14 +133,15 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:01:00+09:00"))),
                 clockAt("2026-04-30T12:00:00+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(1));
     }
 
     @Test
@@ -126,14 +149,15 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
                 clockAt("2026-04-30T12:00:03+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(5));
     }
 
     @Test
@@ -141,14 +165,15 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:30:00+09:00"))),
                 clockAt("2026-04-30T12:30:03+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(5));
     }
 
     @Test
@@ -156,14 +181,47 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:59:00+09:00"))),
                 clockAt("2026-04-30T13:00:00+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(5));
+    }
+
+    @Test
+    void thirtyOneMinutesBeforeScheduledStartUsesPregameInterval() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        LiveGameSyncScheduler scheduler = scheduler(
+                service,
+                properties(),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
+                clockAt("2026-04-30T17:59:00+09:00")
+        );
+
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
+
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(5));
+    }
+
+    @Test
+    void thirtyMinutesBeforeScheduledStartUsesFastPregameInterval() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        LiveGameSyncScheduler scheduler = scheduler(
+                service,
+                properties(),
+                gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
+                clockAt("2026-04-30T18:00:00+09:00")
+        );
+
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
+
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(1));
     }
 
     @Test
@@ -171,22 +229,23 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T16:00:00+09:00"))),
                 clockAt("2026-04-30T12:00:03+09:00")
         );
 
         scheduler.runTick();
         scheduler.runTick();
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(5));
     }
 
     @Test
     void preGameChecksCanRunRepeatedlyAtConfiguredInterval() {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
-        LiveSyncProperties properties = properties(true);
+        LiveSyncProperties properties = properties();
         properties.setPregameCheckInterval(Duration.ofMinutes(1));
         MutableClock clock = new MutableClock("2026-04-30T12:00:03+09:00");
         LiveGameSyncScheduler scheduler = scheduler(
@@ -210,14 +269,15 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00"))),
                 clockAt("2026-04-30T18:30:00+09:00")
         );
 
-        scheduler.runTick();
+        Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(nextDelay).isEqualTo(Duration.ofSeconds(1));
     }
 
     @Test
@@ -225,7 +285,7 @@ class LiveGameSyncSchedulerTest {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.LIVE, "2026-04-30T18:30:00+09:00"))),
                 clockAt("2026-04-30T12:01:00+09:00")
         );
@@ -240,7 +300,7 @@ class LiveGameSyncSchedulerTest {
         BlockingLiveGameSyncService service = new BlockingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
-                properties(true),
+                properties(),
                 gameRepository(List.of(game(GameStatus.LIVE, "2026-04-30T18:30:00+09:00"))),
                 clockAt("2026-04-30T12:01:00+09:00")
         );
@@ -263,13 +323,23 @@ class LiveGameSyncSchedulerTest {
             GameRepository repository,
             Clock clock
     ) {
-        return new LiveGameSyncScheduler(service, properties, repository, clock);
+        return scheduler(service, properties, repository, clock, true);
     }
 
-    private static LiveSyncProperties properties(boolean enabled) {
-        LiveSyncProperties properties = new LiveSyncProperties();
-        properties.setEnabled(enabled);
-        return properties;
+    private static LiveGameSyncScheduler scheduler(
+            LiveGameSyncService service,
+            LiveSyncProperties properties,
+            GameRepository repository,
+            Clock clock,
+            boolean enabled
+    ) {
+        SyncProperties syncProperties = new SyncProperties();
+        syncProperties.setEnabled(enabled);
+        return new LiveGameSyncScheduler(service, syncProperties, properties, repository, clock);
+    }
+
+    private static LiveSyncProperties properties() {
+        return new LiveSyncProperties();
     }
 
     private static Clock clockAt(String offsetDateTime) {
@@ -346,6 +416,12 @@ class LiveGameSyncSchedulerTest {
                 null,
                 null
         );
+    }
+
+    private static Game finalConfirmedGame(String scheduledAt) {
+        Game game = game(GameStatus.FINAL, scheduledAt);
+        game.confirmFinal(OffsetDateTime.parse("2026-04-30T20:00:00+09:00"));
+        return game;
     }
 
     private static class RecordingLiveGameSyncService extends LiveGameSyncService {

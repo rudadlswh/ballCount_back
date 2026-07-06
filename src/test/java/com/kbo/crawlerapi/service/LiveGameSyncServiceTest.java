@@ -260,6 +260,38 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void scheduledStartCandidateUsesLiveTtlAfterScheduledAt() {
+        MutableClock clock = new MutableClock("2026-04-09T09:35:57Z");
+        Game game = fixtureGame(
+                GameStatus.SCHEDULED,
+                0,
+                0,
+                null,
+                OffsetDateTime.of(2026, 4, 9, 18, 30, 0, 0, ZoneOffset.ofHours(9))
+        );
+        StubGameDetailImportService importService = new StubGameDetailImportService();
+        stubGameForSuccessfulDetailImport(game);
+        LiveSyncProperties properties = new LiveSyncProperties();
+        properties.setLiveTtl(Duration.ofSeconds(3));
+        properties.setPregameTtl(Duration.ofMinutes(3));
+        LiveGameSyncService service = service(
+                clock,
+                importService,
+                new StubNotificationEventService(),
+                null,
+                properties
+        );
+
+        service.sync(game.getGameDate(), false);
+        service.sync(game.getGameDate(), false);
+        clock.advance(Duration.ofSeconds(3));
+        service.sync(game.getGameDate(), false);
+
+        assertThat(importService.importedGameIds)
+                .containsExactly(game.getPublicGameId(), game.getPublicGameId());
+    }
+
+    @Test
     void unknownGameAfterScheduledAtRunsDetailImport() {
         Clock clock = Clock.fixed(Instant.parse("2026-04-09T09:35:57Z"), ZoneId.of("Asia/Seoul"));
         Game game = fixtureGame(
@@ -2501,6 +2533,33 @@ class LiveGameSyncServiceTest {
                 null,
                 null
         );
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        private MutableClock(String instant) {
+            this.instant = Instant.parse(instant);
+        }
+
+        private void advance(Duration duration) {
+            instant = instant.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("Asia/Seoul");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return Clock.fixed(instant, zone);
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
     }
 
     private GameSnapshot snapshot(

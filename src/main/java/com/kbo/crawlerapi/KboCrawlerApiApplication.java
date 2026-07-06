@@ -10,12 +10,12 @@ import com.kbo.crawlerapi.config.KboAdminProperties;
 import com.kbo.crawlerapi.config.KboHttpProperties;
 import com.kbo.crawlerapi.config.KboReconcileProperties;
 import com.kbo.crawlerapi.config.LiveSyncProperties;
-import com.kbo.crawlerapi.config.SchedulerShellProperties;
+import com.kbo.crawlerapi.config.SyncProperties;
 
 @SpringBootApplication
 @EnableScheduling
 @EnableConfigurationProperties({
-        SchedulerShellProperties.class,
+        SyncProperties.class,
         LiveSyncProperties.class,
         ApnsProperties.class,
         AppSecurityProperties.class,
