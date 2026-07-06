@@ -9,7 +9,7 @@ import org.springframework.stereotype.Repository;
 public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecordWriteRepository {
 
     private static final String BATTER_UPSERT_SQL = """
-            INSERT INTO kbo_crawler_api.game_batter_records (
+            INSERT INTO game_batter_records (
                 id,
                 game_id,
                 team_id,
@@ -50,7 +50,7 @@ public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecord
             """;
 
     private static final String PITCHER_UPSERT_SQL = """
-            INSERT INTO kbo_crawler_api.game_pitcher_records (
+            INSERT INTO game_pitcher_records (
                 id,
                 game_id,
                 team_id,

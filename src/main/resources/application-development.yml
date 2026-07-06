@@ -1,0 +1,7 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/postgres?currentSchema=kbo_crawler_api_dev}
+
+app:
+  db:
+    schema: ${APP_DB_SCHEMA:kbo_crawler_api_dev}

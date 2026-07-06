@@ -4,14 +4,17 @@
 
 1. Create a repository-root `.env` file.
 2. Set at least these keys in `.env`:
+   - `SPRING_PROFILES_ACTIVE=local`
+   - `APP_DB_SCHEMA=kbo_crawler_api_dev`
+   - `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/<database>?currentSchema=kbo_crawler_api_dev`
    - `SPRING_DATASOURCE_USERNAME`
    - `SPRING_DATASOURCE_PASSWORD`
 3. Optionally override:
-   - `SPRING_DATASOURCE_URL`
    - `SPRING_PROFILES_ACTIVE`
 
 The application loads `.env` automatically through Spring Boot config import when you run from the repository root.
-Flyway and JPA use the dedicated `kbo_crawler_api` schema inside the `kbo` database so the app does not collide with unrelated tables in `public`.
+Local, development, and test profiles use the dedicated `kbo_crawler_api_dev` schema. Production uses `kbo_crawler_api`.
+Startup fails when a non-production profile is configured with the production schema, or when local/development/test is configured with anything other than `kbo_crawler_api_dev`.
 
 ## Run locally
 
@@ -25,7 +28,9 @@ Flyway and JPA use the dedicated `kbo_crawler_api` schema inside the `kbo` datab
 Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Start from
 `.env.production.example`, then set the real database and APNs values outside Git:
 
-- `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
+- `APP_DB_SCHEMA=kbo_crawler_api`
+- `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/<database>?currentSchema=kbo_crawler_api`
+- `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
 - `APNS_ENV=production`
 - `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID=com.chogm.kboScore`
 - `APNS_PRIVATE_KEY_PATH`

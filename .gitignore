@@ -31,3 +31,5 @@ game-list-*.json
 *.log
 app.log
 app.old.log
+kbo_schema.sql
+kbo_dev_schema.sql

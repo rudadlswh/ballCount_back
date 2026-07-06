@@ -53,18 +53,18 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
                 g.provider_game_id AS "providerGameId",
                 g.status AS status,
                 g.final_confirmed_at AS "finalConfirmedAt"
-            FROM kbo_crawler_api.games g
+            FROM games g
             WHERE g.game_date = :gameDate
               AND g.status = 'final'
               AND (
                   NOT EXISTS (
                       SELECT 1
-                      FROM kbo_crawler_api.game_batter_records br
+                      FROM game_batter_records br
                       WHERE br.game_id = g.id
                   )
                   OR NOT EXISTS (
                       SELECT 1
-                      FROM kbo_crawler_api.game_pitcher_records pr
+                      FROM game_pitcher_records pr
                       WHERE pr.game_id = g.id
                   )
               )

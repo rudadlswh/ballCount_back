@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
 public class JdbcTeamRankWriteRepository implements TeamRankWriteRepository {
 
     private static final String UPSERT_SQL = """
-            INSERT INTO kbo_crawler_api.team_ranks (
+            INSERT INTO team_ranks (
                 season,
                 team_id,
                 rank,

@@ -9,7 +9,7 @@ import org.springframework.stereotype.Repository;
 public class JdbcGameEventWriteRepository implements GameEventWriteRepository {
 
     private static final String EVENT_UPSERT_SQL = """
-            INSERT INTO kbo_crawler_api.game_events (
+            INSERT INTO game_events (
                 id,
                 game_id,
                 provider_event_id,
