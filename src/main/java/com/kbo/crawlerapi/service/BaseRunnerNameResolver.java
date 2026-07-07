@@ -13,19 +13,31 @@ class BaseRunnerNameResolver {
 
     ResolvedBaseRunners resolve(GameSnapshot previous, ParsedGameDetail current) {
         Runner first = resolveBase(
+                previous,
+                Base.FIRST,
                 current.runnerOnFirst(),
                 current.firstBaseRunnerName(),
-                current.firstBaseRunnerId()
+                current.firstBaseRunnerId(),
+                true,
+                current
         );
         Runner second = resolveBase(
+                previous,
+                Base.SECOND,
                 current.runnerOnSecond(),
                 current.secondBaseRunnerName(),
-                current.secondBaseRunnerId()
+                current.secondBaseRunnerId(),
+                false,
+                current
         );
         Runner third = resolveBase(
+                previous,
+                Base.THIRD,
                 current.runnerOnThird(),
                 current.thirdBaseRunnerName(),
-                current.thirdBaseRunnerId()
+                current.thirdBaseRunnerId(),
+                false,
+                current
         );
 
         String source = resolutionSource(current, first, second, third);
@@ -78,9 +90,13 @@ class BaseRunnerNameResolver {
     }
 
     private Runner resolveBase(
+            GameSnapshot previous,
+            Base base,
             boolean occupied,
             String officialName,
-            String officialId
+            String officialId,
+            boolean inferFromPreviousBatter,
+            ParsedGameDetail current
     ) {
         if (!occupied) {
             return Runner.empty();
@@ -90,7 +106,59 @@ class BaseRunnerNameResolver {
         if (name != null || id != null) {
             return new Runner(name, id);
         }
+        Runner carried = carryForward(previous, current, base);
+        if (carried.name() != null || carried.id() != null) {
+            return carried;
+        }
+        if (inferFromPreviousBatter && canInferFirstBaseRunner(previous, current)) {
+            return new Runner(clean(previous.getCurrentBatterName()), null);
+        }
         return Runner.empty();
+    }
+
+    private Runner carryForward(GameSnapshot previous, ParsedGameDetail current, Base base) {
+        if (!canCarryForward(previous, current) || !previousOccupied(previous, base)) {
+            return Runner.empty();
+        }
+        return switch (base) {
+            case FIRST -> new Runner(clean(previous.getFirstBaseRunnerName()), clean(previous.getFirstBaseRunnerId()));
+            case SECOND -> new Runner(clean(previous.getSecondBaseRunnerName()), clean(previous.getSecondBaseRunnerId()));
+            case THIRD -> new Runner(clean(previous.getThirdBaseRunnerName()), clean(previous.getThirdBaseRunnerId()));
+        };
+    }
+
+    private boolean canInferFirstBaseRunner(GameSnapshot previous, ParsedGameDetail current) {
+        if (!canUsePreviousSnapshot(previous) || !current.runnerOnFirst() || current.runnerOnSecond() || current.runnerOnThird()) {
+            return false;
+        }
+        if (previous.isRunnerOnFirst() || previous.isRunnerOnSecond() || previous.isRunnerOnThird()) {
+            return false;
+        }
+        return sameHalfInning(previous, current) && clean(previous.getCurrentBatterName()) != null;
+    }
+
+    private boolean canCarryForward(GameSnapshot previous, ParsedGameDetail current) {
+        return canUsePreviousSnapshot(previous)
+                && sameHalfInning(previous, current)
+                && java.util.Objects.equals(previous.getOuts(), current.outs())
+                && baseKey(previous).equals(baseKey(current));
+    }
+
+    private boolean canUsePreviousSnapshot(GameSnapshot previous) {
+        return previous != null && previous.getGame() != null;
+    }
+
+    private boolean sameHalfInning(GameSnapshot previous, ParsedGameDetail current) {
+        return java.util.Objects.equals(previous.getInning(), current.inning())
+                && java.util.Objects.equals(clean(previous.getInningHalf()), clean(current.inningHalf()));
+    }
+
+    private boolean previousOccupied(GameSnapshot previous, Base base) {
+        return switch (base) {
+            case FIRST -> previous.isRunnerOnFirst();
+            case SECOND -> previous.isRunnerOnSecond();
+            case THIRD -> previous.isRunnerOnThird();
+        };
     }
 
     private int baseCount(ParsedGameDetail detail) {
@@ -131,5 +199,11 @@ class BaseRunnerNameResolver {
         static Runner empty() {
             return new Runner(null, null);
         }
+    }
+
+    private enum Base {
+        FIRST,
+        SECOND,
+        THIRD
     }
 }

@@ -166,12 +166,28 @@ public class LiveGameSyncService {
 
     public LiveSyncSummary sync(LocalDate date, boolean force) {
         LocalDate targetDate = date == null ? todayKst() : date;
+        Instant startedAt = Instant.now(applicationClock);
+        boolean inProgressReleased = false;
         try (DateSyncLockService.SyncLock lock = dateSyncLockService.tryLock(targetDate)) {
             if (!lock.acquired()) {
-                log.info("[LiveGameSync] skipped date={} reason=sync_already_in_progress", targetDate);
+                log.info(
+                        "[LiveGameSync] skipped date={} reason=sync_already_in_progress durationMs={}",
+                        targetDate,
+                        elapsedMillis(startedAt)
+                );
                 return new LiveSyncSummary(targetDate, 0, 0, 0, 0, 0, 1, 0, List.of(), List.of(), List.of("sync already in progress"));
             }
+            inProgressReleased = true;
+            log.info("[LiveGameSync] start date={} force={}", targetDate, force);
             return syncWithLock(targetDate, force);
+        } finally {
+            if (inProgressReleased) {
+                log.info(
+                        "[LiveGameSync] end date={} durationMs={} inProgressReleased=true",
+                        targetDate,
+                        elapsedMillis(startedAt)
+                );
+            }
         }
     }
 

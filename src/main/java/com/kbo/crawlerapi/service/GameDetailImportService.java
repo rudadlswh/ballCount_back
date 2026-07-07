@@ -73,6 +73,7 @@ public class GameDetailImportService {
     private final GameBoxscoreRecordService gameBoxscoreRecordService;
     private final GameLiveTextRecordService gameLiveTextRecordService;
     private final LiveActivityUpdateService liveActivityUpdateService;
+    private final LiveGameStreamPublisher liveGameStreamPublisher;
     private final CrawlJobTrackingService crawlJobTrackingService;
     private final BaseRunnerNameResolver baseRunnerNameResolver;
     private final ObjectMapper objectMapper;
@@ -100,6 +101,7 @@ public class GameDetailImportService {
                 null,
                 null,
                 gameBoxscoreRecordService,
+                null,
                 null,
                 null,
                 crawlJobTrackingService,
@@ -136,6 +138,7 @@ public class GameDetailImportService {
                 gameBoxscoreRecordService,
                 gameLiveTextRecordService,
                 null,
+                null,
                 crawlJobTrackingService,
                 baseRunnerNameResolver,
                 DEFAULT_OBJECT_MAPPER
@@ -156,6 +159,7 @@ public class GameDetailImportService {
             GameBoxscoreRecordService gameBoxscoreRecordService,
             GameLiveTextRecordService gameLiveTextRecordService,
             LiveActivityUpdateService liveActivityUpdateService,
+            LiveGameStreamPublisher liveGameStreamPublisher,
             CrawlJobTrackingService crawlJobTrackingService,
             BaseRunnerNameResolver baseRunnerNameResolver,
             ObjectMapper objectMapper
@@ -172,6 +176,7 @@ public class GameDetailImportService {
         this.gameBoxscoreRecordService = gameBoxscoreRecordService;
         this.gameLiveTextRecordService = gameLiveTextRecordService;
         this.liveActivityUpdateService = liveActivityUpdateService;
+        this.liveGameStreamPublisher = liveGameStreamPublisher;
         this.crawlJobTrackingService = crawlJobTrackingService;
         this.baseRunnerNameResolver = baseRunnerNameResolver;
         this.objectMapper = objectMapper;
@@ -206,6 +211,7 @@ public class GameDetailImportService {
                 gameBoxscoreRecordService,
                 gameLiveTextRecordService,
                 liveActivityUpdateService,
+                null,
                 crawlJobTrackingService,
                 baseRunnerNameResolver,
                 DEFAULT_OBJECT_MAPPER
@@ -303,6 +309,7 @@ public class GameDetailImportService {
             boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
             lineupData = boxscoreFetchResult.lineupData();
             parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
+            GameStatus previousStatus = game.getStatus();
             boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
             LiveActivityContentAffectingState beforeLiveActivityState = LiveActivityContentAffectingState.from(game);
@@ -322,6 +329,8 @@ public class GameDetailImportService {
                     parsedDetail.sourceUpdatedAt()
             );
             boolean gameContentStateChanged = !beforeLiveActivityState.equals(LiveActivityContentAffectingState.from(game));
+            boolean streamStateChanged = snapshotCreated || gameContentStateChanged;
+            boolean statusChanged = previousStatus != game.getStatus();
             importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineupData, fetchedAt);
             BoxscoreImportResult boxscoreImportResult = saveBoxscoreRecordsIfAvailable(
                     game,
@@ -342,6 +351,7 @@ public class GameDetailImportService {
                     liveActivityContentMayHaveChanged && liveActivityUpdateService != null
             );
             scheduleLiveActivityUpdateAfterCommit(game, parsedDetail, liveActivityContentMayHaveChanged);
+            scheduleLiveGameStreamUpdateAfterCommit(game, streamStateChanged, snapshotCreated, statusChanged);
 
             return new GameDetailImportResult(
                     game.getPublicGameId(),
@@ -537,6 +547,19 @@ public class GameDetailImportService {
             return;
         }
         delivery.run();
+    }
+
+    private void scheduleLiveGameStreamUpdateAfterCommit(Game game, boolean streamStateChanged, boolean snapshotCreated, boolean statusChanged) {
+        if (liveGameStreamPublisher == null || !streamStateChanged) {
+            return;
+        }
+        log.info(
+                "[SseStream] publish requested: publicGameId={} snapshotCreated={} statusChanged={}",
+                game.getPublicGameId(),
+                snapshotCreated,
+                statusChanged
+        );
+        liveGameStreamPublisher.publishAfterCommit(game.getPublicGameId(), snapshotCreated, statusChanged, game.getStatus());
     }
 
     private boolean rawHashUnchanged(Game game, ParsedGameDetail parsedDetail, String combinedRawHash) {
