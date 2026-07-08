@@ -263,6 +263,41 @@ class KboGameDetailParserTest {
     }
 
     @Test
+    void parsesLastCompletedPlayFields() {
+        String payload = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260707OBSK0",
+                      "GAME_STATE_SC": "2",
+                      "GAME_INN_NO": 8,
+                      "GAME_TB_SC": "B",
+                      "B2_BAT_ORDER_NO": 8,
+                      "B2_RUNNER_NM": "안재석",
+                      "B3_BAT_ORDER_NO": 3,
+                      "B3_RUNNER_NM": "정수빈",
+                      "LAST_BATTER_NM": "양의지",
+                      "LAST_PITCHER_NM": "문승원",
+                      "PLAY_RESULT_NM": "좌전 안타"
+                    }
+                  ]
+                }
+                """;
+
+        var result = parser.parseGameList(payload);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).runnerOnSecond()).isTrue();
+        assertThat(result.get(0).runnerOnThird()).isTrue();
+        assertThat(result.get(0).secondBaseRunnerName()).isEqualTo("안재석");
+        assertThat(result.get(0).thirdBaseRunnerName()).isEqualTo("정수빈");
+        assertThat(result.get(0).lastCompletedBatterName()).isEqualTo("양의지");
+        assertThat(result.get(0).lastCompletedPitcherName()).isEqualTo("문승원");
+        assertThat(result.get(0).lastCompletedPlayResult()).isEqualTo("좌전 안타");
+        assertThat(result.get(0).lastCompletedPlayKey()).isNotBlank();
+    }
+
+    @Test
     void leavesRunnerNamesNilForEmptyBasesOrMissingOfficialFields() {
         String payload = """
                 {

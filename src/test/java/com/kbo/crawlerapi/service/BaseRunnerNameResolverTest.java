@@ -27,14 +27,24 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
-    void doesNotCarryForwardRunnerNameWhenBaseRemainsOccupiedAndOfficialNameMissing() {
+    void carriesForwardRunnerNameWhenSameBaseRemainsOccupiedAndStateDidNotAdvance() {
         GameSnapshot previous = snapshot("다음타자", 0, true, false, false, "전민재", null, null);
         ParsedGameDetail current = parsed(0, true, false, false, null, null, null);
 
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
-        assertThat(result.firstBaseRunnerName()).isNull();
-        assertThat(result.source()).isEqualTo("occupancyOnly");
+        assertThat(result.firstBaseRunnerName()).isEqualTo("전민재");
+    }
+
+    @Test
+    void doesNotCarryForwardRunnerNameWhenBatterChangedAndBaseStaysOccupied() {
+        GameSnapshot previous = snapshot("박찬형", 0, true, false, false, "정대선", null, null);
+        ParsedGameDetail current = parsed(1, true, false, false, "박찬형", null, null, 1, "top", "전민재");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("박찬형");
+        assertThat(result.source()).contains("payload");
     }
 
     @Test
@@ -126,6 +136,18 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
+    void previousPinchHitterReachedFirstWinsOverStaleOfficialMapping() {
+        GameSnapshot previous = snapshotWithCount("노진혁", 0, 3, 1, false, false, false, null, null, null);
+        ParsedGameDetail current = parsed(0, true, false, false, "손호영", null, null, 1, "top", "황성빈");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("노진혁");
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
     void occupiedFirstAndThirdWithOnlyFirstKnownDoesNotCopyNameToThird() {
         ParsedGameDetail current = parsed(0, true, false, true, "송찬의", null, null);
 
@@ -211,9 +233,47 @@ class BaseRunnerNameResolverTest {
         assertThat(result.thirdBaseRunnerName()).isNull();
     }
 
+    @Test
+    void infersRunnerAdvanceFromLastCompletedPlayResult() {
+        GameSnapshot previous = snapshot("타자", 0, true, false, false, "1루주자", null, null);
+        ParsedGameDetail current = parsedWithCompletedPlay(0, false, true, false, null, null, null, null, "도루");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isNull();
+        assertThat(result.secondBaseRunnerName()).isEqualTo("1루주자");
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void infersBatterBaseFromLastCompletedPlayResult() {
+        ParsedGameDetail current = parsedWithCompletedPlay(0, true, false, false, null, null, null, "안재석", "좌전 안타");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(null, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("안재석");
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
     private GameSnapshot snapshot(
             String currentBatterName,
             Integer outs,
+            boolean first,
+            boolean second,
+            boolean third,
+            String firstName,
+            String secondName,
+            String thirdName
+    ) {
+        return snapshotWithCount(currentBatterName, outs, 0, 0, first, second, third, firstName, secondName, thirdName);
+    }
+
+    private GameSnapshot snapshotWithCount(
+            String currentBatterName,
+            Integer outs,
+            Integer balls,
+            Integer strikes,
             boolean first,
             boolean second,
             boolean third,
@@ -227,8 +287,8 @@ class BaseRunnerNameResolverTest {
                 1,
                 "top",
                 "Top 1",
-                0,
-                0,
+                balls,
+                strikes,
                 outs,
                 first,
                 second,
@@ -249,7 +309,7 @@ class BaseRunnerNameResolverTest {
                 null,
                 null,
                 null,
-                UUID.randomUUID().toString(),
+                "same-raw-hash",
                 null,
                 null,
                 null,
@@ -324,6 +384,59 @@ class BaseRunnerNameResolverTest {
                 null,
                 "투수",
                 currentBatterName,
+                null,
+                null,
+                true,
+                null,
+                null,
+                "same-raw-hash"
+        );
+    }
+
+    private ParsedGameDetail parsedWithCompletedPlay(
+            Integer outs,
+            boolean first,
+            boolean second,
+            boolean third,
+            String firstName,
+            String secondName,
+            String thirdName,
+            String lastCompletedBatterName,
+            String lastCompletedPlayResult
+    ) {
+        return new ParsedGameDetail(
+                "20260506LTSS0",
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                0,
+                0,
+                1,
+                "top",
+                "Top 1",
+                0,
+                0,
+                outs,
+                first,
+                second,
+                third,
+                null,
+                null,
+                null,
+                firstName,
+                secondName,
+                thirdName,
+                null,
+                null,
+                null,
+                "투수",
+                "다음타자",
+                lastCompletedBatterName,
+                "투수",
+                lastCompletedPlayResult,
+                lastCompletedPlayResult == null ? null : UUID.randomUUID().toString(),
                 null,
                 null,
                 true,

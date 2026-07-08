@@ -101,6 +101,10 @@ class BaseRunnerNameResolver {
         if (!occupied) {
             return Runner.empty();
         }
+        Runner batterReachedFirst = batterReachedFirstFromPreviousBatter(previous, current, base);
+        if (batterReachedFirst.name() != null || batterReachedFirst.id() != null) {
+            return batterReachedFirst;
+        }
         String name = clean(officialName);
         String id = clean(officialId);
         if (name != null || id != null) {
@@ -110,10 +114,38 @@ class BaseRunnerNameResolver {
         if (carried.name() != null || carried.id() != null) {
             return carried;
         }
-        if (inferFromPreviousBatter && canInferFirstBaseRunner(previous, current)) {
-            return new Runner(clean(previous.getCurrentBatterName()), null);
+        Runner inferred = inferFromCompletedPlay(previous, current, base, inferFromPreviousBatter);
+        if (inferred.name() != null || inferred.id() != null) {
+            return inferred;
         }
         return Runner.empty();
+    }
+
+    private Runner batterReachedFirstFromPreviousBatter(GameSnapshot previous, ParsedGameDetail current, Base base) {
+        if (base != Base.FIRST
+                || !canUsePreviousSnapshot(previous)
+                || !sameHalfInning(previous, current)
+                || previous.isRunnerOnFirst()
+                || !current.runnerOnFirst()
+                || !java.util.Objects.equals(previous.getOuts(), current.outs())
+                || !countReset(previous, current)) {
+            return Runner.empty();
+        }
+        String previousBatter = clean(previous.getCurrentBatterName());
+        String nextBatter = clean(current.currentBatterName());
+        if (previousBatter == null || nextBatter == null || previousBatter.equals(nextBatter)) {
+            return Runner.empty();
+        }
+        log.debug(
+                "[BaseRunners] batterReachedFirst override reason=previousBatterOnBase previousBatter={} nextBatter={} firstBefore={} firstAfter={} outsBefore={} outsAfter={}",
+                previousBatter,
+                nextBatter,
+                previous.isRunnerOnFirst(),
+                current.runnerOnFirst(),
+                previous.getOuts(),
+                current.outs()
+        );
+        return new Runner(previousBatter, null);
     }
 
     private Runner carryForward(GameSnapshot previous, ParsedGameDetail current, Base base) {
@@ -127,30 +159,128 @@ class BaseRunnerNameResolver {
         };
     }
 
-    private boolean canInferFirstBaseRunner(GameSnapshot previous, ParsedGameDetail current) {
-        if (!canUsePreviousSnapshot(previous) || !current.runnerOnFirst() || current.runnerOnSecond() || current.runnerOnThird()) {
+    private Runner inferFromCompletedPlay(
+            GameSnapshot previous,
+            ParsedGameDetail current,
+            Base base,
+            boolean inferBatterToFirst
+    ) {
+        String result = clean(current.lastCompletedPlayResult());
+        if (result == null) {
+            return Runner.empty();
+        }
+        String batterName = clean(current.lastCompletedBatterName());
+        return switch (base) {
+            case FIRST -> inferBatterToFirst && batterName != null && isFirstBaseResult(result)
+                    ? new Runner(batterName, null)
+                    : Runner.empty();
+            case SECOND -> {
+                if (batterName != null && isSecondBaseResult(result)) {
+                    yield new Runner(batterName, null);
+                }
+                yield canInferRunnerMovement(previous, current, result) && previous.isRunnerOnFirst()
+                        ? new Runner(clean(previous.getFirstBaseRunnerName()), clean(previous.getFirstBaseRunnerId()))
+                        : Runner.empty();
+            }
+            case THIRD -> {
+                if (batterName != null && isThirdBaseResult(result)) {
+                    yield new Runner(batterName, null);
+                }
+                if (canInferRunnerMovement(previous, current, result) && previous.isRunnerOnSecond()) {
+                    yield new Runner(clean(previous.getSecondBaseRunnerName()), clean(previous.getSecondBaseRunnerId()));
+                }
+                yield Runner.empty();
+            }
+        };
+    }
+
+    private boolean canInferRunnerMovement(GameSnapshot previous, ParsedGameDetail current, String result) {
+        return canUsePreviousSnapshot(previous)
+                && sameHalfInning(previous, current)
+                && java.util.Objects.equals(previous.getOuts(), current.outs())
+                && java.util.Objects.equals(previous.getAwayScore(), current.awayScore())
+                && java.util.Objects.equals(previous.getHomeScore(), current.homeScore())
+                && isRunnerAdvanceResult(result);
+    }
+
+    private boolean isFirstBaseResult(String result) {
+        if (result.contains("2루타") || result.contains("3루타") || result.contains("홈런")) {
             return false;
         }
-        if (previous.isRunnerOnFirst() || previous.isRunnerOnSecond() || previous.isRunnerOnThird()) {
-            return false;
-        }
-        return sameHalfInning(previous, current) && clean(previous.getCurrentBatterName()) != null;
+        return result.contains("안타")
+                || result.contains("볼넷")
+                || result.contains("사구")
+                || result.contains("몸에 맞")
+                || result.contains("실책")
+                || result.contains("야수선택")
+                || result.contains("출루");
+    }
+
+    private boolean isSecondBaseResult(String result) {
+        return result.contains("2루타");
+    }
+
+    private boolean isThirdBaseResult(String result) {
+        return result.contains("3루타");
+    }
+
+    private boolean isRunnerAdvanceResult(String result) {
+        return result.contains("도루")
+                || result.contains("폭투")
+                || result.contains("포일")
+                || result.contains("진루")
+                || result.contains("보크");
     }
 
     private boolean canCarryForward(GameSnapshot previous, ParsedGameDetail current) {
         return canUsePreviousSnapshot(previous)
                 && sameHalfInning(previous, current)
+                && sameBatter(previous, current)
                 && java.util.Objects.equals(previous.getOuts(), current.outs())
+                && java.util.Objects.equals(previous.getAwayScore(), current.awayScore())
+                && java.util.Objects.equals(previous.getHomeScore(), current.homeScore())
+                && !countReset(previous, current)
+                && java.util.Objects.equals(clean(previous.getRawHash()), clean(current.rawHash()))
+                && !hasBaseBattingOrder(current)
+                && !hasBattedBallOrOutResult(current)
                 && baseKey(previous).equals(baseKey(current));
     }
 
     private boolean canUsePreviousSnapshot(GameSnapshot previous) {
-        return previous != null && previous.getGame() != null;
+        return previous != null;
     }
 
     private boolean sameHalfInning(GameSnapshot previous, ParsedGameDetail current) {
         return java.util.Objects.equals(previous.getInning(), current.inning())
                 && java.util.Objects.equals(clean(previous.getInningHalf()), clean(current.inningHalf()));
+    }
+
+    private boolean sameBatter(GameSnapshot previous, ParsedGameDetail current) {
+        return java.util.Objects.equals(clean(previous.getCurrentBatterName()), clean(current.currentBatterName()));
+    }
+
+    private boolean countReset(GameSnapshot previous, ParsedGameDetail current) {
+        return java.util.Objects.equals(current.balls(), 0)
+                && java.util.Objects.equals(current.strikes(), 0)
+                && ((previous.getBalls() != null && previous.getBalls() > 0)
+                || (previous.getStrikes() != null && previous.getStrikes() > 0));
+    }
+
+    private boolean hasBattedBallOrOutResult(ParsedGameDetail current) {
+        String result = clean(current.lastCompletedPlayResult());
+        if (result == null) {
+            return false;
+        }
+        return result.contains("땅볼")
+                || result.contains("뜬공")
+                || result.contains("플라이")
+                || result.contains("직선타")
+                || result.contains("병살")
+                || result.contains("야수선택")
+                || result.contains("아웃")
+                || result.contains("삼진")
+                || result.contains("희생")
+                || result.contains("번트");
     }
 
     private boolean previousOccupied(GameSnapshot previous, Base base) {

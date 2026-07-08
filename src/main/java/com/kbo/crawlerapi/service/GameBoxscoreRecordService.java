@@ -31,7 +31,7 @@ public class GameBoxscoreRecordService {
     @Transactional
     public GameBoxscoreRecordSaveResult saveBoxscoreRecords(Game game, ParsedBoxscore parsedBoxscore) {
         if (game == null || parsedBoxscore == null) {
-            return new GameBoxscoreRecordSaveResult(0, 0, 0, 0, false);
+            return new GameBoxscoreRecordSaveResult(0, 0, 0, 0, 0, 0, false);
         }
 
         List<BatterRecordWriteRow> batterRows = new ArrayList<>();
@@ -42,11 +42,13 @@ public class GameBoxscoreRecordService {
         pitcherRows.addAll(toPitcherRows(game.getId(), game.getAwayTeam(), parsedBoxscore.awayPitchers()));
         pitcherRows.addAll(toPitcherRows(game.getId(), game.getHomeTeam(), parsedBoxscore.homePitchers()));
 
+        int deletedBatterCount = writeRepository.deleteBatterRecordsByGameId(game.getId());
+        int deletedPitcherCount = writeRepository.deletePitcherRecordsByGameId(game.getId());
         int batterWriteCount = writeRepository.upsertBatterRecords(batterRows);
         int pitcherWriteCount = writeRepository.upsertPitcherRecords(pitcherRows);
         boolean saved = !batterRows.isEmpty() || !pitcherRows.isEmpty();
         log.info(
-                "[GameBoxscoreRecords] gameId={} awayBatters={} homeBatters={} awayPitchers={} homePitchers={} batters={} pitchers={} saved={}",
+                "[GameBoxscoreRecords] gameId={} awayBatters={} homeBatters={} awayPitchers={} homePitchers={} batters={} pitchers={} deletedBatters={} deletedPitchers={} saved={}",
                 game.getPublicGameId(),
                 parsedBoxscore.awayBatters().size(),
                 parsedBoxscore.homeBatters().size(),
@@ -54,6 +56,8 @@ public class GameBoxscoreRecordService {
                 parsedBoxscore.homePitchers().size(),
                 batterRows.size(),
                 pitcherRows.size(),
+                deletedBatterCount,
+                deletedPitcherCount,
                 saved
         );
         return new GameBoxscoreRecordSaveResult(
@@ -61,6 +65,8 @@ public class GameBoxscoreRecordService {
                 pitcherRows.size(),
                 batterWriteCount,
                 pitcherWriteCount,
+                deletedBatterCount,
+                deletedPitcherCount,
                 saved
         );
     }
@@ -132,6 +138,8 @@ public class GameBoxscoreRecordService {
             int pitcherRecordCount,
             int batterWriteCount,
             int pitcherWriteCount,
+            int deletedBatterCount,
+            int deletedPitcherCount,
             boolean saved
     ) {
     }

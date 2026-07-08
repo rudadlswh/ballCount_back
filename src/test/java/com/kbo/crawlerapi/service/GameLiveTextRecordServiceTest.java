@@ -264,6 +264,20 @@ class GameLiveTextRecordServiceTest {
         private final Map<RowKey, PitcherRecordWriteRow> pitcherRows = new LinkedHashMap<>();
 
         @Override
+        public int deleteBatterRecordsByGameId(UUID gameId) {
+            int previousSize = batterRows.size();
+            batterRows.entrySet().removeIf(entry -> entry.getKey().gameId().equals(gameId));
+            return previousSize - batterRows.size();
+        }
+
+        @Override
+        public int deletePitcherRecordsByGameId(UUID gameId) {
+            int previousSize = pitcherRows.size();
+            pitcherRows.entrySet().removeIf(entry -> entry.getKey().gameId().equals(gameId));
+            return previousSize - pitcherRows.size();
+        }
+
+        @Override
         public int upsertBatterRecords(List<BatterRecordWriteRow> rows) {
             rows.forEach(row -> {
                 RowKey key = new RowKey(row.gameId(), row.teamId(), row.sourceOrder());

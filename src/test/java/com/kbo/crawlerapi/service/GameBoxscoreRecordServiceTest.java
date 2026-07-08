@@ -143,6 +143,29 @@ class GameBoxscoreRecordServiceTest {
     }
 
     @Test
+    void reimportDeletesStaleRowsBeforeSavingLatestBoxscore() throws IOException {
+        ParsedBoxscore parsed = parser.parse(fixture());
+        service.saveBoxscoreRecords(game, parsed);
+
+        ParsedBoxscore changed = new ParsedBoxscore(
+                parsed.awayBatters().subList(0, 1),
+                List.of(),
+                parsed.awayPitchers().subList(0, 1),
+                List.of()
+        );
+        var result = service.saveBoxscoreRecords(game, changed);
+
+        assertThat(result.deletedBatterCount()).isEqualTo(29);
+        assertThat(result.deletedPitcherCount()).isEqualTo(10);
+        assertThat(writeRepository.batterRows).hasSize(1);
+        assertThat(writeRepository.pitcherRows).hasSize(1);
+        assertThat(writeRepository.batterRows.values()).extracting(BatterRecordWriteRow::playerName)
+                .containsExactly(parsed.awayBatters().get(0).playerName());
+        assertThat(writeRepository.pitcherRows.values()).extracting(PitcherRecordWriteRow::playerName)
+                .containsExactly(parsed.awayPitchers().get(0).playerName());
+    }
+
+    @Test
     void changedParsedValuesUpdateExistingRowsByGameTeamAndSourceOrder() throws IOException {
         ParsedBoxscore parsed = parser.parse(fixture());
         service.saveBoxscoreRecords(game, parsed);
@@ -245,6 +268,20 @@ class GameBoxscoreRecordServiceTest {
 
         private final Map<RowKey, BatterRecordWriteRow> batterRows = new LinkedHashMap<>();
         private final Map<RowKey, PitcherRecordWriteRow> pitcherRows = new LinkedHashMap<>();
+
+        @Override
+        public int deleteBatterRecordsByGameId(UUID gameId) {
+            int previousSize = batterRows.size();
+            batterRows.entrySet().removeIf(entry -> entry.getKey().gameId().equals(gameId));
+            return previousSize - batterRows.size();
+        }
+
+        @Override
+        public int deletePitcherRecordsByGameId(UUID gameId) {
+            int previousSize = pitcherRows.size();
+            pitcherRows.entrySet().removeIf(entry -> entry.getKey().gameId().equals(gameId));
+            return previousSize - pitcherRows.size();
+        }
 
         @Override
         public int upsertBatterRecords(List<BatterRecordWriteRow> rows) {

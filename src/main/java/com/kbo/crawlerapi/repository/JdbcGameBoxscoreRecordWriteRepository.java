@@ -105,6 +105,16 @@ public class JdbcGameBoxscoreRecordWriteRepository implements GameBoxscoreRecord
     }
 
     @Override
+    public int deleteBatterRecordsByGameId(UUID gameId) {
+        return jdbcTemplate.update("DELETE FROM game_batter_records WHERE game_id = ?", gameId);
+    }
+
+    @Override
+    public int deletePitcherRecordsByGameId(UUID gameId) {
+        return jdbcTemplate.update("DELETE FROM game_pitcher_records WHERE game_id = ?", gameId);
+    }
+
+    @Override
     public int upsertBatterRecords(List<BatterRecordWriteRow> rows) {
         int[][] results = jdbcTemplate.batchUpdate(BATTER_UPSERT_SQL, rows, 50, (ps, row) -> {
             ps.setObject(1, UUID.randomUUID());
