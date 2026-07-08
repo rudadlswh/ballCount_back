@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import com.kbo.crawlerapi.api.ResourceNotFoundException;
 import com.kbo.crawlerapi.api.dto.GameBatterRecordDto;
@@ -115,6 +116,17 @@ public class GameReadService {
                 .orElseThrow(() -> new ResourceNotFoundException("Game not found: " + gameId));
         GameSnapshot latestSnapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())
                 .orElse(null);
+        return toLiveStateResponse(game, latestSnapshot);
+    }
+
+    public Optional<GameLiveStateResponse> getLatestSnapshotLiveState(String gameId) {
+        Game game = gameRepository.findByPublicGameId(gameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Game not found: " + gameId));
+        return gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())
+                .map(snapshot -> toLiveStateResponse(game, snapshot));
+    }
+
+    private GameLiveStateResponse toLiveStateResponse(Game game, GameSnapshot latestSnapshot) {
         Integer awayScore = latestSnapshot != null && latestSnapshot.getAwayScore() != null ? latestSnapshot.getAwayScore() : game.getAwayScore();
         Integer homeScore = latestSnapshot != null && latestSnapshot.getHomeScore() != null ? latestSnapshot.getHomeScore() : game.getHomeScore();
         return new GameLiveStateResponse(

@@ -1126,14 +1126,15 @@ class GameDetailImportServiceTest {
 
         assertThat(result.status()).isEqualTo("final");
         assertThat(kboBoxscoreParser.parsedResponseBody).isEqualTo(kboGameDetailClient.boxScoreBody);
-        assertThat(gameBoxscoreRecordService.savedGame).isNull();
+        assertThat(gameBoxscoreRecordService.savedGame).isSameAs(game);
+        assertThat(gameBoxscoreRecordService.savedBoxscore).isSameAs(kboBoxscoreParser.result);
         assertThat(crawlJobTrackingService.succeededJobId).isNull();
         assertThat(crawlJobTrackingService.partialSuccessJobId).isEqualTo(crawlJob.getId());
         assertThat(crawlJobTrackingService.partialSuccessMessage).contains("Final game boxscore records unavailable");
     }
 
     @Test
-    void skipsBoxscoreSaveForLiveImportsEvenWhenLineupBoxscoreWasFetched() {
+    void savesBoxscoreForLiveImportsWhenLineupBoxscoreWasFetched() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
         kboGameDetailClient.detailBody = "{\"game\":[]}";
@@ -1193,8 +1194,9 @@ class GameDetailImportServiceTest {
 
         assertThat(result.status()).isEqualTo("live");
         assertThat(kboGameDetailClient.requestedBoxScoreCount).isEqualTo(1);
-        assertThat(kboBoxscoreParser.parsedResponseBody).isNull();
-        assertThat(gameBoxscoreRecordService.savedGame).isNull();
+        assertThat(kboBoxscoreParser.parsedResponseBody).isEqualTo(kboGameDetailClient.boxScoreBody);
+        assertThat(gameBoxscoreRecordService.savedGame).isSameAs(game);
+        assertThat(gameBoxscoreRecordService.savedBoxscore).isSameAs(kboBoxscoreParser.result);
     }
 
     @Test
@@ -1274,6 +1276,129 @@ class GameDetailImportServiceTest {
     }
 
     @Test
+    void resolvesOccupiedSecondBaseRunnerFromLiveTextLineupBeforePersistingSnapshot(CapturedOutput output) {
+        Team lotte = new Team(
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                "lotte",
+                "Lotte Giants",
+                "롯데",
+                "Lotte Giants",
+                null
+        );
+        Team kia = new Team(
+                UUID.fromString("22222222-2222-2222-2222-222222222222"),
+                "kia",
+                "KIA Tigers",
+                "KIA",
+                "KIA Tigers",
+                null
+        );
+        Game game = new Game(
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                "20260708-LOT-KIA",
+                "kbo",
+                "20260708HTLT0",
+                LocalDate.of(2026, 7, 8),
+                OffsetDateTime.of(2026, 7, 8, 18, 30, 0, 0, ZoneOffset.ofHours(9)),
+                "사직",
+                GameStatus.LIVE,
+                lotte,
+                kia,
+                0,
+                0,
+                "3회말",
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+        CrawlJob crawlJob = crawlJob(game);
+        StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
+        StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
+        StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
+        gameDetailImportService = new GameDetailImportService(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                liveTextClient,
+                liveTextParser,
+                gameBoxscoreRecordService,
+                liveTextRecordService,
+                crawlJobTrackingService,
+                new BaseRunnerNameResolver()
+        );
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        liveTextClient.responseBody = "<html>live</html>";
+        liveTextParser.result = new KboLiveTextParser.ParsedLiveText(
+                List.of(),
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("home", 0, 6, "SS", "전민재", 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 5)),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                0,
+                0,
+                3,
+                "bottom",
+                "Bottom 3",
+                0,
+                0,
+                1,
+                false,
+                true,
+                false,
+                0,
+                6,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "KIA투수",
+                "한태양",
+                "롯데선발",
+                "KIA선발",
+                false,
+                null,
+                null,
+                "lot-kia-bottom3"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(snapshotCaptor.getValue().isRunnerOnSecond()).isTrue();
+        assertThat(snapshotCaptor.getValue().getSecondBaseRunnerName()).isEqualTo("전민재");
+        assertThat(liveTextClient.requestedProviderGameId).isEqualTo("20260708HTLT0");
+        assertThat(output).contains("[BaseRunners] resolvedFromLineup publicGameId=20260708-LOT-KIA");
+        assertThat(output).contains("offenseTeamCode=lotte");
+        assertThat(output).contains("secondOrder=6 secondName=전민재");
+    }
+
+    @Test
     void infersFirstBaseRunnerNameFromPreviousBatterWhenOfficialRunnerNameMissing() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
@@ -1299,6 +1424,10 @@ class GameDetailImportServiceTest {
                 false,
                 "홈투수",
                 "손성빈",
+                "전민재",
+                "홈투수",
+                "볼넷",
+                "play-key-inferred-runner",
                 "홈선발",
                 "원정선발",
                 false,
@@ -2082,7 +2211,7 @@ class GameDetailImportServiceTest {
             savedBoxscore = parsedBoxscore;
             int batterCount = parsedBoxscore.awayBatters().size() + parsedBoxscore.homeBatters().size();
             int pitcherCount = parsedBoxscore.awayPitchers().size() + parsedBoxscore.homePitchers().size();
-            return new GameBoxscoreRecordSaveResult(batterCount, pitcherCount, batterCount, pitcherCount, true);
+            return new GameBoxscoreRecordSaveResult(batterCount, pitcherCount, batterCount, pitcherCount, 0, 0, true);
         }
     }
 

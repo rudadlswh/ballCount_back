@@ -18,6 +18,7 @@ public class LiveSyncProperties {
     private Duration liveTtl = Duration.ofSeconds(3);
     private Duration finalConfirmationTtl = Duration.ofSeconds(30);
     private Duration detailExtractionTimeout = Duration.ofMillis(100);
+    private String lockMode = "memory";
 
     public Duration getIdleInterval() {
         return idleInterval;
@@ -113,5 +114,13 @@ public class LiveSyncProperties {
 
     public void setDetailExtractionTimeout(Duration detailExtractionTimeout) {
         this.detailExtractionTimeout = detailExtractionTimeout;
+    }
+
+    public String getLockMode() {
+        return lockMode;
+    }
+
+    public void setLockMode(String lockMode) {
+        this.lockMode = lockMode;
     }
 }

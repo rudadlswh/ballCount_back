@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameRepository;
+import com.kbo.crawlerapi.service.GameReadService;
 import com.kbo.crawlerapi.service.LiveGameStreamRegistry;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -21,8 +23,9 @@ class GameLiveStreamControllerTest {
     @Test
     void subscribesProviderGameIdWithResolvedPublicGameId() {
         GameRepository gameRepository = mock(GameRepository.class);
+        EmptySnapshotGameReadService gameReadService = new EmptySnapshotGameReadService();
         LiveGameStreamRegistry streamRegistry = new LiveGameStreamRegistry();
-        GameLiveStreamController controller = new GameLiveStreamController(gameRepository, streamRegistry);
+        GameLiveStreamController controller = new GameLiveStreamController(gameRepository, gameReadService, streamRegistry);
         Game game = game();
 
         when(gameRepository.findByPublicGameId("20260707SKOB0")).thenReturn(Optional.empty());
@@ -32,6 +35,35 @@ class GameLiveStreamControllerTest {
 
         assertThat(streamRegistry.subscriberCount("20260707-DOO-SSG")).isEqualTo(1);
         assertThat(streamRegistry.subscriberCount("20260707SKOB0")).isZero();
+    }
+
+    @Test
+    void trimsAndNormalizesPublicGameIdSubscriptionKey() {
+        GameRepository gameRepository = mock(GameRepository.class);
+        EmptySnapshotGameReadService gameReadService = new EmptySnapshotGameReadService();
+        LiveGameStreamRegistry streamRegistry = new LiveGameStreamRegistry();
+        GameLiveStreamController controller = new GameLiveStreamController(gameRepository, gameReadService, streamRegistry);
+
+        when(gameRepository.findByPublicGameId("20260708-lot-kia")).thenReturn(Optional.empty());
+        when(gameRepository.findByProviderAndProviderGameId("kbo", "20260708-lot-kia")).thenReturn(Optional.empty());
+        when(gameRepository.findByProviderGameId("20260708-lot-kia")).thenReturn(Optional.empty());
+
+        controller.streamGame(" 20260708-lot-kia ");
+
+        assertThat(streamRegistry.subscriberCount("20260708-LOT-KIA")).isEqualTo(1);
+        assertThat(streamRegistry.subscriberCount("20260708-lot-kia")).isEqualTo(1);
+    }
+
+    private static final class EmptySnapshotGameReadService extends GameReadService {
+
+        private EmptySnapshotGameReadService() {
+            super(null, null, null, null, null);
+        }
+
+        @Override
+        public Optional<GameLiveStateResponse> getLatestSnapshotLiveState(String gameId) {
+            return Optional.empty();
+        }
     }
 
     private Game game() {

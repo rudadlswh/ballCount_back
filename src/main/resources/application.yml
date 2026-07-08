@@ -48,6 +48,7 @@ app:
   sync:
     enabled: ${APP_SYNC_ENABLED:false}
   live-sync:
+    lock-mode: ${KBO_LIVE_SYNC_LOCK_MODE:memory}
     scheduler-interval: ${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}
     idle-interval: ${KBO_LIVE_SYNC_IDLE_INTERVAL:PT30M}
     pregame-check-interval: ${KBO_LIVE_SYNC_PREGAME_CHECK_INTERVAL:PT5M}

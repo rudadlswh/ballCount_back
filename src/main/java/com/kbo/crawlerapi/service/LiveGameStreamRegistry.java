@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
 import java.io.IOException;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -15,19 +16,49 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class LiveGameStreamRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(LiveGameStreamRegistry.class);
-    private static final long EMITTER_TIMEOUT_MILLIS = 30L * 60L * 1_000L;
+    private static final long EMITTER_TIMEOUT_MILLIS = 6L * 60L * 60L * 1_000L;
 
     private final ConcurrentHashMap<String, Set<SseEmitter>> emittersByGameId = new ConcurrentHashMap<>();
 
     public SseEmitter subscribe(String publicGameId) {
+        String normalizedPublicGameId = normalizePublicGameId(publicGameId);
+        log.info(
+                "[SseStream] subscribe start publicGameId={} normalizedPublicGameId={}",
+                publicGameId,
+                normalizedPublicGameId
+        );
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MILLIS);
-        emittersByGameId.computeIfAbsent(publicGameId, ignored -> ConcurrentHashMap.newKeySet()).add(emitter);
-        log.info("[SseStream] registry subscriber count publicGameId={} count={}", publicGameId, subscriberCount(publicGameId));
-        emitter.onCompletion(() -> remove(publicGameId, emitter));
-        emitter.onTimeout(() -> remove(publicGameId, emitter));
-        emitter.onError(ignored -> remove(publicGameId, emitter));
-        send(publicGameId, emitter, "heartbeat", "");
+        emittersByGameId.computeIfAbsent(normalizedPublicGameId, ignored -> ConcurrentHashMap.newKeySet()).add(emitter);
+        log.info(
+                "[SseStream] subscribe registered publicGameId={} count={}",
+                normalizedPublicGameId,
+                subscriberCount(normalizedPublicGameId)
+        );
+        emitter.onCompletion(() -> {
+            log.info("[SseStream] onCompletion publicGameId={}", normalizedPublicGameId);
+            remove(normalizedPublicGameId, emitter);
+        });
+        emitter.onTimeout(() -> {
+            log.warn("[SseStream] onTimeout publicGameId={}", normalizedPublicGameId);
+            remove(normalizedPublicGameId, emitter);
+        });
+        emitter.onError(error -> {
+            log.warn(
+                    "[SseStream] onError publicGameId={} reason={}",
+                    normalizedPublicGameId,
+                    error == null ? null : error.getMessage()
+            );
+            remove(normalizedPublicGameId, emitter);
+        });
+        send(normalizedPublicGameId, emitter, "heartbeat", "");
         return emitter;
+    }
+
+    public void sendLatestSnapshotOnSubscribe(String publicGameId, SseEmitter emitter, GameLiveStateResponse snapshot) {
+        String normalizedPublicGameId = normalizePublicGameId(publicGameId);
+        if (send(normalizedPublicGameId, emitter, "snapshot", snapshot)) {
+            log.info("[SseStream] latest snapshot sent on subscribe publicGameId={}", normalizedPublicGameId);
+        }
     }
 
     public void publishSnapshot(String publicGameId, GameLiveStateResponse snapshot) {
@@ -39,7 +70,8 @@ public class LiveGameStreamRegistry {
     }
 
     public void complete(String publicGameId) {
-        Set<SseEmitter> emitters = emittersByGameId.remove(publicGameId);
+        String normalizedPublicGameId = normalizePublicGameId(publicGameId);
+        Set<SseEmitter> emitters = emittersByGameId.remove(normalizedPublicGameId);
         if (emitters == null) {
             return;
         }
@@ -47,7 +79,7 @@ public class LiveGameStreamRegistry {
     }
 
     public int subscriberCount(String publicGameId) {
-        Set<SseEmitter> emitters = emittersByGameId.get(publicGameId);
+        Set<SseEmitter> emitters = emittersByGameId.get(normalizePublicGameId(publicGameId));
         return emitters == null ? 0 : emitters.size();
     }
 
@@ -58,20 +90,28 @@ public class LiveGameStreamRegistry {
     }
 
     private void publish(String publicGameId, String eventName, GameLiveStateResponse snapshot) {
-        Set<SseEmitter> emitters = emittersByGameId.get(publicGameId);
+        String normalizedPublicGameId = normalizePublicGameId(publicGameId);
+        Set<SseEmitter> emitters = emittersByGameId.get(normalizedPublicGameId);
         log.info(
                 "[SseStream] registry subscriber count publicGameId={} count={} event={}",
-                publicGameId,
+                normalizedPublicGameId,
                 emitters == null ? 0 : emitters.size(),
                 eventName
         );
-        if (emitters == null) {
+        if (emitters == null || emitters.isEmpty()) {
+            log.warn(
+                    "[SseStream] publish skipped publicGameId={} normalizedPublicGameId={} subscribers=0 registryKeys={} event={}",
+                    publicGameId,
+                    normalizedPublicGameId,
+                    emittersByGameId.keySet(),
+                    eventName
+            );
             return;
         }
-        emitters.forEach(emitter -> send(publicGameId, emitter, eventName, snapshot));
+        emitters.forEach(emitter -> send(normalizedPublicGameId, emitter, eventName, snapshot));
     }
 
-    private void send(String publicGameId, SseEmitter emitter, String eventName, Object data) {
+    private boolean send(String publicGameId, SseEmitter emitter, String eventName, Object data) {
         try {
             emitter.send(SseEmitter.event()
                     .name(eventName)
@@ -81,6 +121,7 @@ public class LiveGameStreamRegistry {
             } else if ("snapshot".equals(eventName)) {
                 log.info("[SseStream] snapshot sent success publicGameId={}", publicGameId);
             }
+            return true;
         } catch (IOException | IllegalStateException exception) {
             if ("snapshot".equals(eventName)) {
                 log.warn("[SseStream] snapshot sent failure publicGameId={} reason={}", publicGameId, exception.getMessage());
@@ -98,6 +139,7 @@ public class LiveGameStreamRegistry {
             } catch (IllegalStateException ignored) {
                 log.debug("[SseStream] emitter already completed publicGameId={} event={}", publicGameId, eventName);
             }
+            return false;
         }
     }
 
@@ -110,5 +152,9 @@ public class LiveGameStreamRegistry {
         if (emitters.isEmpty()) {
             emittersByGameId.remove(publicGameId, emitters);
         }
+    }
+
+    public static String normalizePublicGameId(String publicGameId) {
+        return publicGameId == null ? null : publicGameId.trim().toUpperCase(Locale.ROOT);
     }
 }

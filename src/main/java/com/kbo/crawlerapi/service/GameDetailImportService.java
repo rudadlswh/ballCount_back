@@ -279,6 +279,15 @@ public class GameDetailImportService {
             backfillProviderGameIdIfNeeded(game, resolvedOfficialDetail.providerGameId());
             OffsetDateTime fetchedAt = OffsetDateTime.now();
             SelectedScore selectedScore = selectScore(game, parsedDetail, lineScoreResult);
+            LiveTextFetchResult liveTextFetchResult = fetchLiveTextIfAvailable(
+                    game,
+                    resolvedOfficialDetail.providerGameId(),
+                    parsedDetail
+            );
+            ParsedLineupData liveTextLineupData = liveTextFetchResult.parsedLiveText() == null
+                    ? null
+                    : lineupDataForLiveText(game, null, liveTextFetchResult.parsedLiveText());
+            parsedDetail = applyRunnerNamesFromLineup(game, parsedDetail, liveTextLineupData);
             String combinedRawHash = HashSupport.sha256Hex(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore());
             if (rawHashUnchanged(game, parsedDetail, combinedRawHash)) {
                 int existingLineScoreCount = existingLineScoreCount(game);
@@ -308,7 +317,10 @@ public class GameDetailImportService {
             }
             boxscoreFetchResult = fetchBoxscoreIfLineupAvailable(resolvedOfficialDetail.providerGameId(), game.getGameDate().getYear(), parsedDetail);
             lineupData = boxscoreFetchResult.lineupData();
-            parsedDetail = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
+            ParsedLineupData effectiveLineupData = liveTextFetchResult.parsedLiveText() == null
+                    ? lineupData
+                    : lineupDataForLiveText(game, lineupData, liveTextFetchResult.parsedLiveText());
+            parsedDetail = applyRunnerNamesFromLineup(game, parsedDetail, effectiveLineupData);
             GameStatus previousStatus = game.getStatus();
             boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
@@ -331,7 +343,7 @@ public class GameDetailImportService {
             boolean gameContentStateChanged = !beforeLiveActivityState.equals(LiveActivityContentAffectingState.from(game));
             boolean streamStateChanged = snapshotCreated || gameContentStateChanged;
             boolean statusChanged = previousStatus != game.getStatus();
-            importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineupData, fetchedAt);
+            importLiveTextIfAvailable(game, resolvedOfficialDetail.providerGameId(), parsedDetail, lineupData, fetchedAt, liveTextFetchResult);
             BoxscoreImportResult boxscoreImportResult = saveBoxscoreRecordsIfAvailable(
                     game,
                     resolvedOfficialDetail.providerGameId(),
@@ -382,14 +394,58 @@ public class GameDetailImportService {
             ParsedLineupData lineupData,
             OffsetDateTime fetchedAt
     ) {
-        if (kboLiveTextClient == null || kboLiveTextParser == null || gameLiveTextRecordService == null) {
+        return importLiveTextIfAvailable(
+                game,
+                providerGameId,
+                parsedDetail,
+                lineupData,
+                fetchedAt,
+                fetchLiveTextIfAvailable(game, providerGameId, parsedDetail)
+        );
+    }
+
+    private LiveTextImportResult importLiveTextIfAvailable(
+            Game game,
+            String providerGameId,
+            ParsedGameDetail parsedDetail,
+            ParsedLineupData lineupData,
+            OffsetDateTime fetchedAt,
+            LiveTextFetchResult liveTextFetchResult
+    ) {
+        if (gameLiveTextRecordService == null) {
             return LiveTextImportResult.skipped("notConfigured");
         }
+        if (liveTextFetchResult.parsedLiveText() == null) {
+            return LiveTextImportResult.skipped(liveTextFetchResult.skippedReason());
+        }
+        ParsedLineupData effectiveLineupData = lineupDataForLiveText(game, lineupData, liveTextFetchResult.parsedLiveText());
+        logLiveTextLineupTransfer(game, providerGameId, lineupData, effectiveLineupData);
+        var result = gameLiveTextRecordService.saveLiveText(game, liveTextFetchResult.parsedLiveText(), fetchedAt, effectiveLineupData);
+        log.info(
+                "[KboLiveText] imported gameId={} providerGameId={} status={} batters={} pitchers={} events={}",
+                game.getPublicGameId(),
+                providerGameId,
+                parsedDetail.status(),
+                result.batterRecordCount(),
+                result.pitcherRecordCount(),
+                result.eventCount()
+        );
+        return new LiveTextImportResult(result.batterRecordCount(), result.pitcherRecordCount(), result.eventCount(), null);
+    }
+
+    private LiveTextFetchResult fetchLiveTextIfAvailable(
+            Game game,
+            String providerGameId,
+            ParsedGameDetail parsedDetail
+    ) {
+        if (kboLiveTextClient == null || kboLiveTextParser == null) {
+            return LiveTextFetchResult.skipped("notConfigured");
+        }
         if (parsedDetail.status() == GameStatus.FINAL) {
-            return LiveTextImportResult.skipped("finalBoxscorePriority");
+            return LiveTextFetchResult.skipped("finalBoxscorePriority");
         }
         if (providerGameId == null || providerGameId.isBlank()) {
-            return LiveTextImportResult.skipped("missingProviderGameId");
+            return LiveTextFetchResult.skipped("missingProviderGameId");
         }
         try {
             var response = kboLiveTextClient.fetchLiveText(providerGameId, game.getGameDate().getYear());
@@ -402,21 +458,9 @@ public class GameDetailImportService {
                         response.responseType(),
                         response.bodyLength()
                 );
-                return LiveTextImportResult.skipped("empty");
+                return LiveTextFetchResult.skipped("empty");
             }
-            ParsedLineupData effectiveLineupData = lineupDataForLiveText(game, lineupData, parsedLiveText);
-            logLiveTextLineupTransfer(game, providerGameId, lineupData, effectiveLineupData);
-            var result = gameLiveTextRecordService.saveLiveText(game, parsedLiveText, fetchedAt, effectiveLineupData);
-            log.info(
-                    "[KboLiveText] imported gameId={} providerGameId={} status={} batters={} pitchers={} events={}",
-                    game.getPublicGameId(),
-                    providerGameId,
-                    parsedDetail.status(),
-                    result.batterRecordCount(),
-                    result.pitcherRecordCount(),
-                    result.eventCount()
-            );
-            return new LiveTextImportResult(result.batterRecordCount(), result.pitcherRecordCount(), result.eventCount(), null);
+            return new LiveTextFetchResult(parsedLiveText, null);
         } catch (RuntimeException exception) {
             log.warn(
                     "[KboLiveText] skipped reason=error gameId={} providerGameId={} status={} error={}",
@@ -425,7 +469,7 @@ public class GameDetailImportService {
                     parsedDetail.status(),
                     exception.getMessage()
             );
-            return LiveTextImportResult.skipped("error:" + exception.getMessage());
+            return LiveTextFetchResult.skipped("error:" + exception.getMessage());
         }
     }
 
@@ -434,7 +478,7 @@ public class GameDetailImportService {
             return lineupData;
         }
         List<ParsedLineupPlayer> away = parsedLiveText.awayBatters().stream()
-                .filter(record -> record.position() != null && !record.position().isBlank())
+                .filter(record -> record.playerName() != null && !record.playerName().isBlank())
                 .map(record -> new ParsedLineupPlayer(
                         String.valueOf(record.battingOrder() == null ? record.sourceOrder() + 1 : record.battingOrder()),
                         record.position(),
@@ -443,7 +487,7 @@ public class GameDetailImportService {
                 ))
                 .toList();
         List<ParsedLineupPlayer> home = parsedLiveText.homeBatters().stream()
-                .filter(record -> record.position() != null && !record.position().isBlank())
+                .filter(record -> record.playerName() != null && !record.playerName().isBlank())
                 .map(record -> new ParsedLineupPlayer(
                         String.valueOf(record.battingOrder() == null ? record.sourceOrder() + 1 : record.battingOrder()),
                         record.position(),
@@ -461,6 +505,42 @@ public class GameDetailImportService {
                 game.getAwayTeam() == null ? null : game.getAwayTeam().getTeamCode(),
                 game.getHomeTeam() == null ? null : game.getHomeTeam().getTeamCode()
         );
+    }
+
+    private ParsedGameDetail applyRunnerNamesFromLineup(
+            Game game,
+            ParsedGameDetail parsedDetail,
+            ParsedLineupData lineupData
+    ) {
+        ParsedGameDetail resolved = kboGameDetailParser.applyOfficialRunnerNamesFromLineup(parsedDetail, lineupData);
+        log.info(
+                "[BaseRunners] resolvedFromLineup publicGameId={} half={} offenseTeamCode={} firstOrder={} firstName={} secondOrder={} secondName={} thirdOrder={} thirdName={}",
+                game.getPublicGameId(),
+                parsedDetail.inningHalf(),
+                offenseTeamCode(game, parsedDetail.inningHalf()),
+                parsedDetail.firstBaseBattingOrder(),
+                displayName(resolved.firstBaseRunnerName()),
+                parsedDetail.secondBaseBattingOrder(),
+                displayName(resolved.secondBaseRunnerName()),
+                parsedDetail.thirdBaseBattingOrder(),
+                displayName(resolved.thirdBaseRunnerName())
+        );
+        return resolved;
+    }
+
+    private String offenseTeamCode(Game game, String inningHalf) {
+        String normalizedHalf = clean(inningHalf);
+        if (normalizedHalf == null) {
+            return null;
+        }
+        String lower = normalizedHalf.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("top") || "초".equals(normalizedHalf)) {
+            return game.getAwayTeam() == null ? null : game.getAwayTeam().getTeamCode();
+        }
+        if (lower.startsWith("bot") || lower.startsWith("bottom") || "말".equals(normalizedHalf)) {
+            return game.getHomeTeam() == null ? null : game.getHomeTeam().getTeamCode();
+        }
+        return null;
     }
 
     private void logLiveTextLineupTransfer(
@@ -572,9 +652,25 @@ public class GameDetailImportService {
             return false;
         }
         return gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId())
-                .map(GameSnapshot::getRawHash)
-                .filter(combinedRawHash::equals)
+                .filter(snapshot -> combinedRawHash.equals(snapshot.getRawHash()))
+                .filter(snapshot -> !hasResolvedRunnerNameChange(snapshot, parsedDetail, baseRunnerNameResolver.resolve(snapshot, parsedDetail)))
                 .isPresent();
+    }
+
+    private boolean hasResolvedRunnerNameChange(
+            GameSnapshot snapshot,
+            ParsedGameDetail parsedDetail,
+            BaseRunnerNameResolver.ResolvedBaseRunners resolved
+    ) {
+        return parsedDetail.runnerOnFirst()
+                && clean(resolved.firstBaseRunnerName()) != null
+                && !Objects.equals(clean(snapshot.getFirstBaseRunnerName()), clean(resolved.firstBaseRunnerName()))
+                || parsedDetail.runnerOnSecond()
+                && clean(resolved.secondBaseRunnerName()) != null
+                && !Objects.equals(clean(snapshot.getSecondBaseRunnerName()), clean(resolved.secondBaseRunnerName()))
+                || parsedDetail.runnerOnThird()
+                && clean(resolved.thirdBaseRunnerName()) != null
+                && !Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolved.thirdBaseRunnerName()));
     }
 
     private int existingLineScoreCount(Game game) {
@@ -767,14 +863,14 @@ public class GameDetailImportService {
             ParsedGameDetail parsedDetail,
             BoxscoreFetchResult boxscoreFetchResult
     ) {
-        if (parsedDetail.status() != GameStatus.FINAL) {
+        if (parsedDetail.status() != GameStatus.FINAL && !isLiveLike(parsedDetail.status())) {
             log.debug(
-                    "[GameBoxscoreImport] skipped reason=nonFinal gameId={} providerGameId={} status={}",
+                    "[GameBoxscoreImport] skipped reason=nonLiveOrFinal gameId={} providerGameId={} status={}",
                     game.getPublicGameId(),
                     providerGameId,
                     parsedDetail.status()
             );
-            return BoxscoreImportResult.skipped("nonFinal");
+            return BoxscoreImportResult.skipped("nonLiveOrFinal");
         }
         String boxscoreResponseBody = boxscoreFetchResult.responseBody();
         if (boxscoreResponseBody == null || boxscoreResponseBody.isBlank()) {
@@ -794,11 +890,15 @@ public class GameDetailImportService {
             int batterCount = parsedBoxscore.awayBatters().size() + parsedBoxscore.homeBatters().size();
             int pitcherCount = parsedBoxscore.awayPitchers().size() + parsedBoxscore.homePitchers().size();
             if (batterCount == 0 && pitcherCount == 0) {
+                GameBoxscoreRecordService.GameBoxscoreRecordSaveResult result =
+                        gameBoxscoreRecordService.saveBoxscoreRecords(game, parsedBoxscore);
                 log.info(
-                        "[GameBoxscoreImport] skipped reason=emptyRecords gameId={} providerGameId={} source={} parsedBatterCount=0 parsedPitcherCount=0",
+                        "[GameBoxscoreImport] skipped reason=emptyRecords gameId={} providerGameId={} source={} parsedBatterCount=0 parsedPitcherCount=0 deletedBatters={} deletedPitchers={}",
                         game.getPublicGameId(),
                         providerGameId,
-                        boxscoreFetchResult.source()
+                        boxscoreFetchResult.source(),
+                        result.deletedBatterCount(),
+                        result.deletedPitcherCount()
                 );
                 return new BoxscoreImportResult(boxscoreFetchResult.source(), batterCount, pitcherCount, 0, 0, "emptyRecords");
             }
@@ -1116,11 +1216,11 @@ public class GameDetailImportService {
                 lineScoreResult.homeTotals().balls(),
                 lineScoreResult.awayTotals().balls(),
                 combinedRawHash,
-                null,
-                null,
-                null,
-                null,
-                null,
+                parsedDetail.inningLabel(),
+                parsedDetail.lastCompletedBatterName(),
+                parsedDetail.lastCompletedPitcherName(),
+                parsedDetail.lastCompletedPlayResult(),
+                parsedDetail.lastCompletedPlayKey(),
                 parsedDetail.sourceUpdatedAt(),
                 fetchedAt
         );
@@ -1248,7 +1348,11 @@ public class GameDetailImportService {
                 && Objects.equals(clean(snapshot.getThirdBaseRunnerName()), clean(resolvedBaseRunners.thirdBaseRunnerName()))
                 && Objects.equals(clean(snapshot.getFirstBaseRunnerId()), clean(resolvedBaseRunners.firstBaseRunnerId()))
                 && Objects.equals(clean(snapshot.getSecondBaseRunnerId()), clean(resolvedBaseRunners.secondBaseRunnerId()))
-                && Objects.equals(clean(snapshot.getThirdBaseRunnerId()), clean(resolvedBaseRunners.thirdBaseRunnerId()));
+                && Objects.equals(clean(snapshot.getThirdBaseRunnerId()), clean(resolvedBaseRunners.thirdBaseRunnerId()))
+                && Objects.equals(clean(snapshot.getLastCompletedBatterName()), clean(parsedDetail.lastCompletedBatterName()))
+                && Objects.equals(clean(snapshot.getLastCompletedPitcherName()), clean(parsedDetail.lastCompletedPitcherName()))
+                && Objects.equals(clean(snapshot.getLastCompletedPlayResult()), clean(parsedDetail.lastCompletedPlayResult()))
+                && Objects.equals(clean(snapshot.getLastCompletedPlayKey()), clean(parsedDetail.lastCompletedPlayKey()));
     }
 
     private void logLatestSnapshotSaveInputs(
@@ -1374,7 +1478,7 @@ public class GameDetailImportService {
 
     private void logUnresolvedBase(String base, boolean occupied, String resolvedName) {
         if (occupied && clean(resolvedName) == null) {
-            log.debug("[BaseRunners] unresolved base={} reason=missingPayloadName", base);
+            log.warn("[BaseRunners] unresolved base={} reason=runnerOccupiedNameMissing", base);
         }
     }
 
@@ -1557,6 +1661,15 @@ public class GameDetailImportService {
     ) {
         private static LiveTextImportResult skipped(String skippedReason) {
             return new LiveTextImportResult(0, 0, 0, skippedReason);
+        }
+    }
+
+    private record LiveTextFetchResult(
+            KboLiveTextParser.ParsedLiveText parsedLiveText,
+            String skippedReason
+    ) {
+        private static LiveTextFetchResult skipped(String skippedReason) {
+            return new LiveTextFetchResult(null, skippedReason);
         }
     }
 

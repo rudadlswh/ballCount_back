@@ -21,28 +21,37 @@ public class LiveGameStreamPublisher {
     }
 
     public void publishAfterCommit(String publicGameId, boolean snapshotCreated, boolean statusChanged, GameStatus status) {
+        String normalizedPublicGameId = LiveGameStreamRegistry.normalizePublicGameId(publicGameId);
         Runnable publish = () -> {
+            int subscribers = streamRegistry.subscriberCount(normalizedPublicGameId);
             log.info(
                     "[SseStream] afterCommit publish start publicGameId={} snapshotCreated={} statusChanged={} subscribers={}",
-                    publicGameId,
+                    normalizedPublicGameId,
                     snapshotCreated,
                     statusChanged,
-                    streamRegistry.subscriberCount(publicGameId)
+                    subscribers
             );
+            if (subscribers == 0) {
+                log.warn(
+                        "[SseStream] afterCommit publish subscribers=0 publicGameId={} normalizedPublicGameId={}",
+                        publicGameId,
+                        normalizedPublicGameId
+                );
+            }
             try {
-                var snapshot = gameReadService.getGameLiveState(publicGameId);
+                var snapshot = gameReadService.getGameLiveState(normalizedPublicGameId);
                 if (statusChanged) {
-                    streamRegistry.publishStatusChanged(publicGameId, snapshot);
+                    streamRegistry.publishStatusChanged(normalizedPublicGameId, snapshot);
                 }
-                streamRegistry.publishSnapshot(publicGameId, snapshot);
+                streamRegistry.publishSnapshot(normalizedPublicGameId, snapshot);
                 if (isTerminal(status)) {
-                    streamRegistry.complete(publicGameId);
+                    streamRegistry.complete(normalizedPublicGameId);
                 }
-                log.info("[SseStream] afterCommit publish end publicGameId={}", publicGameId);
+                log.info("[SseStream] afterCommit publish end publicGameId={}", normalizedPublicGameId);
             } catch (RuntimeException exception) {
                 log.warn(
                         "[SseStream] afterCommit publish failed publicGameId={} reason={}",
-                        publicGameId,
+                        normalizedPublicGameId,
                         exception.getMessage()
                 );
                 throw exception;
