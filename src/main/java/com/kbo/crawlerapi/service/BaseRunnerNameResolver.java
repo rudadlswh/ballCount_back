@@ -12,12 +12,18 @@ class BaseRunnerNameResolver {
     private static final Logger log = LoggerFactory.getLogger(BaseRunnerNameResolver.class);
 
     ResolvedBaseRunners resolve(GameSnapshot previous, ParsedGameDetail current) {
+        return resolve(previous, current, PinchRunnerOverrides.empty());
+    }
+
+    ResolvedBaseRunners resolve(GameSnapshot previous, ParsedGameDetail current, PinchRunnerOverrides pinchRunnerOverrides) {
+        PinchRunnerOverrides overrides = pinchRunnerOverrides == null ? PinchRunnerOverrides.empty() : pinchRunnerOverrides;
         Runner first = resolveBase(
                 previous,
                 Base.FIRST,
                 current.runnerOnFirst(),
                 current.firstBaseRunnerName(),
                 current.firstBaseRunnerId(),
+                overrides.first(),
                 true,
                 current
         );
@@ -27,6 +33,7 @@ class BaseRunnerNameResolver {
                 current.runnerOnSecond(),
                 current.secondBaseRunnerName(),
                 current.secondBaseRunnerId(),
+                overrides.second(),
                 false,
                 current
         );
@@ -36,11 +43,12 @@ class BaseRunnerNameResolver {
                 current.runnerOnThird(),
                 current.thirdBaseRunnerName(),
                 current.thirdBaseRunnerId(),
+                overrides.third(),
                 false,
                 current
         );
 
-        String source = resolutionSource(current, first, second, third);
+        String source = overrides.hasAny() ? "liveTextSubstitution" : resolutionSource(current, first, second, third);
         if (previous != null && source.equals("occupancyOnly")) {
             log.debug(
                     "[BaseRunners] carryForward skipped reason=missingOfficialRunnerNames gameId={} previousBases={} currentBases={}",
@@ -95,11 +103,15 @@ class BaseRunnerNameResolver {
             boolean occupied,
             String officialName,
             String officialId,
+            RunnerOverride pinchRunnerOverride,
             boolean inferFromPreviousBatter,
             ParsedGameDetail current
     ) {
         if (!occupied) {
             return Runner.empty();
+        }
+        if (pinchRunnerOverride != null && clean(pinchRunnerOverride.runnerName()) != null) {
+            return new Runner(clean(pinchRunnerOverride.runnerName()), null);
         }
         Runner batterReachedFirst = batterReachedFirstFromPreviousBatter(previous, current, base);
         if (batterReachedFirst.name() != null || batterReachedFirst.id() != null) {
@@ -323,6 +335,34 @@ class BaseRunnerNameResolver {
             String thirdBaseRunnerId,
             String source
     ) {
+    }
+
+    record PinchRunnerOverrides(
+            RunnerOverride first,
+            RunnerOverride second,
+            RunnerOverride third
+    ) {
+        static PinchRunnerOverrides empty() {
+            return new PinchRunnerOverrides(null, null, null);
+        }
+
+        boolean hasAny() {
+            return first != null || second != null || third != null;
+        }
+
+        String signature() {
+            return "%s|%s|%s".formatted(
+                    first == null ? "-" : first.signature(),
+                    second == null ? "-" : second.signature(),
+                    third == null ? "-" : third.signature()
+            );
+        }
+    }
+
+    record RunnerOverride(String replacedRunnerName, String runnerName) {
+        String signature() {
+            return "%s>%s".formatted(replacedRunnerName, runnerName);
+        }
     }
 
     private record Runner(String name, String id) {

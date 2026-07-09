@@ -135,6 +135,36 @@ class ScoringPlayNotificationFormatterTest {
         assertThat(detail.runsScored()).isEqualTo(2);
     }
 
+    @Test
+    void rejectsSelectedEventWhenPlayerDoesNotMatchScoringPlateAppearance() {
+        var detail = ScoringPlayDetailExtractor.extract(
+                List.of(
+                        new GameEventRow(10, 4, "bottom", "HIT", "김도영 : 중견수 앞 1루타"),
+                        new GameEventRow(11, 4, "bottom", "RUN_SCORED", "3루주자 고승민 : 홈인")
+                ),
+                new ScoringPlayDetailExtractor.ScoringPlayContext(
+                        "고승민",
+                        4,
+                        "bottom",
+                        true,
+                        false,
+                        true,
+                        "lotte",
+                        "롯데",
+                        "kia",
+                        "lotte",
+                        3,
+                        10,
+                        3,
+                        11,
+                        "KIA",
+                        "롯데"
+                )
+        );
+
+        assertThat(detail).isEmpty();
+    }
+
     private String extractResult(String eventText) {
         return ScoringPlayDetailExtractor.parse(eventText).orElseThrow().resultText();
     }

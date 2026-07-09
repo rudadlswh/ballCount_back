@@ -32,6 +32,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +50,8 @@ public class GameDetailImportService {
     private static final Logger log = LoggerFactory.getLogger(GameDetailImportService.class);
     private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
     private static final DateTimeFormatter OFFICIAL_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+    private static final Pattern PINCH_RUNNER_EVENT_PATTERN = Pattern.compile("(1루|2루|3루)\\s*주자\\s+([^:]+)\\s*:\\s*대주자\\s+([^\\s(]+)");
+    private static final Pattern PINCH_RUNNER_EVENT_WITHOUT_BASE_PATTERN = Pattern.compile("([^:\\s]+)\\s*:\\s*대주자\\s+([^\\s(]+)");
     private static final Map<String, String> OFFICIAL_TEAM_CODES_BY_TEAM_CODE = Map.ofEntries(
             Map.entry("doosan", "OB"),
             Map.entry("hanwha", "HH"),
@@ -288,7 +292,12 @@ public class GameDetailImportService {
                     ? null
                     : lineupDataForLiveText(game, null, liveTextFetchResult.parsedLiveText());
             parsedDetail = applyRunnerNamesFromLineup(game, parsedDetail, liveTextLineupData);
-            String combinedRawHash = HashSupport.sha256Hex(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore());
+            BaseRunnerNameResolver.PinchRunnerOverrides pinchRunnerOverrides = pinchRunnerOverridesFromLiveText(
+                    game,
+                    parsedDetail,
+                    liveTextFetchResult.parsedLiveText()
+            );
+            String combinedRawHash = HashSupport.sha256Hex(parsedDetail.rawHash() + ":" + lineScoreResult.rawHash() + ":score:" + selectedScore.awayScore() + ":" + selectedScore.homeScore() + ":pinchRunner:" + pinchRunnerOverrides.signature());
             if (rawHashUnchanged(game, parsedDetail, combinedRawHash)) {
                 int existingLineScoreCount = existingLineScoreCount(game);
                 log.info(
@@ -322,7 +331,7 @@ public class GameDetailImportService {
                     : lineupDataForLiveText(game, lineupData, liveTextFetchResult.parsedLiveText());
             parsedDetail = applyRunnerNamesFromLineup(game, parsedDetail, effectiveLineupData);
             GameStatus previousStatus = game.getStatus();
-            boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt);
+            boolean snapshotCreated = persistSnapshotIfChanged(game, parsedDetail, lineScoreResult, selectedScore, combinedRawHash, fetchedAt, pinchRunnerOverrides);
             boolean lineScoresUpdated = syncLineScoresIfChanged(game, lineScoreResult.innings());
             LiveActivityContentAffectingState beforeLiveActivityState = LiveActivityContentAffectingState.from(game);
             game.syncDetail(
@@ -526,6 +535,78 @@ public class GameDetailImportService {
                 displayName(resolved.thirdBaseRunnerName())
         );
         return resolved;
+    }
+
+    private BaseRunnerNameResolver.PinchRunnerOverrides pinchRunnerOverridesFromLiveText(
+            Game game,
+            ParsedGameDetail parsedDetail,
+            KboLiveTextParser.ParsedLiveText parsedLiveText
+    ) {
+        if (parsedLiveText == null || parsedLiveText.events() == null || parsedLiveText.events().isEmpty()) {
+            return BaseRunnerNameResolver.PinchRunnerOverrides.empty();
+        }
+        BaseRunnerNameResolver.RunnerOverride first = null;
+        BaseRunnerNameResolver.RunnerOverride second = null;
+        BaseRunnerNameResolver.RunnerOverride third = null;
+        for (KboLiveTextParser.ParsedLiveTextEvent event : parsedLiveText.events()) {
+            if (!sameHalfInning(parsedDetail, event)) {
+                continue;
+            }
+            Matcher matcher = PINCH_RUNNER_EVENT_PATTERN.matcher(event.eventText());
+            String base = null;
+            String replaced;
+            String pinchRunner;
+            if (matcher.find()) {
+                base = matcher.group(1);
+                replaced = clean(matcher.group(2));
+                pinchRunner = clean(matcher.group(3));
+            } else {
+                Matcher withoutBaseMatcher = PINCH_RUNNER_EVENT_WITHOUT_BASE_PATTERN.matcher(event.eventText());
+                if (!withoutBaseMatcher.find()) {
+                    continue;
+                }
+                replaced = clean(withoutBaseMatcher.group(1));
+                pinchRunner = clean(withoutBaseMatcher.group(2));
+            }
+            if (replaced == null || pinchRunner == null) {
+                continue;
+            }
+            if (("1루".equals(base) || base == null) && parsedDetail.runnerOnFirst() && Objects.equals(clean(parsedDetail.firstBaseRunnerName()), replaced)) {
+                first = new BaseRunnerNameResolver.RunnerOverride(replaced, pinchRunner);
+                logPinchRunnerOverride(game, "first", replaced, pinchRunner, parsedDetail.firstBaseRunnerName());
+            } else if (("2루".equals(base) || base == null) && parsedDetail.runnerOnSecond() && Objects.equals(clean(parsedDetail.secondBaseRunnerName()), replaced)) {
+                second = new BaseRunnerNameResolver.RunnerOverride(replaced, pinchRunner);
+                logPinchRunnerOverride(game, "second", replaced, pinchRunner, parsedDetail.secondBaseRunnerName());
+            } else if (("3루".equals(base) || base == null) && parsedDetail.runnerOnThird() && Objects.equals(clean(parsedDetail.thirdBaseRunnerName()), replaced)) {
+                third = new BaseRunnerNameResolver.RunnerOverride(replaced, pinchRunner);
+                logPinchRunnerOverride(game, "third", replaced, pinchRunner, parsedDetail.thirdBaseRunnerName());
+            }
+        }
+        return new BaseRunnerNameResolver.PinchRunnerOverrides(first, second, third);
+    }
+
+    private boolean sameHalfInning(ParsedGameDetail parsedDetail, KboLiveTextParser.ParsedLiveTextEvent event) {
+        if (event.inning() == null || parsedDetail.inning() == null || !event.inning().equals(parsedDetail.inning())) {
+            return false;
+        }
+        return Objects.equals(clean(event.inningHalf()), clean(parsedDetail.inningHalf()));
+    }
+
+    private void logPinchRunnerOverride(
+            Game game,
+            String base,
+            String replaced,
+            String pinchRunner,
+            String previousPayload
+    ) {
+        log.info(
+                "[BaseRunners] pinchRunner override publicGameId={} base={} replaced={} pinchRunner={} previousPayload={} source=liveTextSubstitution",
+                game.getPublicGameId(),
+                base,
+                replaced,
+                pinchRunner,
+                displayName(previousPayload)
+        );
     }
 
     private String offenseTeamCode(Game game, String inningHalf) {
@@ -1147,7 +1228,8 @@ public class GameDetailImportService {
             ParsedLineScoreResult lineScoreResult,
             SelectedScore selectedScore,
             String combinedRawHash,
-            OffsetDateTime fetchedAt
+            OffsetDateTime fetchedAt,
+            BaseRunnerNameResolver.PinchRunnerOverrides pinchRunnerOverrides
     ) {
         if (!hasMeaningfulLiveState(parsedDetail) && !isLiveLike(parsedDetail.status())) {
             log.debug(
@@ -1172,7 +1254,8 @@ public class GameDetailImportService {
         GameSnapshot previousSnapshot = latestSnapshot.orElse(null);
         BaseRunnerNameResolver.ResolvedBaseRunners resolvedBaseRunners = baseRunnerNameResolver.resolve(
                 previousSnapshot,
-                parsedDetail
+                parsedDetail,
+                pinchRunnerOverrides
         );
         logBaseRunnerResolution(game, previousSnapshot, parsedDetail, resolvedBaseRunners);
         if (latestSnapshot.map(GameSnapshot::getRawHash).filter(combinedRawHash::equals).isPresent()

@@ -2009,6 +2009,57 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
+    void snapshotRecoveryDedupesSamePlateAppearanceOnBaseWhenBaseStateChanges() {
+        Game game = fixtureGame(GameStatus.LIVE, 0, 0, "Bottom 1");
+        GameSnapshot empty = snapshotWithRunners(game, "고승민", "원정투수", 0, null, null, null, 1, "bottom", "Bottom 1");
+        GameSnapshot first = snapshotWithRunners(game, "고승민", "원정투수", 0, "고승민", null, null, 1, "bottom", "Bottom 1");
+        GameSnapshot second = snapshotWithRunners(game, "고승민", "원정투수", 0, null, "고승민", null, 1, "bottom", "Bottom 1");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(game.getGameDate())))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId()))).thenReturn(Optional.of(second));
+        when(gameSnapshotRepository.findRecentReplaySnapshotsByGameId(eq(game.getId()), any())).thenReturn(List.of(second, first, empty));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(game.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts.stream()
+                .filter(draft -> NotificationEventService.EVENT_ON_BASE.equals(draft.eventType()))
+                .map(NotificationEventDraft::eventKey)
+                .toList())
+                .containsExactly("onbase:%s:1:bottom:batter:고승민:outs:0-0".formatted(game.getId()));
+    }
+
+    @Test
+    void snapshotRecoverySkipsMutableEventsWhenGameIsAlreadyFinal() {
+        Game finalGame = withStatusReason(fixtureGame(GameStatus.FINAL, 3, 11, "Top 9"), "GAME_RESULT_CK=1");
+        GameSnapshot empty = snapshotWithRunners(finalGame, "박민", "홈투수", 0, null, null, null, 9, "top", "Top 9");
+        GameSnapshot onBase = snapshotWithRunners(finalGame, "박민", "홈투수", 0, "박민", null, null, 9, "top", "Top 9");
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(finalGame.getGameDate())))
+                .thenReturn(List.of(finalGame));
+        when(gameRepository.findByPublicGameId(eq(finalGame.getPublicGameId()))).thenReturn(Optional.of(finalGame));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(finalGame.getId()))).thenReturn(Optional.of(onBase));
+        when(gameSnapshotRepository.findRecentReplaySnapshotsByGameId(eq(finalGame.getId()), any())).thenReturn(List.of(onBase, empty));
+
+        StubNotificationEventService notificationEventService = new StubNotificationEventService();
+        LiveGameSyncService service = service(ACTIVE_KST_CLOCK, new StubGameDetailImportService(), notificationEventService);
+
+        service.sync(finalGame.getGameDate(), false);
+
+        assertThat(notificationEventService.drafts)
+                .extracting(NotificationEventDraft::eventType)
+                .doesNotContain(
+                        NotificationEventService.EVENT_ON_BASE,
+                        NotificationEventService.EVENT_SCORE_CHANGED,
+                        NotificationEventService.EVENT_INNING_CHANGED
+                );
+    }
+
+    @Test
     void snapshotRecoveryDoesNotDuplicateGameEndWhenEventKeyAlreadyExists() {
         Game finalGame = withStatusReason(fixtureGame(GameStatus.FINAL, 4, 2), "GAME_RESULT_CK=1");
         GameSnapshot lastSnapshot = snapshot(finalGame, "김타자", "박투수", 0, false, false, false);

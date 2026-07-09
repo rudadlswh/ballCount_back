@@ -13,7 +13,6 @@ import com.kbo.crawlerapi.service.NotificationEventService.NotificationEventDraf
 import com.kbo.crawlerapi.service.OnBasePlayDetailExtractor.OnBasePlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayDetailExtractor.ScoringPlayContext;
 import com.kbo.crawlerapi.service.ScoringPlayNotificationFormatter.NotificationText;
-import com.kbo.crawlerapi.support.HashSupport;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -373,6 +372,10 @@ public class LiveGameSyncService {
                     updatedGames.add(after.getPublicGameId());
                 }
                 for (NotificationEventDraft draft : drafts) {
+                    if (shouldSkipFinalMutableNotification(after, draft)) {
+                        logFinalMutableNotificationSkipped(after, draft);
+                        continue;
+                    }
                     log.info(
                             "[Notifications] notification built at={} eventType={} eventKey={} publicGameId={}",
                             Instant.now(applicationClock),
@@ -488,6 +491,10 @@ public class LiveGameSyncService {
         int failedCount = 0;
         List<String> eventKeys = new ArrayList<>();
         for (NotificationEventDraft draft : candidates) {
+            if (shouldSkipFinalMutableNotification(game, draft)) {
+                logFinalMutableNotificationSkipped(game, draft);
+                continue;
+            }
             if (handledEventKeys.contains(draft.eventKey()) || notificationEventService.eventExists(draft)) {
                 logSnapshotRecoveryDecision(game, null, null, draft, "duplicate_event_key", "duplicate_event_key");
                 continue;
@@ -1054,6 +1061,7 @@ public class LiveGameSyncService {
         }
         if (isLiveLike(before.status()) && after.status() == GameStatus.FINAL && isStrongFinal(game)) {
             drafts.add(finalDraft(game));
+            return drafts;
         }
         if (isLiveLike(before.status()) && isLiveLike(after.status()) && inningChanged(before, after)) {
             drafts.add(inningChangeDraft(game, after));
@@ -1427,13 +1435,13 @@ public class LiveGameSyncService {
         NotificationEventDraft draft = liveDraft(
                 game,
                 NotificationEventService.EVENT_ON_BASE,
-                "onbase:%s:%s:%s:%s:%s:%s".formatted(
+                "onbase:%s:%s:%s:batter:%s:outs:%s-%s".formatted(
                         game.getId(),
                         safeKey(after.inning()),
                         safeKey(normalizeHalf(after.inningHalf())),
-                        safeKey(after.outs()),
-                        baseKey(after),
-                        runnerNamesHash(after)
+                        safeKey(batterName),
+                        safeKey(before.outs()),
+                        safeKey(after.outs())
                 ),
                 onBaseText == null ? fallbackText.title() : onBaseText.title(),
                 onBaseText == null ? fallbackText.body() : onBaseText.body(),
@@ -1572,6 +1580,27 @@ public class LiveGameSyncService {
             );
             return new ScoringPlayResolution(null, 0);
         }
+    }
+
+    private boolean shouldSkipFinalMutableNotification(Game game, NotificationEventDraft draft) {
+        if (game == null || draft == null || !isMutableLiveNotification(draft.eventType())) {
+            return false;
+        }
+        return game.getFinalConfirmedAt() != null || game.getStatus() == GameStatus.FINAL;
+    }
+
+    private boolean isMutableLiveNotification(String eventType) {
+        return NotificationEventService.EVENT_ON_BASE.equals(eventType)
+                || NotificationEventService.EVENT_SCORE_CHANGED.equals(eventType)
+                || NotificationEventService.EVENT_INNING_CHANGED.equals(eventType);
+    }
+
+    private void logFinalMutableNotificationSkipped(Game game, NotificationEventDraft draft) {
+        log.info(
+                "[Notifications] skipped reason=game_already_final eventType={} publicGameId={}",
+                draft == null ? null : draft.eventType(),
+                game == null ? null : game.getPublicGameId()
+        );
     }
 
     private ScoringPlayContext scoringPlayContext(Game game, GameState before, GameState after, String eventTeamId) {
@@ -2230,10 +2259,6 @@ public class LiveGameSyncService {
         boolean baseChanged = !java.util.Objects.equals(baseKey(before), baseKey(after));
         boolean runnerChanged = !java.util.Objects.equals(runnerNamesKey(before), runnerNamesKey(after));
         return (baseChanged || runnerChanged) && baseCount(after) > 0 && nullSafe(after.outs()) <= nullSafe(before.outs());
-    }
-
-    private String runnerNamesHash(GameState state) {
-        return HashSupport.sha256Prefix(runnerNamesKey(state), 8);
     }
 
     private String runnerNamesKey(GameState state) {
