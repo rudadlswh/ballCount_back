@@ -111,16 +111,23 @@ class BaseRunnerNameResolver {
             return Runner.empty();
         }
         if (pinchRunnerOverride != null && clean(pinchRunnerOverride.runnerName()) != null) {
+            log.debug(
+                    "[BaseRunnerResolver] game={} base={} occupied=true source=pinchRunner previous={} resolved={}",
+                    current.providerGameId(),
+                    base.number(),
+                    displayName(previousRunnerName(previous, base, officialName)),
+                    clean(pinchRunnerOverride.runnerName())
+            );
             return new Runner(clean(pinchRunnerOverride.runnerName()), null);
-        }
-        Runner batterReachedFirst = batterReachedFirstFromPreviousBatter(previous, current, base);
-        if (batterReachedFirst.name() != null || batterReachedFirst.id() != null) {
-            return batterReachedFirst;
         }
         String name = clean(officialName);
         String id = clean(officialId);
         if (name != null || id != null) {
             return new Runner(name, id);
+        }
+        Runner batterReachedFirst = batterReachedFirstFromPreviousBatter(previous, current, base);
+        if (batterReachedFirst.name() != null || batterReachedFirst.id() != null) {
+            return batterReachedFirst;
         }
         Runner carried = carryForward(previous, current, base);
         if (carried.name() != null || carried.id() != null) {
@@ -252,7 +259,6 @@ class BaseRunnerNameResolver {
                 && java.util.Objects.equals(previous.getAwayScore(), current.awayScore())
                 && java.util.Objects.equals(previous.getHomeScore(), current.homeScore())
                 && !countReset(previous, current)
-                && java.util.Objects.equals(clean(previous.getRawHash()), clean(current.rawHash()))
                 && !hasBaseBattingOrder(current)
                 && !hasBattedBallOrOutResult(current)
                 && baseKey(previous).equals(baseKey(current));
@@ -300,6 +306,18 @@ class BaseRunnerNameResolver {
             case FIRST -> previous.isRunnerOnFirst();
             case SECOND -> previous.isRunnerOnSecond();
             case THIRD -> previous.isRunnerOnThird();
+        };
+    }
+
+    private String previousRunnerName(GameSnapshot previous, Base base, String officialName) {
+        String name = clean(officialName);
+        if (name != null || previous == null) {
+            return name;
+        }
+        return switch (base) {
+            case FIRST -> clean(previous.getFirstBaseRunnerName());
+            case SECOND -> clean(previous.getSecondBaseRunnerName());
+            case THIRD -> clean(previous.getThirdBaseRunnerName());
         };
     }
 
@@ -372,8 +390,18 @@ class BaseRunnerNameResolver {
     }
 
     private enum Base {
-        FIRST,
-        SECOND,
-        THIRD
+        FIRST(1),
+        SECOND(2),
+        THIRD(3);
+
+        private final int number;
+
+        Base(int number) {
+            this.number = number;
+        }
+
+        int number() {
+            return number;
+        }
     }
 }

@@ -167,7 +167,7 @@ class GameDetailImportServiceTest {
                 1,
                 10,
                 3,
-                hash("detail-hash:line-hash:score:2:7"),
+                hash("detail-hash:line-hash:score:2:7:pinchRunner:-|-|-"),
                 null,
                 OffsetDateTime.now()
         );
@@ -256,7 +256,7 @@ class GameDetailImportServiceTest {
                 1,
                 2,
                 3,
-                hash("detail-hash:line-hash:score:11:9"),
+                hash("detail-hash:line-hash:score:11:9:pinchRunner:-|-|-"),
                 null,
                 OffsetDateTime.now()
         );
@@ -762,7 +762,7 @@ class GameDetailImportServiceTest {
     }
 
     @Test
-    void mapsOfficialBaseRunnerBattingOrdersThroughLineupBeforePersistingSnapshot() {
+    void blocksOfficialStarterFallbackBeforePersistingSnapshot() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
         kboGameDetailClient.detailBody = "{\"game\":[]}";
@@ -825,9 +825,9 @@ class GameDetailImportServiceTest {
         ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
         verify(gameSnapshotRepository).save(snapshotCaptor.capture());
         assertThat(result.snapshotCreated()).isTrue();
-        assertThat(snapshotCaptor.getValue().getFirstBaseRunnerName()).isEqualTo("원정2번");
+        assertThat(snapshotCaptor.getValue().getFirstBaseRunnerName()).isNull();
         assertThat(snapshotCaptor.getValue().getSecondBaseRunnerName()).isNull();
-        assertThat(snapshotCaptor.getValue().getThirdBaseRunnerName()).isEqualTo("원정4번");
+        assertThat(snapshotCaptor.getValue().getThirdBaseRunnerName()).isNull();
     }
 
     @Test
@@ -1527,6 +1527,98 @@ class GameDetailImportServiceTest {
     }
 
     @Test
+    void explicitBasePinchRunnerOverridesMismatchedOriginalLineupRunnerName(CapturedOutput output) {
+        Game game = fixtureGame();
+        CrawlJob crawlJob = crawlJob(game);
+        StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
+        StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
+        StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
+        gameDetailImportService = new GameDetailImportService(
+                gameRepository,
+                gameSnapshotRepository,
+                lineScoreRepository,
+                kboGameDetailClient,
+                kboGameDetailParser,
+                kboLineScoreParser,
+                kboBoxscoreParser,
+                liveTextClient,
+                liveTextParser,
+                gameBoxscoreRecordService,
+                liveTextRecordService,
+                crawlJobTrackingService,
+                new BaseRunnerNameResolver()
+        );
+        kboGameDetailClient.detailBody = "{\"game\":[]}";
+        kboGameDetailClient.lineScoreBody = "{\"code\":\"100\"}";
+        liveTextClient.responseBody = "<html>live</html>";
+        liveTextParser.result = new KboLiveTextParser.ParsedLiveText(
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new KboLiveTextParser.ParsedLiveTextEvent(
+                        1,
+                        7,
+                        "top",
+                        "PINCH_RUNNER",
+                        "1루주자 김동현 : 대주자 김동혁 (으)로 교체",
+                        "김동현"
+                ))
+        );
+        kboGameDetailParser.parsedGames = List.of(new KboGameDetailParser.ParsedGameDetail(
+                game.getProviderGameId(),
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                0,
+                0,
+                7,
+                "top",
+                "Top 7",
+                0,
+                0,
+                0,
+                true,
+                false,
+                false,
+                8,
+                0,
+                0,
+                "손성빈",
+                null,
+                null,
+                null,
+                null,
+                null,
+                "LG투수",
+                "다음타자",
+                "홈선발",
+                "원정선발",
+                false,
+                null,
+                null,
+                "pinch-hitter-then-pinch-runner"
+        ));
+        kboLineScoreParser.result = KboLineScoreParser.ParsedLineScoreResult.empty("line-hash-explicit-pr");
+
+        crawlJobTrackingService.createdJob = crawlJob;
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId()))).thenReturn(List.of());
+
+        gameDetailImportService.importGameDetail(game.getPublicGameId());
+
+        ArgumentCaptor<GameSnapshot> snapshotCaptor = ArgumentCaptor.forClass(GameSnapshot.class);
+        verify(gameSnapshotRepository).save(snapshotCaptor.capture());
+        assertThat(snapshotCaptor.getValue().isRunnerOnFirst()).isTrue();
+        assertThat(snapshotCaptor.getValue().getFirstBaseRunnerName()).isEqualTo("김동혁");
+        assertThat(output).contains("base=first replaced=김동현 pinchRunner=김동혁 previousPayload=손성빈");
+    }
+
+    @Test
     void infersFirstBaseRunnerNameFromPreviousBatterWhenOfficialRunnerNameMissing() {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
@@ -1813,7 +1905,7 @@ class GameDetailImportServiceTest {
                 null,
                 null,
                 null,
-                hash("detail-hash:line-hash:score:2:7"),
+                hash("detail-hash:line-hash:score:2:7:pinchRunner:-|-|-"),
                 null,
                 OffsetDateTime.now()
         );

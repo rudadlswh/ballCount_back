@@ -383,13 +383,13 @@ public class KboGameDetailParser {
 
         String first = clean(detail.firstBaseRunnerName()) != null
                 ? detail.firstBaseRunnerName()
-                : runnerNameByBattingOrder(detail.firstBaseBattingOrder(), battingLineup);
+                : currentRunnerNameByBattingOrder(detail, 1, detail.runnerOnFirst(), detail.firstBaseBattingOrder(), battingLineup, lineupData);
         String second = clean(detail.secondBaseRunnerName()) != null
                 ? detail.secondBaseRunnerName()
-                : runnerNameByBattingOrder(detail.secondBaseBattingOrder(), battingLineup);
+                : currentRunnerNameByBattingOrder(detail, 2, detail.runnerOnSecond(), detail.secondBaseBattingOrder(), battingLineup, lineupData);
         String third = clean(detail.thirdBaseRunnerName()) != null
                 ? detail.thirdBaseRunnerName()
-                : runnerNameByBattingOrder(detail.thirdBaseBattingOrder(), battingLineup);
+                : currentRunnerNameByBattingOrder(detail, 3, detail.runnerOnThird(), detail.thirdBaseBattingOrder(), battingLineup, lineupData);
 
         if (equalsClean(detail.firstBaseRunnerName(), first)
                 && equalsClean(detail.secondBaseRunnerName(), second)
@@ -421,22 +421,68 @@ public class KboGameDetailParser {
         return List.of();
     }
 
-    private String runnerNameByBattingOrder(Integer battingOrder, List<ParsedLineupPlayer> lineup) {
-        if (battingOrder == null || battingOrder <= 0) {
+    private String currentRunnerNameByBattingOrder(
+            ParsedGameDetail detail,
+            int base,
+            boolean occupied,
+            Integer battingOrder,
+            List<ParsedLineupPlayer> lineup,
+            ParsedLineupData lineupData
+    ) {
+        if (!occupied || battingOrder == null || battingOrder <= 0) {
             return null;
         }
         String orderText = Integer.toString(battingOrder);
-        List<String> matches = lineup.stream()
+        List<ParsedLineupPlayer> players = lineup.stream()
                 .filter(player -> orderText.equals(normalizeBattingOrder(player.battingOrder())))
+                .toList();
+        List<String> currentMatches = players.stream()
+                .filter(player -> isLiveTextLineup(lineupData) || isCurrentSubstitutionPlayer(player))
                 .map(ParsedLineupPlayer::name)
                 .map(this::clean)
                 .filter(java.util.Objects::nonNull)
                 .distinct()
                 .toList();
-        if (matches.size() != 1) {
-            return null;
+        if (currentMatches.size() == 1) {
+            return currentMatches.get(0);
         }
-        return matches.get(0);
+
+        List<String> allMatches = players.stream()
+                .map(ParsedLineupPlayer::name)
+                .map(this::clean)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (!isLiveTextLineup(lineupData) && allMatches.size() == 1) {
+            log.debug(
+                    "[BaseRunnerResolver] game={} base={} occupied=true source=lineupFallback blockedOriginalPlayer={} reason=originalLineupPlayer",
+                    detail.providerGameId(),
+                    base,
+                    allMatches.get(0)
+            );
+        } else if (!isLiveTextLineup(lineupData) && allMatches.size() > 1) {
+            allMatches.stream()
+                    .filter(name -> players.stream()
+                            .filter(player -> name.equals(clean(player.name())))
+                            .noneMatch(this::isCurrentSubstitutionPlayer))
+                    .findFirst()
+                    .ifPresent(name -> log.debug(
+                            "[BaseRunnerResolver] game={} base={} occupied=true source=lineupFallback blockedOriginalPlayer={} reason=pinchSubstitutionExists",
+                            detail.providerGameId(),
+                            base,
+                            name
+                    ));
+        }
+        return null;
+    }
+
+    private boolean isLiveTextLineup(ParsedLineupData lineupData) {
+        return lineupData != null && "live-text-lineup-fallback".equals(clean(lineupData.rawHash()));
+    }
+
+    private boolean isCurrentSubstitutionPlayer(ParsedLineupPlayer player) {
+        String position = clean(player.position());
+        return "PH".equals(position) || "PR".equals(position);
     }
 
     private String normalizeBattingOrder(String value) {

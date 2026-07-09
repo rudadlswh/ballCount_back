@@ -136,13 +136,54 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
-    void previousPinchHitterReachedFirstWinsOverStaleOfficialMapping() {
+    void pinchRunnerOverrideWinsOverCarryForwardAndPayloadRunnerName() {
+        GameSnapshot previous = snapshot("다음타자", 0, true, false, false, "김동현", null, null);
+        ParsedGameDetail current = parsed(0, true, false, false, "김동현", null, null);
+        BaseRunnerNameResolver.PinchRunnerOverrides overrides = new BaseRunnerNameResolver.PinchRunnerOverrides(
+                new BaseRunnerNameResolver.RunnerOverride("김동현", "김동혁"),
+                null,
+                null
+        );
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current, overrides);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("김동혁");
+        assertThat(result.source()).isEqualTo("liveTextSubstitution");
+    }
+
+    @Test
+    void pinchHitterOfficialRunnerNameRemainsWhenNoPinchRunnerOverrideExists() {
+        GameSnapshot previous = snapshot("손성빈", 0, false, false, false, null, null, null);
+        ParsedGameDetail current = parsed(0, true, false, false, "김동현", null, null);
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("김동현");
+        assertThat(result.source()).contains("payload");
+    }
+
+    @Test
+    void explicitPinchRunnerDoesNotFallbackToOriginalRunnerName() {
+        ParsedGameDetail current = parsed(0, true, false, false, "나성범", null, null);
+        BaseRunnerNameResolver.PinchRunnerOverrides overrides = new BaseRunnerNameResolver.PinchRunnerOverrides(
+                new BaseRunnerNameResolver.RunnerOverride("나성범", "박정우"),
+                null,
+                null
+        );
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(null, current, overrides);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("박정우");
+    }
+
+    @Test
+    void officialRunnerNameWinsOverPreviousBatterReachedFirstInference() {
         GameSnapshot previous = snapshotWithCount("노진혁", 0, 3, 1, false, false, false, null, null, null);
         ParsedGameDetail current = parsed(0, true, false, false, "손호영", null, null, 1, "top", "황성빈");
 
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
-        assertThat(result.firstBaseRunnerName()).isEqualTo("노진혁");
+        assertThat(result.firstBaseRunnerName()).isEqualTo("손호영");
         assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
     }

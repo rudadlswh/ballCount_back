@@ -571,18 +571,34 @@ public class GameDetailImportService {
             if (replaced == null || pinchRunner == null) {
                 continue;
             }
-            if (("1루".equals(base) || base == null) && parsedDetail.runnerOnFirst() && Objects.equals(clean(parsedDetail.firstBaseRunnerName()), replaced)) {
+            if (shouldApplyPinchRunnerOverride(base, "1루", parsedDetail.runnerOnFirst(), parsedDetail.firstBaseRunnerName(), replaced)) {
                 first = new BaseRunnerNameResolver.RunnerOverride(replaced, pinchRunner);
                 logPinchRunnerOverride(game, "first", replaced, pinchRunner, parsedDetail.firstBaseRunnerName());
-            } else if (("2루".equals(base) || base == null) && parsedDetail.runnerOnSecond() && Objects.equals(clean(parsedDetail.secondBaseRunnerName()), replaced)) {
+            } else if (shouldApplyPinchRunnerOverride(base, "2루", parsedDetail.runnerOnSecond(), parsedDetail.secondBaseRunnerName(), replaced)) {
                 second = new BaseRunnerNameResolver.RunnerOverride(replaced, pinchRunner);
                 logPinchRunnerOverride(game, "second", replaced, pinchRunner, parsedDetail.secondBaseRunnerName());
-            } else if (("3루".equals(base) || base == null) && parsedDetail.runnerOnThird() && Objects.equals(clean(parsedDetail.thirdBaseRunnerName()), replaced)) {
+            } else if (shouldApplyPinchRunnerOverride(base, "3루", parsedDetail.runnerOnThird(), parsedDetail.thirdBaseRunnerName(), replaced)) {
                 third = new BaseRunnerNameResolver.RunnerOverride(replaced, pinchRunner);
                 logPinchRunnerOverride(game, "third", replaced, pinchRunner, parsedDetail.thirdBaseRunnerName());
             }
         }
         return new BaseRunnerNameResolver.PinchRunnerOverrides(first, second, third);
+    }
+
+    private boolean shouldApplyPinchRunnerOverride(
+            String eventBase,
+            String targetBase,
+            boolean occupied,
+            String payloadRunnerName,
+            String replacedRunnerName
+    ) {
+        if (!occupied) {
+            return false;
+        }
+        if (targetBase.equals(eventBase)) {
+            return true;
+        }
+        return eventBase == null && Objects.equals(clean(payloadRunnerName), clean(replacedRunnerName));
     }
 
     private boolean sameHalfInning(ParsedGameDetail parsedDetail, KboLiveTextParser.ParsedLiveTextEvent event) {

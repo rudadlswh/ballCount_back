@@ -592,63 +592,94 @@ class KboGameDetailParserTest {
     }
 
     @Test
-    void mapsFirstBaseRunnerBattingOrderToAwayLineupInTopHalf() {
+    void blocksFirstBaseRunnerStarterFallbackInTopHalf() {
         var detail = parseRunnerState("T", 2, 0, 0);
         var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
 
-        assertThat(enriched.firstBaseRunnerName()).isEqualTo("원정2번");
+        assertThat(enriched.firstBaseRunnerName()).isNull();
         assertThat(enriched.secondBaseRunnerName()).isNull();
         assertThat(enriched.thirdBaseRunnerName()).isNull();
     }
 
     @Test
-    void mapsSecondBaseRunnerBattingOrderToAwayLineupInTopHalf() {
+    void blocksSecondBaseRunnerStarterFallbackInTopHalf() {
         var detail = parseRunnerState("T", 0, 3, 0);
         var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
 
         assertThat(enriched.firstBaseRunnerName()).isNull();
-        assertThat(enriched.secondBaseRunnerName()).isEqualTo("원정3번");
+        assertThat(enriched.secondBaseRunnerName()).isNull();
         assertThat(enriched.thirdBaseRunnerName()).isNull();
     }
 
     @Test
-    void mapsThirdBaseRunnerBattingOrderToAwayLineupInTopHalf() {
+    void blocksThirdBaseRunnerStarterFallbackInTopHalf() {
         var detail = parseRunnerState("T", 0, 0, 4);
         var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
 
         assertThat(enriched.firstBaseRunnerName()).isNull();
         assertThat(enriched.secondBaseRunnerName()).isNull();
-        assertThat(enriched.thirdBaseRunnerName()).isEqualTo("원정4번");
-    }
-
-    @Test
-    void mapsFirstAndThirdBaseRunnerBattingOrdersToAwayLineupInTopHalf() {
-        var detail = parseRunnerState("T", 2, 0, 4);
-        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
-
-        assertThat(enriched.firstBaseRunnerName()).isEqualTo("원정2번");
-        assertThat(enriched.secondBaseRunnerName()).isNull();
-        assertThat(enriched.thirdBaseRunnerName()).isEqualTo("원정4번");
-    }
-
-    @Test
-    void mapsFirstAndSecondBaseRunnerBattingOrdersToHomeLineupInBottomHalf() {
-        var detail = parseRunnerState("B", 5, 6, 0);
-        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
-
-        assertThat(enriched.firstBaseRunnerName()).isEqualTo("홈5번");
-        assertThat(enriched.secondBaseRunnerName()).isEqualTo("홈6번");
         assertThat(enriched.thirdBaseRunnerName()).isNull();
     }
 
     @Test
-    void mapsLoadedBaseRunnerBattingOrdersToHomeLineupInBottomHalf() {
+    void blocksMultipleStarterFallbacksInTopHalf() {
+        var detail = parseRunnerState("T", 2, 0, 4);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isNull();
+        assertThat(enriched.secondBaseRunnerName()).isNull();
+        assertThat(enriched.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void blocksStarterFallbacksInBottomHalf() {
+        var detail = parseRunnerState("B", 5, 6, 0);
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
+
+        assertThat(enriched.firstBaseRunnerName()).isNull();
+        assertThat(enriched.secondBaseRunnerName()).isNull();
+        assertThat(enriched.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void blocksLoadedBaseStarterFallbacksInBottomHalf() {
         var detail = parseRunnerState("B", 5, 6, 7);
         var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineupData());
 
-        assertThat(enriched.firstBaseRunnerName()).isEqualTo("홈5번");
-        assertThat(enriched.secondBaseRunnerName()).isEqualTo("홈6번");
-        assertThat(enriched.thirdBaseRunnerName()).isEqualTo("홈7번");
+        assertThat(enriched.firstBaseRunnerName()).isNull();
+        assertThat(enriched.secondBaseRunnerName()).isNull();
+        assertThat(enriched.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void mapsPinchHitterCurrentPlayerInsteadOfOriginalLineupPlayer() {
+        var detail = parseRunnerState("T", 8, 0, 0);
+        var lineup = new KboGameDetailParser.ParsedLineupData(
+                List.of(
+                        new KboGameDetailParser.ParsedLineupPlayer("8", "C", "손성빈"),
+                        new KboGameDetailParser.ParsedLineupPlayer("8", "PH", "김동현")
+                ),
+                List.of(),
+                "lineup-hash"
+        );
+
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineup);
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("김동현");
+    }
+
+    @Test
+    void mapsLiveTextLineupFallbackCurrentPlayer() {
+        var detail = parseRunnerState("T", 2, 0, 0);
+        var lineup = new KboGameDetailParser.ParsedLineupData(
+                List.of(new KboGameDetailParser.ParsedLineupPlayer("2", "SS", "전민재")),
+                List.of(),
+                "live-text-lineup-fallback"
+        );
+
+        var enriched = parser.applyOfficialRunnerNamesFromLineup(detail, lineup);
+
+        assertThat(enriched.firstBaseRunnerName()).isEqualTo("전민재");
     }
 
     @Test
