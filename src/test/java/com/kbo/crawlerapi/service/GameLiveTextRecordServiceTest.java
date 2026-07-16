@@ -8,6 +8,9 @@ import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupData;
 import com.kbo.crawlerapi.parser.KboGameDetailParser.ParsedLineupPlayer;
 import com.kbo.crawlerapi.parser.KboLiveTextParser;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.BatterRecordReadRow;
+import com.kbo.crawlerapi.repository.GameBoxscoreRecordReadRepository.PitcherRecordReadRow;
 import com.kbo.crawlerapi.repository.GameBoxscoreRecordWriteRepository;
 import com.kbo.crawlerapi.repository.GameBoxscoreRecordWriteRepository.BatterRecordWriteRow;
 import com.kbo.crawlerapi.repository.GameBoxscoreRecordWriteRepository.PitcherRecordWriteRow;
@@ -38,6 +41,7 @@ class GameLiveTextRecordServiceTest {
         eventRepository = new InMemoryGameEventWriteRepository();
         service = new GameLiveTextRecordService(
                 new GameBoxscoreRecordService(boxscoreRepository),
+                boxscoreRepository,
                 eventRepository
         );
         awayTeam = new Team(UUID.randomUUID(), "lotte", "롯데 자이언츠", "롯데", "Lotte Giants", null);
@@ -170,6 +174,27 @@ class GameLiveTextRecordServiceTest {
     }
 
     @Test
+    void keepsExistingLiveTextPositionWhenIncomingPositionIsEmpty() {
+        savePositionUpdates("LF", "");
+
+        assertThat(savedAwayBatter().position()).isEqualTo("LF");
+    }
+
+    @Test
+    void keepsExistingLiveTextPositionWhenIncomingPositionIsWhitespace() {
+        savePositionUpdates("LF", "   ");
+
+        assertThat(savedAwayBatter().position()).isEqualTo("LF");
+    }
+
+    @Test
+    void updatesExistingLiveTextPositionWhenIncomingPositionHasText() {
+        savePositionUpdates("LF", "RF");
+
+        assertThat(savedAwayBatter().position()).isEqualTo("RF");
+    }
+
+    @Test
     void mergesPositionWhenOfficialTeamIdsDifferFromDatabaseTeamCodes() {
         Team ssgTeam = new Team(UUID.randomUUID(), "ssg", "SSG 랜더스", "SSG", "SSG Landers", null);
         Game lotteAtSsg = game(GameStatus.LIVE, ssgTeam, awayTeam);
@@ -218,6 +243,27 @@ class GameLiveTextRecordServiceTest {
         assertThat(saved.position()).isEqualTo("CF");
     }
 
+    private void savePositionUpdates(String existingPosition, String incomingPosition) {
+        service.saveLiveText(liveGame, liveTextWithAwayPosition(existingPosition), OffsetDateTime.now());
+        service.saveLiveText(liveGame, liveTextWithAwayPosition(incomingPosition), OffsetDateTime.now());
+    }
+
+    private KboLiveTextParser.ParsedLiveText liveTextWithAwayPosition(String position) {
+        return new KboLiveTextParser.ParsedLiveText(
+                List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord(
+                        "away", 0, 1, position, "박승욱", 5, 2, 3, 2, 1, 0, 1, 0, 0, 0, 0, 0
+                )),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+    }
+
+    private BatterRecordWriteRow savedAwayBatter() {
+        return boxscoreRepository.batterRows.get(new RowKey(liveGame.getId(), awayTeam.getId(), 0));
+    }
+
     private KboLiveTextParser.ParsedLiveText parsedLiveText() {
         return new KboLiveTextParser.ParsedLiveText(
                 List.of(new KboLiveTextParser.ParsedLiveTextBatterRecord("away", 0, 1, "유", "박승욱", 4, 1, 2, 1, 0, 1, 0, 1, 0, 0, 0, 0)),
@@ -258,10 +304,52 @@ class GameLiveTextRecordServiceTest {
         );
     }
 
-    private static final class InMemoryGameBoxscoreRecordWriteRepository implements GameBoxscoreRecordWriteRepository {
+    private static final class InMemoryGameBoxscoreRecordWriteRepository
+            implements GameBoxscoreRecordWriteRepository, GameBoxscoreRecordReadRepository {
 
         private final Map<RowKey, BatterRecordWriteRow> batterRows = new LinkedHashMap<>();
         private final Map<RowKey, PitcherRecordWriteRow> pitcherRows = new LinkedHashMap<>();
+
+        @Override
+        public List<BatterRecordReadRow> findBatterRecords(UUID gameId) {
+            return batterRows.values().stream()
+                    .filter(row -> row.gameId().equals(gameId))
+                    .map(row -> new BatterRecordReadRow(
+                            row.teamId(),
+                            row.sourceOrder(),
+                            row.battingOrder(),
+                            row.position(),
+                            row.playerName(),
+                            row.atBats(),
+                            row.runs(),
+                            row.hits(),
+                            row.rbi(),
+                            row.homeRuns(),
+                            row.walks(),
+                            row.strikeouts(),
+                            row.stolenBases(),
+                            row.groundedIntoDoublePlay(),
+                            row.errors(),
+                            row.battingAverage(),
+                            null
+                    ))
+                    .toList();
+        }
+
+        @Override
+        public List<PitcherRecordReadRow> findPitcherRecords(UUID gameId) {
+            return List.of();
+        }
+
+        @Override
+        public long countBatterRecords(UUID gameId) {
+            return findBatterRecords(gameId).size();
+        }
+
+        @Override
+        public long countPitcherRecords(UUID gameId) {
+            return pitcherRows.keySet().stream().filter(key -> key.gameId().equals(gameId)).count();
+        }
 
         @Override
         public int deleteBatterRecordsByGameId(UUID gameId) {

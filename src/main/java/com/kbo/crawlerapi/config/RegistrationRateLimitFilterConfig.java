@@ -17,7 +17,8 @@ public class RegistrationRateLimitFilterConfig {
                 "/devices/live-activities/register",
                 "/live-activities/register",
                 "/devices/live-activities/push-to-start/register",
-                "/live-activities/push-to-start/register"
+                "/live-activities/push-to-start/register",
+                "/api/v1/attendance"
         );
         registration.setOrder(2);
         return registration;

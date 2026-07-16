@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -42,6 +43,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 @ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class LiveGameSyncServiceTest {
@@ -101,6 +103,31 @@ class LiveGameSyncServiceTest {
             releaseFirstRun.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void repositoryFailureReleasesDateSyncLockAndAllowsNextSync(CapturedOutput output) {
+        LocalDate date = LocalDate.of(2026, 4, 9);
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(date)))
+                .thenThrow(new DataAccessResourceFailureException("connection closed"))
+                .thenReturn(List.of(), List.of());
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                new StubGameDetailImportService(),
+                new StubNotificationEventService()
+        );
+
+        assertThatThrownBy(() -> service.sync(date, false))
+                .isInstanceOf(DataAccessResourceFailureException.class);
+
+        LiveGameSyncService.LiveSyncSummary next = service.sync(date, false);
+
+        assertThat(next.date()).isEqualTo(date);
+        assertThat(next.scannedCount()).isZero();
+        assertThat(output).contains(
+                "[DateSyncLock] released namespace=kbo-live-sync key=2026-04-09",
+                "inProgressReleased=true"
+        );
     }
 
     @Test

@@ -22,6 +22,7 @@ springdoc:
     enabled: false
 
 server:
+  forward-headers-strategy: native
   error:
     include-stacktrace: never
     include-exception: false

@@ -32,6 +32,7 @@ import org.springframework.stereotype.Component;
 public class LiveGameSyncScheduler implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(LiveGameSyncScheduler.class);
+    private static final String JOB_NAME = "live-game-sync";
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final Set<String> LIVE_STATUS_VALUES = Set.of("LIVE", "IN_PROGRESS", "PLAYING", "ONGOING");
     private static final Set<String> TERMINAL_STATUS_VALUES = Set.of(
@@ -190,16 +191,39 @@ public class LiveGameSyncScheduler implements SmartLifecycle {
     }
 
     private void runScheduledTick() {
-        Duration nextDelay = runTickAndGetNextDelay();
-        scheduleNext(nextDelay);
+        Duration nextDelay = normalized(properties.getRetryInterval());
+        RuntimeException failure = null;
+        try {
+            nextDelay = runTickAndGetNextDelay();
+        } catch (RuntimeException exception) {
+            failure = exception;
+        } finally {
+            boolean nextExecutionScheduled = false;
+            try {
+                nextExecutionScheduled = scheduleNext(nextDelay);
+            } finally {
+                if (failure != null) {
+                    log.error(
+                            "[LiveGameSync] scheduled tick failed job={} executionDate={} exceptionType={} retryDelay={} nextExecutionScheduled={}",
+                            JOB_NAME,
+                            LocalDate.now(applicationClock.withZone(KST)),
+                            failure.getClass().getName(),
+                            nextDelay,
+                            nextExecutionScheduled,
+                            failure
+                    );
+                }
+            }
+        }
     }
 
-    private void scheduleNext(Duration delay) {
+    private boolean scheduleNext(Duration delay) {
         if (!lifecycleRunning || taskScheduler == null) {
-            return;
+            return false;
         }
         Duration safeDelay = delay == null || delay.isNegative() ? Duration.ZERO : delay;
         scheduledFuture = taskScheduler.schedule(this::runScheduledTick, Instant.now().plus(safeDelay));
+        return scheduledFuture != null;
     }
 
     private boolean isLiveGame(Game game) {

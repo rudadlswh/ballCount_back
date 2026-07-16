@@ -14,6 +14,10 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       schema: ${app.db.schema}
+      max-lifetime: ${DB_POOL_MAX_LIFETIME:600000}
+      keepalive-time: ${DB_POOL_KEEPALIVE_TIME:120000}
+      data-source-properties:
+        tcpKeepAlive: ${DB_TCP_KEEP_ALIVE:true}
   jpa:
     open-in-view: false
     hibernate:
@@ -50,6 +54,7 @@ app:
   live-sync:
     lock-mode: ${KBO_LIVE_SYNC_LOCK_MODE:memory}
     scheduler-interval: ${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}
+    retry-interval: ${KBO_LIVE_SYNC_RETRY_INTERVAL:PT10S}
     idle-interval: ${KBO_LIVE_SYNC_IDLE_INTERVAL:PT30M}
     pregame-check-interval: ${KBO_LIVE_SYNC_PREGAME_CHECK_INTERVAL:PT5M}
     pregame-fast-polling-window: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_WINDOW:PT30M}

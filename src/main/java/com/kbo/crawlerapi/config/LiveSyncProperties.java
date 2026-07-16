@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class LiveSyncProperties {
 
     private Duration schedulerInterval = Duration.ofSeconds(2);
+    private Duration retryInterval = Duration.ofSeconds(10);
     private Duration idleInterval = Duration.ofMinutes(30);
     private Duration pregameEligibilityWindow = Duration.ofHours(4);
     private Duration pregameCheckInterval = Duration.ofMinutes(5);
@@ -74,6 +75,14 @@ public class LiveSyncProperties {
 
     public void setSchedulerInterval(Duration schedulerInterval) {
         this.schedulerInterval = schedulerInterval;
+    }
+
+    public Duration getRetryInterval() {
+        return retryInterval;
+    }
+
+    public void setRetryInterval(Duration retryInterval) {
+        this.retryInterval = retryInterval;
     }
 
     public Duration getPregameEligibilityWindow() {

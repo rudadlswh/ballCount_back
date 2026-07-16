@@ -47,6 +47,38 @@ class RegistrationRateLimitFilterTest {
         assertThat(service.count).isEqualTo(1);
     }
 
+    @Test
+    void changingInstallationIdDoesNotBypassRateLimit() throws Exception {
+        AppSecurityProperties properties = new AppSecurityProperties();
+        properties.setRegistrationRateLimitMaxRequests(1);
+        CountingDeviceRegistrationService service = new CountingDeviceRegistrationService();
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new DeviceRegistrationController(service))
+                .addFilters(new RegistrationRequestSizeLimitFilter(properties), new RegistrationRateLimitFilter(properties))
+                .build();
+
+        mockMvc.perform(post("/devices/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registrationBody("install-1")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/devices/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registrationBody("install-2")))
+                .andExpect(status().isTooManyRequests());
+
+        assertThat(service.count).isEqualTo(1);
+    }
+
+    private String registrationBody(String installationId) {
+        return """
+                {
+                  "platform": "ios",
+                  "environment": "sandbox",
+                  "deviceToken": "token-123",
+                  "installationId": "%s"
+                }
+                """.formatted(installationId);
+    }
+
     private static final class CountingDeviceRegistrationService extends DeviceRegistrationService {
         private int count;
 
