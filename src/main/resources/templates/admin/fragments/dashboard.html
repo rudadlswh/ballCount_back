@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<body>
+<section id="dashboard-content" th:fragment="content"
+         hx-get="/admin/fragments/dashboard" hx-trigger="every 15s" hx-swap="outerHTML">
+    <div class="metric-grid">
+        <article class="metric-card">
+            <div class="metric-card__top"><span>서버</span><span class="badge badge--success" th:text="${dashboard.serverStatus}">정상</span></div>
+            <strong th:text="${dashboard.uptime}">0시간 0분</strong><small>현재 프로세스 가동 시간</small>
+        </article>
+        <article class="metric-card">
+            <div class="metric-card__top"><span>데이터베이스</span><span class="badge"
+                 th:classappend="${dashboard.databaseStatus == '정상'} ? 'badge--success' : 'badge--danger'"
+                 th:text="${dashboard.databaseStatus}">정상</span></div>
+            <strong th:text="${dashboard.databaseLatency}">0 ms</strong><small>상태 확인 응답 시간</small>
+        </article>
+        <article class="metric-card">
+            <div class="metric-card__top"><span>스케줄러</span><span class="badge"
+                 th:classappend="${'badge--' + dashboard.schedulerTone}"
+                 th:text="${dashboard.schedulerStatus}">비활성</span></div>
+            <strong th:text="${dashboard.schedulerInterval}">PT1S</strong><small>LIVE 경기 폴링 간격</small>
+        </article>
+        <article class="metric-card metric-card--accent">
+            <div class="metric-card__top"><span>오류 의심</span><a href="/admin/issues">전체 보기 →</a></div>
+            <strong th:text="${dashboard.issueCount}">0</strong><small>현재 자동 탐지된 운영 이슈</small>
+        </article>
+    </div>
+
+    <div class="content-grid">
+        <section class="panel panel--wide">
+            <div class="panel__header">
+                <div><p class="eyebrow">TODAY'S LIVE GAMES</p><h2>진행 중인 경기</h2></div>
+                <span class="count" th:text="${dashboard.liveGames.size()}">0</span>
+            </div>
+            <div class="empty-state" th:if="${dashboard.liveGames.empty}">
+                <span>◇</span><strong>현재 진행 중인 경기가 없습니다.</strong><small>경기가 시작되면 자동으로 표시됩니다.</small>
+            </div>
+            <div class="game-list" th:unless="${dashboard.liveGames.empty}">
+                <a class="game-row" th:each="game : ${dashboard.liveGames}"
+                   th:href="@{/admin/games/{id}(id=${game.publicGameId})}">
+                    <div><small th:text="${game.publicGameId}">GAME-ID</small><strong th:text="${game.inningState}">진행 중</strong></div>
+                    <div class="scoreline">
+                        <span th:text="${game.awayTeam}">원정</span><b th:text="${game.awayScore == null ? '-' : game.awayScore}">0</b>
+                        <i>:</i>
+                        <b th:text="${game.homeScore == null ? '-' : game.homeScore}">0</b><span th:text="${game.homeTeam}">홈</span>
+                    </div>
+                    <small th:text="${'갱신 ' + game.refreshedAt}">갱신 -</small>
+                </a>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel__header"><div><p class="eyebrow">NOTIFICATIONS</p><h2>오늘 알림</h2></div><a class="panel-link" href="/admin/notifications">내역 보기 →</a></div>
+            <div class="notification-summary">
+                <div><span class="ring ring--success">✓</span><strong th:text="${dashboard.notificationSent}">0</strong><small>성공</small></div>
+                <div><span class="ring ring--danger">!</span><strong th:text="${dashboard.notificationFailed}">0</strong><small>실패</small></div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel__header"><div><p class="eyebrow">LAST CRAWL JOB</p><h2>최근 수집 작업</h2></div></div>
+            <div class="empty-state empty-state--small" th:if="${dashboard.lastJob == null}"><small>기록된 수집 작업이 없습니다.</small></div>
+            <dl class="detail-list" th:if="${dashboard.lastJob != null}">
+                <div><dt>작업</dt><dd th:text="${dashboard.lastJob.jobType}">-</dd></div>
+                <div><dt>상태</dt><dd><span class="badge" th:classappend="${'badge--' + dashboard.lastJob.tone()}" th:text="${dashboard.lastJob.status}">-</span></dd></div>
+                <div><dt>시각</dt><dd th:text="${dashboard.lastJob.occurredAt}">-</dd></div>
+                <div th:if="${dashboard.lastJob.errorMessage != null}"><dt>오류</dt><dd class="text-danger" th:text="${dashboard.lastJob.errorMessage}">-</dd></div>
+            </dl>
+        </section>
+
+        <section class="panel panel--wide">
+            <div class="panel__header"><div><p class="eyebrow">MASKED CONFIGURATION</p><h2>보안 설정</h2></div><span class="badge badge--muted">마스킹됨</span></div>
+            <dl class="security-grid">
+                <div><dt>관리자 아이디</dt><dd th:text="${dashboard.adminUsername}">a****</dd></div>
+                <div><dt>관리자 비밀번호</dt><dd th:text="${dashboard.adminPassword}">••••••••</dd></div>
+                <div><dt>DB 사용자</dt><dd th:text="${dashboard.databaseUsername}">p*******</dd></div>
+            </dl>
+        </section>
+    </div>
+</section>
+</body>
+</html>

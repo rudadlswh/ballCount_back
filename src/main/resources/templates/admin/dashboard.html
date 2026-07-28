@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>대시보드 · KBO 운영실</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+    <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
+    <main class="main">
+        <header class="page-header">
+            <div><p class="eyebrow">LIVE OPERATIONS</p><h1>대시보드</h1></div>
+            <div class="live-pill"><span></span>15초 자동 갱신</div>
+        </header>
+        <section th:replace="~{admin/fragments/dashboard :: content}"></section>
+    </main>
+</div>
+</body>
+</html>
