@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 
 import com.kbo.crawlerapi.api.AdminRankController;
 import com.kbo.crawlerapi.api.InternalDetailRefreshOrchestrationController;
@@ -14,6 +15,8 @@ import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class AdminApiKeyFilterTest {
@@ -93,6 +96,46 @@ class AdminApiKeyFilterTest {
                         .header(AdminApiKeyFilter.ADMIN_KEY_HEADER, ADMIN_API_KEY)
                         .param("season", "2026"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void browserAdminPageRedirectsToLoginWithoutSession() throws Exception {
+        mockMvc.perform(get("/admin/dashboard").accept(MediaType.TEXT_HTML))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin/login"));
+    }
+
+    @Test
+    void browserSessionDoesNotBypassApiKeyForMutatingAdminApi() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+
+        mockMvc.perform(post("/admin/ranks/refresh")
+                        .session(session)
+                        .param("season", "2026"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void authenticatedBrowserSessionPassesReadOnlyUiFilter() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+
+        mockMvc.perform(get("/admin/dashboard")
+                        .session(session)
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void authenticatedBrowserSessionPassesNotificationHistoryFilter() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+
+        mockMvc.perform(get("/admin/notifications")
+                        .session(session)
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().isNotFound());
     }
 
     @Test

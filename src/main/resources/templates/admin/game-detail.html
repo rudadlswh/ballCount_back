@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title th:text="${detail.game.publicGameId + ' · KBO 운영실'}">경기 상세 · KBO 운영실</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
+    <main class="main">
+        <a class="back-link" href="/admin/dashboard">← 대시보드</a>
+        <header class="page-header game-heading">
+            <div><p class="eyebrow" th:text="${detail.game.publicGameId}">GAME ID</p><h1 th:text="${detail.game.awayTeam + ' vs ' + detail.game.homeTeam}">경기 상세</h1></div>
+            <span class="badge badge--success" th:text="${detail.game.status}">live</span>
+        </header>
+
+        <section class="score-hero">
+            <div><small>AWAY</small><strong th:text="${detail.game.awayTeam}">원정</strong></div>
+            <b th:text="${detail.game.awayScore == null ? '-' : detail.game.awayScore}">0</b>
+            <span><em th:text="${detail.game.inningState == null ? '-' : detail.game.inningState}">-</em><i>:</i></span>
+            <b th:text="${detail.game.homeScore == null ? '-' : detail.game.homeScore}">0</b>
+            <div><small>HOME</small><strong th:text="${detail.game.homeTeam}">홈</strong></div>
+        </section>
+
+        <dl class="metadata-strip">
+            <div><dt>경기 일자</dt><dd th:text="${detail.game.gameDate}">-</dd></div>
+            <div><dt>예정 시각</dt><dd th:text="${detail.game.scheduledAt}">-</dd></div>
+            <div><dt>구장</dt><dd th:text="${detail.game.stadium == null ? '-' : detail.game.stadium}">-</dd></div>
+            <div><dt>원본 갱신</dt><dd th:text="${detail.game.sourceUpdatedAt}">-</dd></div>
+            <div><dt>최근 확인</dt><dd th:text="${detail.game.lastCheckedAt}">-</dd></div>
+            <div><dt>DB 갱신</dt><dd th:text="${detail.game.updatedAt}">-</dd></div>
+        </dl>
+
+        <section class="panel" th:unless="${detail.issues.empty}">
+            <div class="panel__header"><div><p class="eyebrow">AUTOMATIC DETECTION</p><h2>이 경기의 오류 의심 건</h2></div><span class="count count--danger" th:text="${detail.issues.size()}">0</span></div>
+            <div class="issue-list">
+                <article class="issue" th:each="issue : ${detail.issues}">
+                    <span class="badge" th:classappend="${'badge--' + issue.tone}" th:text="${issue.type}">오류</span>
+                    <div><strong th:text="${issue.title}">제목</strong><p th:text="${issue.detail}">내용</p></div>
+                    <time th:text="${issue.detectedAt}">-</time>
+                </article>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel__header"><div><p class="eyebrow">LATEST FIRST · 50</p><h2>경기 스냅샷</h2></div><span class="count" th:text="${detail.snapshots.size()}">0</span></div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>이닝</th><th>스코어</th><th>B/S/O</th><th>1루</th><th>2루</th><th>3루</th><th>투수 / 타자</th><th>원본 갱신</th><th>수집 시각</th></tr></thead>
+                    <tbody>
+                    <tr th:each="snapshot : ${detail.snapshots}">
+                        <td><strong th:text="${snapshot.inningLabel}">-</strong></td>
+                        <td th:text="${(snapshot.awayScore == null ? '-' : snapshot.awayScore) + ' : ' + (snapshot.homeScore == null ? '-' : snapshot.homeScore)}">-</td>
+                        <td th:text="${(snapshot.balls == null ? '-' : snapshot.balls) + '/' + (snapshot.strikes == null ? '-' : snapshot.strikes) + '/' + (snapshot.outs == null ? '-' : snapshot.outs)}">-</td>
+                        <td th:text="${snapshot.firstBaseRunner}">-</td><td th:text="${snapshot.secondBaseRunner}">-</td><td th:text="${snapshot.thirdBaseRunner}">-</td>
+                        <td><span th:text="${snapshot.pitcher == null ? '-' : snapshot.pitcher}">-</span> / <span th:text="${snapshot.batter == null ? '-' : snapshot.batter}">-</span></td>
+                        <td th:text="${snapshot.sourceUpdatedAt}">-</td><td th:text="${snapshot.fetchedAt}">-</td>
+                    </tr>
+                    <tr th:if="${detail.snapshots.empty}"><td colspan="9" class="table-empty">저장된 스냅샷이 없습니다.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <div class="content-grid">
+            <section class="panel panel--wide">
+                <div class="panel__header"><div><p class="eyebrow">LATEST FIRST · 100</p><h2>알림 이벤트</h2></div><span class="count" th:text="${detail.notifications.size()}">0</span></div>
+                <div class="event-list">
+                    <article class="event" th:each="event : ${detail.notifications}">
+                        <div class="event__meta"><span class="badge" th:classappend="${'badge--' + event.tone()}" th:text="${event.status}">pending</span><span th:text="${event.eventType}">TYPE</span><time th:text="${event.createdAt}">-</time></div>
+                        <strong th:text="${event.title}">알림 제목</strong><p th:text="${event.body}">알림 내용</p>
+                        <div class="failure-reason" th:if="${event.errorMessage != null}"><b>실패/건너뜀 사유</b><span th:text="${event.errorMessage}">-</span></div>
+                    </article>
+                    <div class="empty-state empty-state--small" th:if="${detail.notifications.empty}"><small>생성된 알림 이벤트가 없습니다.</small></div>
+                </div>
+            </section>
+            <section class="panel">
+                <div class="panel__header"><div><p class="eyebrow">CRAWL HISTORY</p><h2>수집 이력</h2></div></div>
+                <div class="timeline">
+                    <article th:each="job : ${detail.crawlHistory}"><span></span><div><strong th:text="${job.jobType + ' · ' + job.status}">작업</strong><small th:text="${job.finishedAt}">-</small><p th:if="${job.errorMessage != null}" th:text="${job.errorMessage}">-</p></div></article>
+                    <div class="empty-state empty-state--small" th:if="${detail.crawlHistory.empty}"><small>연결된 수집 이력이 없습니다.</small></div>
+                </div>
+            </section>
+        </div>
+    </main>
+</div>
+</body>
+</html>

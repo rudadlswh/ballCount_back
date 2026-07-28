@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<body>
+<section id="notification-results" th:fragment="content">
+    <div class="notification-metrics">
+        <div><small>전체</small><strong th:text="${notificationResult.total}">0</strong></div>
+        <div class="notification-metrics__success"><small>성공</small><strong th:text="${notificationResult.sent}">0</strong></div>
+        <div class="notification-metrics__danger"><small>실패</small><strong th:text="${notificationResult.failed}">0</strong></div>
+        <div class="notification-metrics__warning"><small>대기</small><strong th:text="${notificationResult.pending}">0</strong></div>
+    </div>
+    <div class="result-meta">
+        <span th:text="${notificationResult.items.size() + '건 표시'}">0건 표시</span>
+        <small th:if="${notificationResult.total > notificationResult.items.size()}" th:text="${'전체 ' + notificationResult.total + '건 중 최신 500건'}">최신 500건</small>
+        <small th:unless="${notificationResult.total > notificationResult.items.size()}">처리 시각 기준 최신순</small>
+    </div>
+    <div class="table-wrap notification-table-wrap">
+        <table class="notification-table">
+            <thead><tr><th>처리 시각</th><th>결과</th><th>팀 / 경기</th><th>유형</th><th>알림 내용</th><th>실패 사유</th></tr></thead>
+            <tbody>
+            <tr th:each="event : ${notificationResult.items}">
+                <td class="nowrap"><strong th:text="${event.occurredAt}">-</strong><small th:text="${'생성 ' + event.createdAt}">-</small></td>
+                <td><span class="badge" th:classappend="${'badge--' + event.tone()}" th:text="${event.statusLabel()}">성공</span></td>
+                <td class="notification-game">
+                    <span th:text="${event.awayTeam + ' vs ' + event.homeTeam}">원정 vs 홈</span>
+                    <a class="mono" th:href="@{/admin/games/{id}(id=${event.publicGameId})}" th:text="${event.publicGameId}">GAME-ID</a>
+                    <small th:text="${event.gameDate}">-</small>
+                </td>
+                <td><span class="badge badge--muted" th:text="${event.eventType}">TYPE</span></td>
+                <td class="notification-copy"><strong th:text="${event.title}">제목</strong><span th:text="${event.body}">내용</span></td>
+                <td class="notification-error" th:classappend="${event.errorMessage != null} ? 'text-danger'" th:text="${event.errorMessage == null ? '-' : event.errorMessage}">-</td>
+            </tr>
+            <tr th:if="${notificationResult.items.empty}"><td colspan="6" class="table-empty">조건에 맞는 알림 발송 내역이 없습니다.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+</body>
+</html>
