@@ -20,6 +20,14 @@ public class RegistrationRequestSizeLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+        // Form parameters are parsed by the servlet container from the original request body.
+        // Wrapping the already-read body below prevents that parsing, so keep the login form
+        // on the original request. Tomcat's own form-post limit still applies to this endpoint.
+        if (isAdminLogin(request)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         long maxBytes = properties.getRegistrationRequestMaxBytes();
         if (maxBytes <= 0) {
             filterChain.doFilter(request, response);
@@ -36,6 +44,15 @@ public class RegistrationRequestSizeLimitFilter extends OncePerRequestFilter {
             return;
         }
         filterChain.doFilter(new CachedBodyHttpServletRequest(request, body), response);
+    }
+
+    private boolean isAdminLogin(HttpServletRequest request) {
+        String contextPath = request.getContextPath();
+        String path = request.getRequestURI();
+        if (contextPath != null && !contextPath.isBlank() && path.startsWith(contextPath)) {
+            path = path.substring(contextPath.length());
+        }
+        return "/admin/login".equals(path);
     }
 
     private byte[] readBodyWithinLimit(HttpServletRequest request, long maxBytes) throws IOException {

@@ -1,8 +1,12 @@
 package com.kbo.crawlerapi.config;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.kbo.crawlerapi.admin.AdminAuthenticationController;
+import com.kbo.crawlerapi.admin.AdminAuthenticationService;
+import com.kbo.crawlerapi.admin.AdminUiProperties;
 import com.kbo.crawlerapi.api.DeviceRegistrationController;
 import com.kbo.crawlerapi.api.AdminRankController;
 import com.kbo.crawlerapi.service.DeviceRegistrationService;
@@ -73,6 +77,24 @@ class RegistrationRequestSizeLimitFilterTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"padding\":\"" + "a".repeat((32 * 1024) + 1) + "\"}"))
                 .andExpect(status().isPayloadTooLarge());
+    }
+
+    @Test
+    void adminLoginPreservesFormParameters() throws Exception {
+        AdminUiProperties adminProperties = new AdminUiProperties();
+        adminProperties.setUsername("admin");
+        adminProperties.setPassword("admin");
+        MockMvc adminMockMvc = MockMvcBuilders.standaloneSetup(
+                        new AdminAuthenticationController(new AdminAuthenticationService(adminProperties))
+                )
+                .addFilters(new RegistrationRequestSizeLimitFilter(properties()))
+                .build();
+
+        adminMockMvc.perform(post("/admin/login")
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .content("username=admin&password=admin"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin/dashboard"));
     }
 
     @Test

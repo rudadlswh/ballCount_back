@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow"><title>알림 발송 내역 · KBO 운영실</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+    <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
+    <main class="main">
+        <header class="page-header">
+            <div><p class="eyebrow">NOTIFICATION DELIVERY HISTORY</p><h1>알림 발송 내역</h1><p>경기별 알림 생성·발송 결과와 실패 사유를 확인합니다.</p></div>
+            <span class="badge badge--muted">읽기 전용</span>
+        </header>
+        <section class="panel">
+            <form class="filter-bar notification-filter" method="get" action="/admin/notifications"
+                  hx-get="/admin/fragments/notifications" hx-target="#notification-results"
+                  hx-swap="outerHTML" hx-indicator="#notification-loading">
+                <label><span>시작일</span><input type="date" name="from" th:value="${from}"></label>
+                <label><span>종료일</span><input type="date" name="to" th:value="${to}"></label>
+                <label><span>팀</span><select name="team">
+                    <option value="">전체 팀</option>
+                    <option th:each="option : ${notificationTeams}" th:value="${option.code}"
+                            th:text="${option.name}" th:selected="${team == option.code}">팀</option>
+                </select></label>
+                <label><span>발송 결과</span><select name="status">
+                    <option value="" th:selected="${status == ''}">전체</option>
+                    <option value="sent" th:selected="${status == 'sent'}">성공</option>
+                    <option value="failed" th:selected="${status == 'failed'}">실패</option>
+                    <option value="pending" th:selected="${status == 'pending'}">대기</option>
+                </select></label>
+                <label><span>경기 ID</span><input name="gameId" placeholder="20260728-..." th:value="${gameId}"></label>
+                <label><span>알림 유형</span><input name="eventType" placeholder="SCORE_CHANGE" th:value="${eventType}"></label>
+                <button class="button button--primary" type="submit">검색</button>
+                <span id="notification-loading" class="htmx-indicator">검색 중…</span>
+            </form>
+            <section th:replace="~{admin/fragments/notification-table :: content}"></section>
+        </section>
+    </main>
+</div>
+</body>
+</html>
