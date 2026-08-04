@@ -20,7 +20,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import com.kbo.crawlerapi.api.dto.GameBatterRecordDto;
 import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
+import com.kbo.crawlerapi.api.dto.GameDetailDataResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
+import com.kbo.crawlerapi.api.dto.GameLineupResponse;
+import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
 import com.kbo.crawlerapi.api.dto.GamePitcherRecordDto;
 import com.kbo.crawlerapi.api.dto.GameTotalsDto;
 import com.kbo.crawlerapi.api.dto.GameStateDto;
@@ -103,6 +106,20 @@ class GameReadControllerWebMvcTest {
     }
 
     @Test
+    void getGameDetailDataReturnsConsolidatedCorrectedPayload() throws Exception {
+        mockMvc.perform(get("/api/v1/games/20260409-LG-SSG/detail"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.id").value("20260409-LG-SSG"))
+                .andExpect(jsonPath("$.liveState.rawHash").value("live-hash"))
+                .andExpect(jsonPath("$.lineScore.innings.length()").value(2))
+                .andExpect(jsonPath("$.boxscore.awayBatters[0].playerName").value("안상현"))
+                .andExpect(jsonPath("$.lineup.away.length()").value(0))
+                .andExpect(jsonPath("$.appliedFallbacks[0]").value("winningPitcher:boxscore"))
+                .andExpect(jsonPath("$.unavailableSections[0]").value("lineup"))
+                .andExpect(jsonPath("$.isStale").value(false));
+    }
+
+    @Test
     void getGameLineScoreReturnsNormalizedPayload() throws Exception {
         mockMvc.perform(get("/api/v1/games/20260401-LG-KIA/linescore"))
                 .andExpect(status().isOk())
@@ -149,7 +166,7 @@ class GameReadControllerWebMvcTest {
     private static final class StubGameReadService extends GameReadService {
 
         private StubGameReadService() {
-            super(null, null, null, null, null);
+            super(null, null, null, null, null, new com.fasterxml.jackson.databind.ObjectMapper());
         }
 
         @Override
@@ -169,6 +186,8 @@ class GameReadControllerWebMvcTest {
                             null,
                             new TeamSummaryDto("ssg", "SSG Landers", "SSG", "https://example.com/logos/ssg.png"),
                             new TeamSummaryDto("lg", "LG Twins", "LG", "https://example.com/logos/lg.png"),
+                            null,
+                            null,
                             null,
                             null,
                             OffsetDateTime.of(2026, 4, 9, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
@@ -223,6 +242,8 @@ class GameReadControllerWebMvcTest {
                     new TeamSummaryDto("lg", "LG Twins", "LG", "https://example.com/logos/lg.png"),
                     3,
                     4,
+                    null,
+                    null,
                     new GameStateDto(
                             8,
                             "top",
@@ -237,6 +258,34 @@ class GameReadControllerWebMvcTest {
                     null,
                     OffsetDateTime.of(2026, 4, 9, 20, 12, 0, 0, ZoneOffset.ofHours(9)),
                     null,
+                    false
+            );
+        }
+
+        @Override
+        public GameDetailDataResponse getGameDetailData(String gameId) {
+            OffsetDateTime updatedAt = OffsetDateTime.of(2026, 4, 9, 20, 12, 0, 0, ZoneOffset.ofHours(9));
+            return new GameDetailDataResponse(
+                    getGameDetail(gameId),
+                    new GameLiveStateResponse(
+                            gameId, "live", 8, "top", 3, 4, 2, 1, 1,
+                            new GameLiveStateResponse.BasesDto(true, false, true),
+                            new GameLiveStateResponse.BaseRunnersDto("주자1", null, "주자3"),
+                            "투수", "타자", "live-hash", updatedAt
+                    ),
+                    getGameLineScore(gameId),
+                    getGameBoxscore(gameId),
+                    new GameLineupResponse(
+                            gameId,
+                            com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode(),
+                            com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode(),
+                            null,
+                            updatedAt,
+                            false
+                    ),
+                    List.of("winningPitcher:boxscore"),
+                    List.of("lineup"),
+                    updatedAt,
                     false
             );
         }

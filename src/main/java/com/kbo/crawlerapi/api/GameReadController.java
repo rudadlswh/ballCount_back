@@ -10,7 +10,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
+import com.kbo.crawlerapi.api.dto.GameDetailDataResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
+import com.kbo.crawlerapi.api.dto.GameLineupResponse;
 import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
 import com.kbo.crawlerapi.api.dto.GamesByDateResponse;
 import com.kbo.crawlerapi.api.dto.GamesByMonthResponse;
@@ -89,6 +91,33 @@ public class GameReadController {
         return gameReadService.getGameDetail(gameId);
     }
 
+    @GetMapping("/games/{gameId}/detail")
+    @Operation(
+            summary = "Get consolidated game detail data",
+            description = "Returns one corrected snapshot containing the game summary, live state, line score, "
+                    + "boxscore, and lineup. Missing optional sections remain successful empty sections, and "
+                    + "appliedFallbacks describes server-side corrections. Existing section endpoints remain available."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Consolidated corrected game detail data",
+                    content = @Content(schema = @Schema(implementation = GameDetailDataResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Game not found",
+                    content = @Content(schema = @Schema(implementation = ApiErrorResponse.class))
+            )
+    })
+    public GameDetailDataResponse getGameDetailData(
+            @Parameter(description = "Public game identifier exposed by the app-facing API.", example = "20260401-LG-KIA")
+            @PathVariable String gameId
+    ) {
+        validateGameId(gameId);
+        return gameReadService.getGameDetailData(gameId);
+    }
+
     @GetMapping({"/games/{publicGameId}/live-state", "/games/{publicGameId}/realtime"})
     @Operation(
             summary = "Get one game live state",
@@ -165,6 +194,12 @@ public class GameReadController {
     ) {
         validateGameId(gameId);
         return gameReadService.getGameBoxscore(gameId);
+    }
+
+    @GetMapping("/games/{gameId}/lineup")
+    public GameLineupResponse getGameLineup(@PathVariable String gameId) {
+        validateGameId(gameId);
+        return gameReadService.getGameLineup(gameId);
     }
 
     @GetMapping("/games/month")
