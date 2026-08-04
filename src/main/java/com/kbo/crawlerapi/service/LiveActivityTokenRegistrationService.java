@@ -39,7 +39,7 @@ public class LiveActivityTokenRegistrationService {
     public LiveActivityTokenRegistrationResult register(LiveActivityTokenRegistrationCommand command) {
         String activityId = RegistrationInputNormalizer.requireText(command.activityId(), "activityId", MAX_ACTIVITY_ID_LENGTH);
         String activityToken = RegistrationInputNormalizer.requireText(command.activityToken(), "activityToken", MAX_TOKEN_LENGTH);
-        String platform = RegistrationInputNormalizer.normalizePlatform(command.platform());
+        String platform = RegistrationInputNormalizer.normalizeIosPlatform(command.platform());
         String environment = RegistrationInputNormalizer.normalizeClientEnvironment(command.environment());
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
         String installationId = RegistrationInputNormalizer.requireText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);

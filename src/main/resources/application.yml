@@ -86,6 +86,13 @@ app:
 #    private-key: ${APNS_PRIVATE_KEY:}
     env: ${APNS_ENV:sandbox}
     test-enabled: ${KBO_APNS_TEST_ENABLED:false}
+  fcm:
+    push-enabled: ${KBO_FCM_PUSH_ENABLED:false}
+    project-id: ${FIREBASE_PROJECT_ID:}
+    environment: ${FCM_ENV:${APNS_ENV:sandbox}}
+    credentials-path: ${GOOGLE_APPLICATION_CREDENTIALS:}
+#    credentials-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+    endpoint: ${FCM_ENDPOINT:https://fcm.googleapis.com}
 
 kbo:
   admin:

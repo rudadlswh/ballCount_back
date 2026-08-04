@@ -8,6 +8,16 @@ import org.junit.jupiter.api.Test;
 class RegistrationInputNormalizerTest {
 
     @Test
+    void supportsMobilePlatformsButKeepsLiveActivityIosOnly() {
+        assertThat(RegistrationInputNormalizer.normalizePlatform(" IOS ")).isEqualTo("ios");
+        assertThat(RegistrationInputNormalizer.normalizePlatform("Android")).isEqualTo("android");
+        assertThatThrownBy(() -> RegistrationInputNormalizer.normalizePlatform("web"))
+                .hasMessage("platform must be ios or android");
+        assertThatThrownBy(() -> RegistrationInputNormalizer.normalizeIosPlatform("android"))
+                .hasMessage("platform must be ios");
+    }
+
+    @Test
     void clientEnvironmentOnlyAcceptsSandboxAndProduction() {
         assertThat(RegistrationInputNormalizer.normalizeClientEnvironment(null)).isEqualTo("sandbox");
         assertThat(RegistrationInputNormalizer.normalizeClientEnvironment(" production ")).isEqualTo("production");

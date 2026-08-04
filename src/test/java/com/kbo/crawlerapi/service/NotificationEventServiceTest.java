@@ -832,6 +832,30 @@ class NotificationEventServiceTest {
         return service(pushService, null);
     }
 
+    @Test
+    void rainDelaySettingControlsCancellationEventsIndependentlyFromGameEnd() {
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+        NotificationDevice device = deviceWithDeliveryWindow(false, false, 23, 7);
+
+        String reason = service.targetedDeviceSkipReason(
+                device,
+                draft(NotificationEventService.EVENT_GAME_CANCELLED, null),
+                fixtureGame()
+        );
+
+        assertThat(reason).isEqualTo(ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED);
+    }
+
+    @Test
+    void quietHoursBlockDeliveryUsingKoreaTime() {
+        NotificationEventService service = service(new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult()));
+        NotificationDevice device = deviceWithDeliveryWindow(true, true, 18, 19);
+
+        String reason = service.targetedDeviceSkipReason(device, draft(), fixtureGame());
+
+        assertThat(reason).isEqualTo(ApnsPushService.DEVICE_NOTIFICATION_QUIET_HOURS);
+    }
+
     private NotificationEventService service(RecordingApnsPushService pushService, LiveActivityUpdateService liveActivityUpdateService) {
         return new NotificationEventService(
                 notificationEventRepository,
@@ -904,6 +928,20 @@ class NotificationEventServiceTest {
                 inningChangeEnabled,
                 favoriteTeamOnlyEnabled,
                 muteWhenLosingEnabled,
+                OffsetDateTime.now(CLOCK)
+        );
+    }
+
+    private NotificationDevice deviceWithDeliveryWindow(
+            boolean rainDelayEnabled,
+            boolean quietHoursEnabled,
+            int quietHoursStartHour,
+            int quietHoursEndHour
+    ) {
+        return new NotificationDevice(
+                UUID.randomUUID(), "ios", "sandbox", "token-window", UUID.randomUUID().toString(), "kia", true,
+                true, true, true, true, false, false, false, false,
+                rainDelayEnabled, quietHoursEnabled, quietHoursStartHour, quietHoursEndHour, "authorized",
                 OffsetDateTime.now(CLOCK)
         );
     }

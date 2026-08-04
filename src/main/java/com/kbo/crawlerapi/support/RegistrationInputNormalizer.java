@@ -12,6 +12,14 @@ public final class RegistrationInputNormalizer {
             return "ios";
         }
         String normalized = platform.trim().toLowerCase(Locale.ROOT);
+        if (!"ios".equals(normalized) && !"android".equals(normalized)) {
+            throw new IllegalArgumentException("platform must be ios or android");
+        }
+        return normalized;
+    }
+
+    public static String normalizeIosPlatform(String platform) {
+        String normalized = normalizePlatform(platform);
         if (!"ios".equals(normalized)) {
             throw new IllegalArgumentException("platform must be ios");
         }
