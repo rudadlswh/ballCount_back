@@ -73,7 +73,6 @@ app:
     pregame-fast-polling-interval: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_INTERVAL:PT1M}
     live-polling-interval: ${KBO_LIVE_SYNC_LIVE_POLLING_INTERVAL:${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}}
     final-confirmation-polling-interval: ${KBO_LIVE_SYNC_FINAL_CONFIRMATION_POLLING_INTERVAL:PT30S}
-    detail-extraction-timeout: PT0.1S
     pregame-ttl: PT3M
     live-ttl: PT3S
     final-confirmation-ttl: PT30S

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -1627,9 +1628,7 @@ class LiveGameSyncServiceTest {
     }
 
     @Test
-    void onBaseDetailTimeoutSendsSnapshotDiffFallback() {
-        LiveSyncProperties properties = new LiveSyncProperties();
-        properties.setDetailExtractionTimeout(Duration.ofMillis(25));
+    void onBaseDetailWaitsForSynchronousOfficialTextLookup() {
         NotificationEventDraft draft = onBaseDraftForLotteLg(
                 "전준우",
                 null,
@@ -1639,11 +1638,11 @@ class LiveGameSyncServiceTest {
                         List.of(new GameEventRow(30, 4, "top", "HIT", "전준우 : 좌익수 왼쪽 2루타")),
                         200
                 ),
-                properties
+                new LiveSyncProperties()
         );
 
-        assertThat(draft.body()).isEqualTo("4회초 전준우 2루 도달 · 롯데 2-5 LG");
-        assertThat(draft.payload()).containsEntry("onBaseDetailSource", "snapshotDiff");
+        assertThat(draft.body()).isEqualTo("4회초 전준우 2루타 · 롯데 2-5 LG");
+        assertThat(draft.payload()).containsEntry("onBaseDetailSource", "officialText");
     }
 
     @Test
@@ -2128,6 +2127,32 @@ class LiveGameSyncServiceTest {
         assertThat(diagnosis.candidateEventCount()).isEqualTo(2);
         assertThat(diagnosis.storedEventCount()).isEqualTo(2);
         assertThat(diagnosis.suspectedMissingEventCount()).isZero();
+    }
+
+    @Test
+    void snapshotRecoveryDoesNotQuerySameSnapshotRangeTwice() {
+        Game game = fixtureGame(GameStatus.LIVE, 0, 0);
+        GameSnapshot snapshot = snapshot(game, "김타자", "박투수", 0, false, false, false);
+
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(game.getGameDate())))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(Optional.of(snapshot));
+        when(gameSnapshotRepository.findRecentReplaySnapshotsByGameId(eq(game.getId()), any()))
+                .thenReturn(List.of(snapshot));
+
+        LiveGameSyncService service = service(
+                ACTIVE_KST_CLOCK,
+                new StubGameDetailImportService(),
+                new StubNotificationEventService()
+        );
+
+        service.sync(game.getGameDate(), true);
+        service.sync(game.getGameDate(), true);
+
+        verify(gameSnapshotRepository, times(1))
+                .findRecentReplaySnapshotsByGameId(eq(game.getId()), any());
     }
 
     private LiveGameSyncService service(
