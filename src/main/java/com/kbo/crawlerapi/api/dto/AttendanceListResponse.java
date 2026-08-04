@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 public record AttendanceListResponse(
-        List<UUID> gameIds
+        List<UUID> gameIds,
+        List<AttendanceGameDto> records
 ) {
 }
