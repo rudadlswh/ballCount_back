@@ -18,6 +18,23 @@ versioned migration and must target `${appSchema}` (or the active default schema
 the production schema. V35 repairs notification-device columns for databases where earlier qualified
 migrations were recorded in the development history but executed against a different schema.
 
+## Admin console
+
+The server provides a Thymeleaf + HTMX operations console at `http://localhost:8088/admin`.
+Set the following values outside Git before using it:
+
+- `ADMIN_USERNAME` (defaults to `admin`)
+- `ADMIN_PASSWORD` (required; there is no default password)
+- `ADMIN_SESSION_TIMEOUT` (defaults to `30m`)
+- `ADMIN_SESSION_COOKIE_SECURE` (`true` behind production HTTPS, `false` for local HTTP)
+- `ADMIN_STALE_GAME_THRESHOLD` (defaults to `2m`)
+- `ADMIN_LOG_CAPACITY` (defaults to `2000`, minimum effective capacity `100`)
+
+The console masks configured usernames/passwords and never renders database URLs or secret values.
+Browser sessions are accepted only by the read-only console routes. Existing mutating `/admin/crawl`,
+`/admin/ranks`, and `/admin/test` APIs continue to require `X-Admin-Key` or `X-Admin-Api-Key`.
+Application logs are retained in memory from process startup and the log screen returns at most 500 rows per search.
+
 The application loads `.env` automatically through Spring Boot config import when you run from the repository root.
 Local, development, and test profiles use the dedicated `kbo_crawler_api_dev` schema. Production uses `kbo_crawler_api`.
 Startup fails when a non-production profile is configured with the production schema, or when local/development/test is configured with anything other than `kbo_crawler_api_dev`.

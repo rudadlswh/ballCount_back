@@ -23,12 +23,14 @@ dependencyManagement {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-api:2.8.15'
     implementation 'org.jsoup:jsoup:1.18.3'
     implementation 'org.webjars:swagger-ui:5.31.0'
+    implementation 'org.webjars.npm:htmx.org:2.0.4'
 
     runtimeOnly 'org.postgresql:postgresql'
 

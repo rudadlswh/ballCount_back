@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow"><title>로그 · KBO 운영실</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+    <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
+    <main class="main">
+        <header class="page-header"><div><p class="eyebrow">IN-MEMORY APPLICATION LOG</p><h1>로그</h1><p>서버 시작 이후 로그를 최대 설정 용량까지 보관합니다.</p></div><span class="badge badge--muted" th:text="${'버퍼 ' + logBufferSize + '건'}">버퍼 0건</span></header>
+        <section class="panel">
+            <form class="filter-bar" hx-get="/admin/fragments/logs" hx-target="#log-results" hx-swap="outerHTML" hx-indicator="#log-loading">
+                <label><span>시작 시간</span><input type="datetime-local" name="from" th:value="${from}"></label>
+                <label><span>종료 시간</span><input type="datetime-local" name="to" th:value="${to}"></label>
+                <label><span>레벨</span><select name="level"><option value="">전체</option><option th:selected="${level == 'ERROR'}">ERROR</option><option th:selected="${level == 'WARN'}">WARN</option><option th:selected="${level == 'INFO'}">INFO</option><option th:selected="${level == 'DEBUG'}">DEBUG</option></select></label>
+                <label><span>경기 ID</span><input name="gameId" placeholder="20260725-..." th:value="${gameId}"></label>
+                <label><span>기능</span><input name="feature" placeholder="LiveGameSync" th:value="${feature}"></label>
+                <button class="button button--primary" type="submit">검색</button><span id="log-loading" class="htmx-indicator">검색 중…</span>
+            </form>
+            <section th:replace="~{admin/fragments/log-table :: content}"></section>
+        </section>
+    </main>
+</div>
+</body>
+</html>

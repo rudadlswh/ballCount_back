@@ -39,8 +39,20 @@ spring:
 server:
   shutdown: graceful
   port: ${SERVER_PORT:8088}
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${ADMIN_SESSION_COOKIE_SECURE:false}
 
 app:
+  admin-ui:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:}
+    session-timeout: ${ADMIN_SESSION_TIMEOUT:30m}
+    stale-game-threshold: ${ADMIN_STALE_GAME_THRESHOLD:2m}
+    log-capacity: ${ADMIN_LOG_CAPACITY:2000}
   db:
     schema: ${APP_DB_SCHEMA:kbo_crawler_api_dev}
   security:

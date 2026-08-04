@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<body>
+<section id="log-results" th:fragment="content">
+    <div class="result-meta"><span th:text="${logs.size() + '건 표시'}">0건 표시</span><small>최대 500건</small></div>
+    <div class="table-wrap log-table-wrap">
+        <table class="log-table"><thead><tr><th>시간</th><th>레벨</th><th>경기 ID</th><th>기능</th><th>메시지</th></tr></thead>
+            <tbody>
+            <tr th:each="entry : ${logs}"><td class="nowrap" th:text="${entry.timestamp}">-</td><td><span class="badge" th:classappend="${'badge--' + entry.levelClass()}" th:text="${entry.level}">INFO</span></td><td class="mono" th:text="${entry.gameId}">-</td><td th:text="${entry.feature}">-</td><td class="log-message"><span th:text="${entry.message}">-</span><small th:if="${entry.hasThrowable()}" th:text="${entry.throwable}">-</small></td></tr>
+            <tr th:if="${logs.empty}"><td colspan="5" class="table-empty">조건에 맞는 로그가 없습니다.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+</body>
+</html>
