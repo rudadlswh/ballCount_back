@@ -1,16 +1,17 @@
-package com.kbo.crawlerapi.service;
+package com.kbo.crawlerapi.api.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-public record TeamRankRow(
+public record TeamStandingDto(
         int season,
-        UUID teamId,
+        UUID teamDatabaseId,
+        String teamId,
+        String teamName,
         int rank,
         Integer previousRank,
-        String teamName,
         int gamesPlayed,
         int wins,
         int losses,

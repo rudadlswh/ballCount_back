@@ -71,8 +71,35 @@ public class TeamRankService {
     }
 
     List<TeamRankRow> calculateRows(int season, List<Game> completedGames) {
+        List<Team> teams = teamRepository.findAll();
+        List<TeamRankRow> currentRows = calculateRowsForGames(season, completedGames, teams);
+        LocalDate latestCompletedDay = completedGames.stream()
+                .filter(this::hasUsableFinalScore)
+                .map(Game::getGameDate)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+        if (latestCompletedDay == null) {
+            return currentRows;
+        }
+
+        List<Game> gamesBeforeLatestDay = completedGames.stream()
+                .filter(this::hasUsableFinalScore)
+                .filter(game -> game.getGameDate().isBefore(latestCompletedDay))
+                .toList();
+        if (gamesBeforeLatestDay.isEmpty()) {
+            return currentRows;
+        }
+
+        Map<UUID, Integer> previousRanks = calculateRowsForGames(season, gamesBeforeLatestDay, teams).stream()
+                .collect(java.util.stream.Collectors.toMap(TeamRankRow::teamId, TeamRankRow::rank));
+        return currentRows.stream()
+                .map(row -> withPreviousRank(row, previousRanks.get(row.teamId())))
+                .toList();
+    }
+
+    private List<TeamRankRow> calculateRowsForGames(int season, List<Game> completedGames, List<Team> teams) {
         Map<UUID, TeamAccumulator> accumulators = new HashMap<>();
-        for (Team team : teamRepository.findAll()) {
+        for (Team team : teams) {
             accumulators.put(team.getId(), new TeamAccumulator(team));
         }
 
@@ -164,6 +191,7 @@ public class TeamRankService {
                 season,
                 accumulator.team.getId(),
                 rank,
+                null,
                 accumulator.team.getName(),
                 accumulator.gamesPlayed(),
                 accumulator.wins,
@@ -177,6 +205,15 @@ public class TeamRankService {
                 accumulator.lastGameDate,
                 now,
                 now
+        );
+    }
+
+    private TeamRankRow withPreviousRank(TeamRankRow row, Integer previousRank) {
+        return new TeamRankRow(
+                row.season(), row.teamId(), row.rank(), previousRank, row.teamName(),
+                row.gamesPlayed(), row.wins(), row.losses(), row.draws(), row.winningPercentage(),
+                row.gamesBehind(), row.streakType(), row.streakCount(), row.streakText(),
+                row.lastGameDate(), row.calculatedAt(), row.updatedAt()
         );
     }
 
