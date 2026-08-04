@@ -30,10 +30,10 @@ Compose plugin from Docker's official Ubuntu repository, plus Nginx and Certbot.
 Clone the intended commit, then prepare secrets without printing them to the terminal or shell history:
 
 ```bash
-cp .env.example .env
+touch .env
+chmod 600 .env
 mkdir -p secrets
 chmod 700 secrets
-chmod 600 .env
 ```
 
 Fill `.env` with the existing production Supabase, administrator, and APNs values. Keep these values for

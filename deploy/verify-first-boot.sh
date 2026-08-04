@@ -27,7 +27,7 @@ require_env() {
   [[ "${value}" != *'<'* ]] || fail "${key} still contains a placeholder"
 }
 
-[[ -f .env ]] || fail "Create .env from .env.example first"
+[[ -f .env ]] || fail "Create a repository-root .env with production values first"
 [[ "$(env_value SPRING_PROFILES_ACTIVE)" == "production" ]] || fail "SPRING_PROFILES_ACTIVE must be production"
 [[ "$(env_value SERVER_PORT)" == "8088" ]] || fail "SERVER_PORT must be 8088"
 [[ "$(env_value APP_DB_SCHEMA)" == "kbo_crawler_api" ]] || fail "APP_DB_SCHEMA must be kbo_crawler_api"

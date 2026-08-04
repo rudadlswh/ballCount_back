@@ -23,6 +23,10 @@ springdoc:
 
 server:
   forward-headers-strategy: native
+  servlet:
+    session:
+      cookie:
+        secure: ${ADMIN_SESSION_COOKIE_SECURE:true}
   error:
     include-stacktrace: never
     include-exception: false

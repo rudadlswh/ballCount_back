@@ -49,8 +49,8 @@ Startup fails when a non-production profile is configured with the production sc
 
 ## Production profile
 
-Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Start from
-`.env.production.example`, then set the real database and APNs values outside Git:
+Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Create a repository-root
+`.env` file, then set the real database and APNs values outside Git:
 
 - `APP_DB_SCHEMA=kbo_crawler_api`
 - `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/<database>?currentSchema=kbo_crawler_api`
@@ -76,7 +76,8 @@ database container.
 Prepare the server configuration:
 
 ```bash
-cp .env.example .env
+touch .env
+chmod 600 .env
 mkdir -p secrets
 ```
 

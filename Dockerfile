@@ -21,7 +21,7 @@ RUN apt-get update \
 
 COPY --from=build --chown=app:app /workspace/build/libs/*.jar /app/app.jar
 
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -Dfile.encoding=UTF-8"
+ENV JAVA_TOOL_OPTIONS="-Xms128m -Xmx256m -Dfile.encoding=UTF-8"
 
 USER app
 EXPOSE 8088

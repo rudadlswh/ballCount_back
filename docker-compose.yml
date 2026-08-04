@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: kbo-back:latest
+    image: ${IMAGE_NAME:-ghcr.io/rudadlswh/kboscore_back}:${IMAGE_TAG:-latest}
     env_file:
       - .env
     environment:
