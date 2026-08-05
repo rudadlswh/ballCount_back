@@ -3,6 +3,7 @@ package com.kbo.crawlerapi.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,13 @@ class AdminLogBufferTest {
     void timeFilterCanExcludeEntries() {
         LoggerFactory.getLogger("com.kbo.crawlerapi.service.AdminLogBufferTest").info("admin log search sample");
 
-        assertThat(buffer.search(LocalDateTime.now().plusMinutes(1), null, null, null, null)).isEmpty();
+        assertThat(buffer.search(
+                LocalDateTime.now(ZoneId.of("Asia/Seoul")).plusMinutes(1),
+                null,
+                null,
+                null,
+                null
+        )).isEmpty();
     }
 
     @Test
