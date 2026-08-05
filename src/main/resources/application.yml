@@ -38,7 +38,7 @@ spring:
 
 server:
   shutdown: graceful
-  port: 8088
+  port: ${SERVER_PORT:8088}
   servlet:
     session:
       cookie:
@@ -73,7 +73,6 @@ app:
     pregame-fast-polling-interval: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_INTERVAL:PT1M}
     live-polling-interval: ${KBO_LIVE_SYNC_LIVE_POLLING_INTERVAL:${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}}
     final-confirmation-polling-interval: ${KBO_LIVE_SYNC_FINAL_CONFIRMATION_POLLING_INTERVAL:PT30S}
-    detail-extraction-timeout: PT0.1S
     pregame-ttl: PT3M
     live-ttl: PT3S
     final-confirmation-ttl: PT30S
@@ -86,6 +85,13 @@ app:
 #    private-key: ${APNS_PRIVATE_KEY:}
     env: ${APNS_ENV:sandbox}
     test-enabled: ${KBO_APNS_TEST_ENABLED:false}
+  fcm:
+    push-enabled: ${KBO_FCM_PUSH_ENABLED:false}
+    project-id: ${FIREBASE_PROJECT_ID:}
+    environment: ${FCM_ENV:${APNS_ENV:sandbox}}
+    credentials-path: ${GOOGLE_APPLICATION_CREDENTIALS:}
+#    credentials-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+    endpoint: ${FCM_ENDPOINT:https://fcm.googleapis.com}
 
 kbo:
   admin:

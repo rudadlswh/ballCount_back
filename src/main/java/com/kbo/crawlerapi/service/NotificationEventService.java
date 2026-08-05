@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,10 +47,12 @@ public class NotificationEventService {
     public static final String EVENT_ON_BASE = "ON_BASE";
     public static final String EVENT_INNING_CHANGED = "INNING_CHANGED";
     public static final String PAYLOAD_EVENT_TEAM_ID = "eventTeamId";
+    private static final ZoneId KBO_TIME_ZONE = ZoneId.of("Asia/Seoul");
 
     private final NotificationEventRepository notificationEventRepository;
     private final NotificationDeviceRepository notificationDeviceRepository;
     private final ApnsPushService apnsPushService;
+    private final FcmPushService fcmPushService;
     private final LiveActivityUpdateService liveActivityUpdateService;
     private final ObjectMapper objectMapper;
     private final Clock applicationClock;
@@ -63,7 +66,7 @@ public class NotificationEventService {
             ObjectMapper objectMapper,
             Clock applicationClock
     ) {
-        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, objectMapper, applicationClock, null, Runnable::run);
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, null, objectMapper, applicationClock, null, Runnable::run);
     }
 
     @Autowired
@@ -72,6 +75,7 @@ public class NotificationEventService {
             NotificationDeviceRepository notificationDeviceRepository,
             ApnsPushService apnsPushService,
             LiveActivityUpdateService liveActivityUpdateService,
+            FcmPushService fcmPushService,
             ObjectMapper objectMapper,
             Clock applicationClock,
             PlatformTransactionManager transactionManager,
@@ -80,6 +84,7 @@ public class NotificationEventService {
         this.notificationEventRepository = notificationEventRepository;
         this.notificationDeviceRepository = notificationDeviceRepository;
         this.apnsPushService = apnsPushService;
+        this.fcmPushService = fcmPushService;
         this.liveActivityUpdateService = liveActivityUpdateService;
         this.objectMapper = objectMapper;
         this.applicationClock = applicationClock;
@@ -95,7 +100,7 @@ public class NotificationEventService {
             Clock applicationClock,
             PlatformTransactionManager transactionManager
     ) {
-        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, objectMapper, applicationClock, transactionManager, Runnable::run);
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, null, objectMapper, applicationClock, transactionManager, Runnable::run);
     }
 
     public NotificationEventService(
@@ -106,7 +111,7 @@ public class NotificationEventService {
             ObjectMapper objectMapper,
             Clock applicationClock
     ) {
-        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, liveActivityUpdateService, objectMapper, applicationClock, null, Runnable::run);
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, liveActivityUpdateService, null, objectMapper, applicationClock, null, Runnable::run);
     }
 
     public EventDeliveryResult createAndDeliver(Game game, NotificationEventDraft draft) {
@@ -114,13 +119,14 @@ public class NotificationEventService {
             return EventDeliveryResult.skipped(draft.eventKey());
         }
         String initialApnsSkipReason = apnsPushService.readinessSkipReason();
-        if (initialApnsSkipReason != null) {
+        String initialFcmSkipReason = fcmReadinessSkipReason();
+        if (initialApnsSkipReason != null && initialFcmSkipReason != null) {
             deliverLiveActivityEnd(game, draft.eventType());
             log.warn(
                     "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
                     draft.eventKey(),
                     draft.eventType(),
-                    initialApnsSkipReason,
+                    initialApnsSkipReason + "," + initialFcmSkipReason,
                     apnsPushService.configuredEnvironment()
             );
             return EventDeliveryResult.skipped(draft.eventKey());
@@ -145,13 +151,14 @@ public class NotificationEventService {
             return EventDeliveryResult.skipped(draft.eventKey());
         }
         String initialApnsSkipReason = apnsPushService.readinessSkipReason();
-        if (initialApnsSkipReason != null) {
+        String initialFcmSkipReason = fcmReadinessSkipReason();
+        if (initialApnsSkipReason != null && initialFcmSkipReason != null) {
             deliverLiveActivityEnd(game, draft.eventType());
             log.warn(
                     "[Notifications] delivery skipped before event persistence eventKey={} eventType={} reason={} configuredEnv={}",
                     draft.eventKey(),
                     draft.eventType(),
-                    initialApnsSkipReason,
+                    initialApnsSkipReason + "," + initialFcmSkipReason,
                     apnsPushService.configuredEnvironment()
             );
             return EventDeliveryResult.skipped(draft.eventKey());
@@ -163,13 +170,13 @@ public class NotificationEventService {
         NotificationEvent event = prepared.event();
         List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
         deliverLiveActivityEnd(game, draft.eventType());
-        if (relevantTeamDevices.isEmpty()) {
+        if (relevantTeamDevices.isEmpty() && initialFcmSkipReason != null) {
             markEventDelivery(event, "skipped", ApnsPushService.NO_RELEVANT_DEVICES);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 1, 0);
         }
         List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices, draft, game);
         String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices, game);
-        if (deviceSkipReason != null) {
+        if (deviceSkipReason != null && initialFcmSkipReason != null) {
             markEventDelivery(event, "skipped", deviceSkipReason);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, relevantTeamDevices.size(), 0);
         }
@@ -193,6 +200,7 @@ public class NotificationEventService {
             List<String> eventTeamIds,
             List<NotificationDevice> relevantTeamDevices
     ) {
+        ProviderDelivery fcmDelivery = deliverFcm(event, draft, game, eventTeamIds);
         ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
         log.info(
                 "[Notifications] delivery diagnostics eventId={} eventKey={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} eventTeamIds={} relevantDeviceCount={} relevantDeviceEnvCounts={}",
@@ -211,8 +219,12 @@ public class NotificationEventService {
         );
 
         if (relevantTeamDevices.isEmpty()) {
-            markEventDelivery(event, "skipped", ApnsPushService.NO_RELEVANT_DEVICES);
-            return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 1, 0);
+            return finishDelivery(
+                    event,
+                    draft,
+                    fcmDelivery,
+                    ProviderDelivery.none(ApnsPushService.NO_RELEVANT_DEVICES)
+            );
         }
 
         relevantTeamDevices.forEach(device -> logDeviceDiagnostics(event, device, game));
@@ -220,14 +232,12 @@ public class NotificationEventService {
         List<NotificationDevice> deliverableDevices = deliverableDevices(relevantTeamDevices, draft, game);
         String deviceSkipReason = deviceReadinessSkipReason(relevantTeamDevices, deliverableDevices, game);
         if (deviceSkipReason != null) {
-            markEventDelivery(event, "skipped", deviceSkipReason);
-            return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, relevantTeamDevices.size(), 0);
+            return finishDelivery(event, draft, fcmDelivery, ProviderDelivery.skipped(relevantTeamDevices.size(), deviceSkipReason));
         }
 
         String apnsSkipReason = apnsPushService.readinessSkipReason();
         if (apnsSkipReason != null) {
-            markEventDelivery(event, "skipped", apnsSkipReason);
-            return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, deliverableDevices.size(), 0);
+            return finishDelivery(event, draft, fcmDelivery, ProviderDelivery.skipped(deliverableDevices.size(), apnsSkipReason));
         }
 
         int sent = 0;
@@ -261,14 +271,8 @@ public class NotificationEventService {
             }
         }
 
-        String status = sent > 0 && failed == 0
-                ? "sent"
-                : sent > 0
-                ? "partial_failed"
-                : failed > 0
-                ? "failed"
-                : "skipped";
-        recordDeliveryResult(event, status, lastFailure, invalidDevices);
+        ProviderDelivery apnsDelivery = new ProviderDelivery(sent, skipped, failed, lastFailure, invalidDevices);
+        EventDeliveryResult combinedResult = finishDelivery(event, draft, fcmDelivery, apnsDelivery);
         Instant apnsResultAt = Instant.now(applicationClock);
         log.info(
                 "[Notifications] APNs result at={} sent_at={} eventId={} eventKey={} eventType={} gameScheduledAt={} status={} sent={} skipped={} failed={} deliverableDeviceEnvCounts={} durationMs={}",
@@ -278,14 +282,112 @@ public class NotificationEventService {
                 draft.eventKey(),
                 draft.eventType(),
                 game.getScheduledAt(),
-                status,
+                deliveryStatus(apnsDelivery),
                 sent,
                 skipped,
                 failed,
                 environmentCounts(deliverableDevices),
                 Math.max(0, Duration.between(apnsSendRequestedAt, apnsResultAt).toMillis())
         );
+        return combinedResult;
+    }
+
+    private ProviderDelivery deliverFcm(
+            NotificationEvent event,
+            NotificationEventDraft draft,
+            Game game,
+            List<String> eventTeamIds
+    ) {
+        if (fcmPushService == null || fcmPushService.readinessSkipReason() != null) {
+            return ProviderDelivery.none(fcmReadinessSkipReason());
+        }
+        List<NotificationDevice> candidates = notificationDeviceRepository.findAndroidDeliveryTargets(
+                fcmPushService.configuredEnvironment(),
+                eventTeamIds.stream().map(value -> value.toLowerCase(java.util.Locale.ROOT)).toList(),
+                game.getPublicGameId()
+        );
+        if (candidates == null || candidates.isEmpty()) {
+            return ProviderDelivery.none(ApnsPushService.NO_RELEVANT_DEVICES);
+        }
+        List<NotificationDevice> deliverable = candidates.stream()
+                .filter(NotificationDevice::isNotificationsEnabled)
+                .filter(device -> isMonitoredGame(device, game) || favoriteTeamGameSkipReason(device, game) == null)
+                .filter(device -> isMonitoredGame(device, game) || eventSettingEnabled(device, draft.eventType()))
+                .filter(device -> isMonitoredGame(device, game) || muteWhenLosingAllows(device, draft.eventType(), game))
+                .filter(device -> isMonitoredGame(device, game) || quietHoursAllow(device))
+                .toList();
+        if (deliverable.isEmpty()) {
+            return ProviderDelivery.skipped(candidates.size(), ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED);
+        }
+
+        int sent = 0;
+        int skipped = 0;
+        int failed = 0;
+        String lastFailure = null;
+        List<NotificationDevice> invalidDevices = new java.util.ArrayList<>();
+        for (NotificationDevice device : deliverable) {
+            FcmPushService.FcmSendResult result = fcmPushService.send(event, device);
+            if (result.sent()) {
+                sent++;
+            } else if (result.skipped()) {
+                skipped++;
+                lastFailure = result.reason();
+            } else {
+                failed++;
+                lastFailure = result.reason();
+                if (result.invalidToken()) {
+                    invalidDevices.add(device);
+                }
+            }
+        }
+        log.info(
+                "[FCM] result eventId={} eventKey={} sent={} skipped={} failed={}",
+                event.getId(),
+                draft.eventKey(),
+                sent,
+                skipped,
+                failed
+        );
+        return new ProviderDelivery(sent, skipped, failed, lastFailure, invalidDevices);
+    }
+
+    private EventDeliveryResult finishDelivery(
+            NotificationEvent event,
+            NotificationEventDraft draft,
+            ProviderDelivery first,
+            ProviderDelivery second
+    ) {
+        int sent = first.sent() + second.sent();
+        int skipped = first.skipped() + second.skipped();
+        int failed = first.failed() + second.failed();
+        String lastFailure = sent > 0 && failed == 0
+                ? null
+                : second.lastFailure() != null ? second.lastFailure() : first.lastFailure();
+        List<NotificationDevice> invalidDevices = new java.util.ArrayList<>(first.invalidDevices());
+        invalidDevices.addAll(second.invalidDevices());
+        String status = sent > 0 && failed == 0
+                ? "sent"
+                : sent > 0
+                ? "partial_failed"
+                : failed > 0
+                ? "failed"
+                : "skipped";
+        recordDeliveryResult(event, status, lastFailure, invalidDevices);
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, sent, skipped, failed);
+    }
+
+    private String deliveryStatus(ProviderDelivery delivery) {
+        if (delivery.sent() > 0 && delivery.failed() == 0) {
+            return "sent";
+        }
+        if (delivery.sent() > 0) {
+            return "partial_failed";
+        }
+        return delivery.failed() > 0 ? "failed" : "skipped";
+    }
+
+    private String fcmReadinessSkipReason() {
+        return fcmPushService == null ? FcmPushService.PUSH_DISABLED : fcmPushService.readinessSkipReason();
     }
 
     private void deliverLiveActivityEnd(Game game, String eventType) {
@@ -330,7 +432,7 @@ public class NotificationEventService {
     }
 
     public String targetedDeviceSkipReason(NotificationDevice device, NotificationEventDraft draft, Game game) {
-        if (!"ios".equalsIgnoreCase(device.getPlatform())) {
+        if (!"ios".equalsIgnoreCase(device.getPlatform()) && !"android".equalsIgnoreCase(device.getPlatform())) {
             return ApnsPushService.UNSUPPORTED_PLATFORM;
         }
         if (!device.isNotificationsEnabled()) {
@@ -346,6 +448,9 @@ public class NotificationEventService {
         if (!eventSettingEnabled(device, draft.eventType())
                 || !muteWhenLosingAllows(device, draft.eventType(), game)) {
             return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
+        }
+        if (!quietHoursAllow(device)) {
+            return ApnsPushService.DEVICE_NOTIFICATION_QUIET_HOURS;
         }
         return null;
     }
@@ -440,6 +545,7 @@ public class NotificationEventService {
                 .filter(device -> favoriteTeamGameSkipReason(device, game) == null)
                 .filter(device -> eventSettingEnabled(device, draft.eventType()))
                 .filter(device -> muteWhenLosingAllows(device, draft.eventType(), game))
+                .filter(this::quietHoursAllow)
                 .toList();
     }
 
@@ -487,18 +593,34 @@ public class NotificationEventService {
             case EVENT_SCORE_CHANGED -> device.isScoreChangeEnabled();
             case EVENT_LEAD_CHANGED -> device.isLeadChangeEnabled();
             case EVENT_GAME_END -> device.isGameEndEnabled();
-            case EVENT_GAME_CANCELLED -> device.isGameEndEnabled();
-            case EVENT_CANCELLED -> device.isGameEndEnabled();
-            case EVENT_POSTPONED -> device.isGameEndEnabled();
-            case EVENT_GAME_DELAYED -> device.isGameStartEnabled();
-            case EVENT_GAME_SUSPENDED -> device.isGameEndEnabled();
-            case EVENT_GAME_INTERRUPTED -> device.isGameEndEnabled();
+            case EVENT_GAME_CANCELLED -> device.isRainDelayEnabled();
+            case EVENT_CANCELLED -> device.isRainDelayEnabled();
+            case EVENT_POSTPONED -> device.isRainDelayEnabled();
+            case EVENT_GAME_DELAYED -> device.isRainDelayEnabled();
+            case EVENT_GAME_SUSPENDED -> device.isRainDelayEnabled();
+            case EVENT_GAME_INTERRUPTED -> device.isRainDelayEnabled();
             case EVENT_GAME_RESUME_SCHEDULED -> device.isGameStartEnabled();
             case EVENT_GAME_RESUMED -> device.isGameStartEnabled();
             case EVENT_ON_BASE -> device.isOnBaseEnabled();
             case EVENT_INNING_CHANGED -> device.isInningChangeEnabled();
             default -> false;
         };
+    }
+
+    private boolean quietHoursAllow(NotificationDevice device) {
+        if (!device.isQuietHoursEnabled()) {
+            return true;
+        }
+        int currentHour = OffsetDateTime.now(applicationClock).atZoneSameInstant(KBO_TIME_ZONE).getHour();
+        int startHour = device.getQuietHoursStartHour();
+        int endHour = device.getQuietHoursEndHour();
+        if (startHour == endHour) {
+            return false;
+        }
+        boolean isQuiet = startHour < endHour
+                ? currentHour >= startHour && currentHour < endHour
+                : currentHour >= startHour || currentHour < endHour;
+        return !isQuiet;
     }
 
     private String favoriteTeamGameSkipReason(NotificationDevice device, Game game) {
@@ -510,6 +632,12 @@ public class NotificationEventService {
             return null;
         }
         return ApnsPushService.FAVORITE_TEAM_MISMATCH;
+    }
+
+    private boolean isMonitoredGame(NotificationDevice device, Game game) {
+        return device.getMonitoredGameId() != null
+                && game != null
+                && device.getMonitoredGameId().equals(game.getPublicGameId());
     }
 
     private boolean muteWhenLosingAllows(NotificationDevice device, String eventType, Game game) {
@@ -607,6 +735,22 @@ public class NotificationEventService {
     ) {
         private static PreparedDelivery duplicateResult() {
             return new PreparedDelivery(true, null, List.of(), List.of());
+        }
+    }
+
+    private record ProviderDelivery(
+            int sent,
+            int skipped,
+            int failed,
+            String lastFailure,
+            List<NotificationDevice> invalidDevices
+    ) {
+        private static ProviderDelivery none(String reason) {
+            return new ProviderDelivery(0, 0, 0, reason, List.of());
+        }
+
+        private static ProviderDelivery skipped(int count, String reason) {
+            return new ProviderDelivery(0, count, 0, reason, List.of());
         }
     }
 

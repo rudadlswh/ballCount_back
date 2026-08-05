@@ -15,6 +15,7 @@ public class JdbcTeamRankWriteRepository implements TeamRankWriteRepository {
                 season,
                 team_id,
                 rank,
+                previous_rank,
                 team_name,
                 games_played,
                 wins,
@@ -29,9 +30,10 @@ public class JdbcTeamRankWriteRepository implements TeamRankWriteRepository {
                 calculated_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (season, team_id) DO UPDATE SET
                 rank = excluded.rank,
+                previous_rank = excluded.previous_rank,
                 team_name = excluded.team_name,
                 games_played = excluded.games_played,
                 wins = excluded.wins,
@@ -59,19 +61,24 @@ public class JdbcTeamRankWriteRepository implements TeamRankWriteRepository {
             ps.setInt(1, row.season());
             ps.setObject(2, row.teamId());
             ps.setInt(3, row.rank());
-            ps.setString(4, row.teamName());
-            ps.setInt(5, row.gamesPlayed());
-            ps.setInt(6, row.wins());
-            ps.setInt(7, row.losses());
-            ps.setInt(8, row.draws());
-            ps.setBigDecimal(9, row.winningPercentage());
-            ps.setBigDecimal(10, row.gamesBehind());
-            ps.setString(11, row.streakType());
-            ps.setInt(12, row.streakCount());
-            ps.setString(13, row.streakText());
-            ps.setDate(14, row.lastGameDate() == null ? null : Date.valueOf(row.lastGameDate()));
-            ps.setTimestamp(15, Timestamp.from(row.calculatedAt().toInstant()));
-            ps.setTimestamp(16, Timestamp.from(row.updatedAt().toInstant()));
+            if (row.previousRank() == null) {
+                ps.setNull(4, java.sql.Types.INTEGER);
+            } else {
+                ps.setInt(4, row.previousRank());
+            }
+            ps.setString(5, row.teamName());
+            ps.setInt(6, row.gamesPlayed());
+            ps.setInt(7, row.wins());
+            ps.setInt(8, row.losses());
+            ps.setInt(9, row.draws());
+            ps.setBigDecimal(10, row.winningPercentage());
+            ps.setBigDecimal(11, row.gamesBehind());
+            ps.setString(12, row.streakType());
+            ps.setInt(13, row.streakCount());
+            ps.setString(14, row.streakText());
+            ps.setDate(15, row.lastGameDate() == null ? null : Date.valueOf(row.lastGameDate()));
+            ps.setTimestamp(16, Timestamp.from(row.calculatedAt().toInstant()));
+            ps.setTimestamp(17, Timestamp.from(row.updatedAt().toInstant()));
         });
         int count = 0;
         for (int[] batch : updated) {

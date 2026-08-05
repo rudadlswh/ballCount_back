@@ -119,6 +119,20 @@ class TeamRankServiceTest {
     }
 
     @Test
+    void calculatesPreviousRankBeforeLatestCompletedGameDay() {
+        List<Game> games = List.of(
+                game("g1", date(4, 1), teams.get(0), teams.get(1), 5, 3),
+                game("g2", date(4, 2), teams.get(1), teams.get(2), 6, 2)
+        );
+
+        List<TeamRankRow> rows = service.calculateRows(2026, games);
+
+        TeamRankRow risingTeam = rowFor(rows, teams.get(1));
+        assertThat(risingTeam.previousRank()).isNotNull();
+        assertThat(risingTeam.rank()).isLessThan(risingTeam.previousRank());
+    }
+
+    @Test
     void fullSeasonRecalculationUpsertsAllTenTeams() {
         List<Game> games = List.of(game("g1", date(4, 1), teams.get(0), teams.get(1), 5, 3));
         when(gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(

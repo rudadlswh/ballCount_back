@@ -39,6 +39,26 @@ public interface NotificationDeviceRepository extends JpaRepository<Notification
             @Param("favoriteTeamIds") List<String> favoriteTeamIds
     );
 
+    @Query("""
+            SELECT device
+            FROM NotificationDevice device
+            WHERE lower(device.platform) = 'android'
+              AND lower(device.environment) = lower(:environment)
+              AND (
+                  device.monitoredGameId = :gameId
+                  OR device.favoriteTeamOnlyEnabled = false
+                  OR (
+                      device.favoriteTeamId IS NOT NULL
+                      AND lower(device.favoriteTeamId) IN :favoriteTeamIds
+                  )
+              )
+            """)
+    List<NotificationDevice> findAndroidDeliveryTargets(
+            @Param("environment") String environment,
+            @Param("favoriteTeamIds") List<String> favoriteTeamIds,
+            @Param("gameId") String gameId
+    );
+
     List<NotificationDevice> findByFavoriteTeamIdIn(List<String> favoriteTeamIds);
 
     List<NotificationDevice> findByPlatformAndFavoriteTeamIdAndNotificationsEnabledTrue(String platform, String favoriteTeamId);

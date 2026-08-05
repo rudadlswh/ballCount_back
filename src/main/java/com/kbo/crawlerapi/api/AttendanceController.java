@@ -33,6 +33,6 @@ public class AttendanceController {
 
     @GetMapping
     public AttendanceListResponse list(@RequestParam String installationId) {
-        return new AttendanceListResponse(attendanceService.listGameIds(installationId));
+        return attendanceService.list(installationId);
     }
 }

@@ -30,10 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -75,6 +72,7 @@ public class LiveGameSyncService {
     private final Clock applicationClock;
     private final DateSyncLockService dateSyncLockService;
     private final Map<UUID, Instant> nextRefreshAtByGameId = new ConcurrentHashMap<>();
+    private final Map<UUID, SnapshotRecoveryCursor> snapshotRecoveryCursorByGameId = new ConcurrentHashMap<>();
     private final Set<UUID> suspiciousStallLoggedGameIds = ConcurrentHashMap.newKeySet();
 
     public LiveGameSyncService(
@@ -354,9 +352,11 @@ public class LiveGameSyncService {
                 after.markLiveChecked(OffsetDateTime.now(applicationClock));
                 boolean finalConfirmed = confirmFinalIfComplete(after);
                 gameRepository.save(after);
-                GameState afterState = GameState.from(after, latestSnapshot(after));
+                GameSnapshot latestAfterSnapshot = latestSnapshot(after);
+                GameState afterState = GameState.from(after, latestAfterSnapshot);
                 if (downgradeUnreliableLiveIfNeeded(after, afterState, "detail-import")) {
-                    afterState = GameState.from(after, latestSnapshot(after));
+                    latestAfterSnapshot = latestSnapshot(after);
+                    afterState = GameState.from(after, latestAfterSnapshot);
                 }
                 if (becameFinalOrFinalConfirmed(before, after, finalConfirmed)) {
                     teamRankService.refreshSeasonRankingsSafely(after.getGameDate().getYear());
@@ -421,7 +421,7 @@ public class LiveGameSyncService {
                         );
                     }
                 }
-                SnapshotRecoveryResult recovery = recoverSnapshotNotifications(after, handledEventKeys);
+                SnapshotRecoveryResult recovery = recoverSnapshotNotifications(after, handledEventKeys, latestAfterSnapshot);
                 if (recovery.eventCreatedCount() > 0) {
                     updatedCount++;
                     updatedGames.add(after.getPublicGameId());
@@ -480,9 +480,28 @@ public class LiveGameSyncService {
         );
     }
 
-    private SnapshotRecoveryResult recoverSnapshotNotifications(Game game, Set<String> handledEventKeys) {
-        List<NotificationEventDraft> candidates = snapshotRecoveryDrafts(game, DEFAULT_SNAPSHOT_RECOVERY_PAIR_LIMIT);
+    private SnapshotRecoveryResult recoverSnapshotNotifications(
+            Game game,
+            Set<String> handledEventKeys,
+            GameSnapshot latestSnapshot
+    ) {
+        SnapshotRecoveryCursor currentCursor = new SnapshotRecoveryCursor(
+                latestSnapshot == null ? null : latestSnapshot.getId(),
+                game.getStatus(),
+                game.getFinalConfirmedAt(),
+                game.getStatusReason()
+        );
+        SnapshotRecoveryCursor previousCursor = snapshotRecoveryCursorByGameId.get(game.getId());
+        if (currentCursor.equals(previousCursor)) {
+            return SnapshotRecoveryResult.empty();
+        }
+        List<NotificationEventDraft> candidates = snapshotRecoveryDrafts(
+                game,
+                DEFAULT_SNAPSHOT_RECOVERY_PAIR_LIMIT,
+                previousCursor == null ? null : previousCursor.snapshotId()
+        );
         if (candidates.isEmpty()) {
+            snapshotRecoveryCursorByGameId.put(game.getId(), currentCursor);
             return SnapshotRecoveryResult.empty();
         }
         int eventCreatedCount = 0;
@@ -520,6 +539,7 @@ public class LiveGameSyncService {
                     : "created";
             logSnapshotRecoveryDecision(game, null, null, draft, decision, "created");
         }
+        snapshotRecoveryCursorByGameId.put(game.getId(), currentCursor);
         return new SnapshotRecoveryResult(eventCreatedCount, sentCount, skippedCount, failedCount, eventKeys);
     }
 
@@ -546,7 +566,14 @@ public class LiveGameSyncService {
     }
 
     private List<NotificationEventDraft> snapshotRecoveryDrafts(Game game, int pairLimit) {
-        List<GameSnapshot> snapshots = recentReplaySnapshots(game, pairLimit);
+        return snapshotRecoveryDrafts(game, pairLimit, null);
+    }
+
+    private List<NotificationEventDraft> snapshotRecoveryDrafts(Game game, int pairLimit, UUID lastRecoveredSnapshotId) {
+        List<GameSnapshot> snapshots = replaySnapshotsAfter(
+                recentReplaySnapshots(game, pairLimit),
+                lastRecoveredSnapshotId
+        );
         if (snapshots.size() < 2) {
             return terminalRecoveryDrafts(game, snapshots);
         }
@@ -570,6 +597,18 @@ public class LiveGameSyncService {
             draftsByKey.putIfAbsent(terminalDraft.eventKey(), terminalDraft);
         }
         return new ArrayList<>(draftsByKey.values());
+    }
+
+    private List<GameSnapshot> replaySnapshotsAfter(List<GameSnapshot> snapshots, UUID lastRecoveredSnapshotId) {
+        if (lastRecoveredSnapshotId == null || snapshots.size() < 2) {
+            return snapshots;
+        }
+        for (int index = 0; index < snapshots.size(); index++) {
+            if (lastRecoveredSnapshotId.equals(snapshots.get(index).getId())) {
+                return new ArrayList<>(snapshots.subList(index, snapshots.size()));
+            }
+        }
+        return snapshots;
     }
 
     private List<NotificationEventDraft> terminalRecoveryDrafts(Game game, List<GameSnapshot> snapshots) {
@@ -1658,19 +1697,15 @@ public class LiveGameSyncService {
             return new OnBaseDetailResolution(fallback, "snapshotDiff", elapsedMillis(startedAt));
         }
         try {
-            OnBasePlayDetail officialDetail = CompletableFuture
-                    .supplyAsync(() -> OnBasePlayDetailExtractor.extract(
-                            gameEventReadRepository.findRecentByGameId(game.getId(), 20),
-                            context
-                    ).orElse(null))
-                    .get(detailExtractionTimeoutMillis(), TimeUnit.MILLISECONDS);
+            OnBasePlayDetail officialDetail = OnBasePlayDetailExtractor.extract(
+                    gameEventReadRepository.findRecentByGameId(game.getId(), 20),
+                    context
+            ).orElse(null);
             long durationMs = elapsedMillis(startedAt);
             if (officialDetail != null) {
                 return new OnBaseDetailResolution(officialDetail, "officialText", durationMs);
             }
             return new OnBaseDetailResolution(fallback, "snapshotDiff", durationMs);
-        } catch (TimeoutException exception) {
-            return new OnBaseDetailResolution(fallback, "snapshotDiff", elapsedMillis(startedAt));
         } catch (Exception exception) {
             log.debug(
                     "[LiveGameSync] on-base play detail unavailable game={} reason={}",
@@ -1716,14 +1751,6 @@ public class LiveGameSyncService {
             return 1;
         }
         return null;
-    }
-
-    private long detailExtractionTimeoutMillis() {
-        Duration timeout = properties == null ? null : properties.getDetailExtractionTimeout();
-        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
-            return 100;
-        }
-        return Math.max(1, timeout.toMillis());
     }
 
     private long elapsedMillis(Instant startedAt) {
@@ -2484,6 +2511,14 @@ public class LiveGameSyncService {
         private static SnapshotRecoveryResult empty() {
             return new SnapshotRecoveryResult(0, 0, 0, 0, List.of());
         }
+    }
+
+    private record SnapshotRecoveryCursor(
+            UUID snapshotId,
+            GameStatus status,
+            OffsetDateTime finalConfirmedAt,
+            String statusReason
+    ) {
     }
 
     public record NotificationRecoveryDiagnosis(

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.kbo.crawlerapi.service.DeviceRegistrationService;
 import com.kbo.crawlerapi.service.DeviceRegistrationService.DeviceNotificationSettings;
 import com.kbo.crawlerapi.service.DeviceRegistrationService.DeviceRegistrationResult;
+import java.util.List;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,14 +21,16 @@ public class DeviceRegistrationController {
     @PostMapping("/devices/register")
     public DeviceRegistrationResult register(@RequestBody DeviceRegisterRequest request) {
         try {
+            boolean notificationsEnabled = request.notificationsEnabled() == null || request.notificationsEnabled();
+            if (request.monitoredGameId() == null) {
+                return deviceRegistrationService.register(
+                        request.platform(), request.environment(), request.deviceToken(), request.installationId(),
+                        request.favoriteTeamId(), notificationsEnabled, request.notificationSettings()
+                );
+            }
             return deviceRegistrationService.register(
-                    request.platform(),
-                    request.environment(),
-                    request.deviceToken(),
-                    request.installationId(),
-                    request.favoriteTeamId(),
-                    request.notificationsEnabled() == null || request.notificationsEnabled(),
-                    request.notificationSettings()
+                    request.platform(), request.environment(), request.deviceToken(), request.installationId(),
+                    request.favoriteTeamId(), notificationsEnabled, request.notificationSettings(), request.monitoredGameId()
             );
         } catch (IllegalArgumentException exception) {
             throw new InvalidParameterException(exception.getMessage());
@@ -60,7 +63,14 @@ public class DeviceRegistrationController {
             Boolean inningChangeEnabled,
             @JsonAlias("favorite_team_only_enabled")
             Boolean favoriteTeamOnlyEnabled,
-            Boolean muteWhenLosingEnabled
+            Boolean muteWhenLosingEnabled,
+            Boolean rainDelayEnabled,
+            List<String> alertTypes,
+            QuietHours quietHours,
+            Boolean quietHoursEnabled,
+            @JsonAlias({"authorizationStatus", "notification_authorization_status"})
+            String notificationAuthorizationStatus,
+            String monitoredGameId
     ) {
         public DeviceNotificationSettings notificationSettings() {
             return new DeviceNotificationSettings(
@@ -71,13 +81,31 @@ public class DeviceRegistrationController {
                     defaultValue(onBaseEnabled, false),
                     defaultValue(inningChangeEnabled, false),
                     defaultValue(favoriteTeamOnlyEnabled, false),
-                    defaultValue(muteWhenLosingEnabled, false)
+                    defaultValue(muteWhenLosingEnabled, false),
+                    rainDelaySetting(),
+                    quietHoursEnabled == null ? quietHours != null : quietHoursEnabled,
+                    quietHours == null ? 23 : quietHours.startHour(),
+                    quietHours == null ? 7 : quietHours.endHour(),
+                    notificationAuthorizationStatus
             );
+        }
+
+        private boolean rainDelaySetting() {
+            if (rainDelayEnabled != null) {
+                return rainDelayEnabled;
+            }
+            if (alertTypes == null) {
+                return true;
+            }
+            return alertTypes.stream().anyMatch(value -> value != null && value.replace("_", "").equalsIgnoreCase("rainDelay"));
         }
 
         private static boolean defaultValue(Boolean value, boolean defaultValue) {
             return value == null ? defaultValue : value;
         }
+    }
+
+    public record QuietHours(int startHour, int endHour) {
     }
 
     public record DeviceUnregisterRequest(

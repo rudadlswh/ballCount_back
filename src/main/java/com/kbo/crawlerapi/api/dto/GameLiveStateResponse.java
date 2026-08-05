@@ -13,6 +13,7 @@ public record GameLiveStateResponse(
         Integer strikes,
         Integer outs,
         BasesDto bases,
+        BaseRunnersDto baseRunners,
         String currentPitcherName,
         String currentBatterName,
         String rawHash,
@@ -22,6 +23,13 @@ public record GameLiveStateResponse(
             boolean first,
             boolean second,
             boolean third
+    ) {
+    }
+
+    public record BaseRunnersDto(
+            String first,
+            String second,
+            String third
     ) {
     }
 }

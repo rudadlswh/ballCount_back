@@ -103,6 +103,50 @@ class DeviceRegistrationControllerTest {
     }
 
     @Test
+    void deviceRegisterRequestReadsRainDelayQuietHoursAndAuthorizationStatus() throws Exception {
+        DeviceRegistrationController.DeviceRegisterRequest request = objectMapper.readValue(
+                """
+                {
+                  "platform": "ios",
+                  "deviceToken": "token-123",
+                  "installationId": "install-1",
+                  "notificationsAuthorized": true,
+                  "alertTypes": ["gameStart", "scoreChange"],
+                  "quietHours": {"startHour": 22, "endHour": 8},
+                  "authorizationStatus": "provisional"
+                }
+                """,
+                DeviceRegistrationController.DeviceRegisterRequest.class
+        );
+
+        var settings = request.notificationSettings();
+
+        assertThat(settings.rainDelayEnabled()).isFalse();
+        assertThat(settings.quietHoursEnabled()).isTrue();
+        assertThat(settings.quietHoursStartHour()).isEqualTo(22);
+        assertThat(settings.quietHoursEndHour()).isEqualTo(8);
+        assertThat(settings.authorizationStatus()).isEqualTo("provisional");
+    }
+
+    @Test
+    void deviceRegisterRequestReadsOptionalMonitoredGameId() throws Exception {
+        DeviceRegistrationController.DeviceRegisterRequest request = objectMapper.readValue(
+                """
+                {
+                  "platform": "android",
+                  "environment": "sandbox",
+                  "deviceToken": "token-123",
+                  "installationId": "install-1",
+                  "monitoredGameId": "20260721-LG-SSG"
+                }
+                """,
+                DeviceRegistrationController.DeviceRegisterRequest.class
+        );
+
+        assertThat(request.monitoredGameId()).isEqualTo("20260721-LG-SSG");
+    }
+
+    @Test
     void devicesRegisterReturnsBadRequestForInvalidBody() throws Exception {
         DeviceRegistrationService service = new DeviceRegistrationService(
                 mock(NotificationDeviceRepository.class),
@@ -116,7 +160,7 @@ class DeviceRegistrationControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "platform": "android",
+                                  "platform": "web",
                                   "environment": "sandbox",
                                   "deviceToken": "token-123",
                                   "installationId": "install-1"

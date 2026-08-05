@@ -61,7 +61,7 @@ public class LiveActivityPushToStartTokenService {
 
     @Transactional
     public PushToStartTokenRegistrationResult register(PushToStartTokenRegistrationCommand command) {
-        String platform = RegistrationInputNormalizer.normalizePlatform(command.platform());
+        String platform = RegistrationInputNormalizer.normalizeIosPlatform(command.platform());
         String environment = RegistrationInputNormalizer.normalizeClientEnvironment(command.environment());
         String pushToStartToken = RegistrationInputNormalizer.requireText(command.pushToStartToken(), "pushToStartToken", MAX_TOKEN_LENGTH);
         String installationId = RegistrationInputNormalizer.requireText(command.installationId(), "installationId", MAX_INSTALLATION_ID_LENGTH);

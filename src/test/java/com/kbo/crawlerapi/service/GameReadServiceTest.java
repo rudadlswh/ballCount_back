@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import com.kbo.crawlerapi.api.dto.GameBoxscoreResponse;
 import com.kbo.crawlerapi.api.dto.GameDetailResponse;
+import com.kbo.crawlerapi.api.dto.GameDetailDataResponse;
 import com.kbo.crawlerapi.api.dto.GameLineScoreResponse;
 import com.kbo.crawlerapi.api.dto.GamesByDateResponse;
 import com.kbo.crawlerapi.api.dto.GamesByMonthResponse;
@@ -448,6 +449,107 @@ class GameReadServiceTest {
     }
 
     @Test
+    void getGameDetailDataAppliesServerSideCorrectionsAndFallbacks() {
+        Team away = new Team(UUID.randomUUID(), "lg", "LG Twins", "LG", "LG Twins", null);
+        Team home = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
+        Game game = new Game(
+                UUID.randomUUID(),
+                "20260510-LG-DOO",
+                "kbo",
+                "20260510LGOB0",
+                LocalDate.of(2026, 5, 10),
+                OffsetDateTime.of(2026, 5, 10, 14, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                GameStatus.FINAL,
+                home,
+                away,
+                3,
+                2,
+                "9회말",
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+        setTimestamps(game,
+                OffsetDateTime.of(2026, 5, 10, 14, 0, 0, 0, ZoneOffset.ofHours(9)),
+                OffsetDateTime.of(2026, 5, 10, 17, 0, 0, 0, ZoneOffset.ofHours(9))
+        );
+        setLineupData(game, """
+                {"away":[{"battingOrder":"1","position":"유","name":"홍길동"}],"home":[],"rawHash":"lineup-hash"}
+                """);
+
+        List<BatterRecordReadRow> batters = List.of(
+                new BatterRecordReadRow(away.getId(), 0, 1, null, "홍길동", 4, 1, 2, 1, 0, 1, 0, 0, 0, 0, "0.300",
+                        OffsetDateTime.of(2026, 5, 10, 8, 1, 0, 0, ZoneOffset.UTC)),
+                new BatterRecordReadRow(home.getId(), 0, 1, "중", "김홈", 4, 1, 3, 2, 0, 2, 0, 0, 0, 1, "0.310",
+                        OffsetDateTime.of(2026, 5, 10, 8, 2, 0, 0, ZoneOffset.UTC))
+        );
+        List<PitcherRecordReadRow> pitchers = List.of(
+                new PitcherRecordReadRow(away.getId(), 0, 1, "원정선발", "선발", "패", 0, 1, 0, "5", 20, 80, 18, 5, 0, 2, 4, 3, 3, "4.50",
+                        OffsetDateTime.of(2026, 5, 10, 8, 3, 0, 0, ZoneOffset.UTC)),
+                new PitcherRecordReadRow(home.getId(), 0, 1, "홈선발", "선발", "승", 1, 0, 0, "6", 22, 90, 20, 4, 0, 1, 6, 2, 2, "3.00",
+                        OffsetDateTime.of(2026, 5, 10, 8, 4, 0, 0, ZoneOffset.UTC)),
+                new PitcherRecordReadRow(home.getId(), 1, 2, "마무리", "구원", "세", 0, 0, 1, "1", 3, 11, 3, 0, 0, 0, 1, 0, 0, "0.00",
+                        OffsetDateTime.of(2026, 5, 10, 8, 5, 0, 0, ZoneOffset.UTC))
+        );
+
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(java.util.Optional.of(game));
+        when(gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(eq(game.getId())))
+                .thenReturn(java.util.Optional.empty());
+        when(lineScoreRepository.findByGame_IdOrderByInningNumberAsc(eq(game.getId())))
+                .thenReturn(List.of(new LineScore(UUID.randomUUID(), game, 1, 1, 2)));
+        when(gameBoxscoreRecordReadRepository.findBatterRecords(eq(game.getId()))).thenReturn(batters);
+        when(gameBoxscoreRecordReadRepository.findPitcherRecords(eq(game.getId()))).thenReturn(pitchers);
+
+        GameDetailDataResponse response = gameReadService.getGameDetailData(game.getPublicGameId());
+
+        assertThat(response.detail().awayStartingPitcherName()).isEqualTo("원정선발");
+        assertThat(response.detail().homeStartingPitcherName()).isEqualTo("홈선발");
+        assertThat(response.detail().winningPitcher()).isEqualTo("홈선발");
+        assertThat(response.detail().losingPitcher()).isEqualTo("원정선발");
+        assertThat(response.detail().savePitcher()).isEqualTo("마무리");
+        assertThat(response.lineScore().totals().away().runs()).isEqualTo(2);
+        assertThat(response.lineScore().totals().away().hits()).isEqualTo(2);
+        assertThat(response.lineScore().totals().home().runs()).isEqualTo(3);
+        assertThat(response.lineScore().totals().home().balls()).isEqualTo(2);
+        assertThat(response.boxscore().awayBatters().get(0).position()).isEqualTo("유");
+        assertThat(response.lineup().rawHash()).isEqualTo("lineup-hash");
+        assertThat(response.appliedFallbacks()).contains(
+                "awayStartingPitcherName:boxscore",
+                "homeStartingPitcherName:boxscore",
+                "winningPitcher:boxscore",
+                "losingPitcher:boxscore",
+                "savePitcher:boxscore",
+                "lineScore.awayRuns:game",
+                "lineScore.awayHits:boxscore",
+                "boxscore.batterPosition:lineup"
+        );
+        assertThat(response.unavailableSections()).isEmpty();
+    }
+
+    @Test
+    void getGameLineupFallsBackToEmptyArraysWhenStoredJsonIsInvalid() {
+        Team away = new Team(UUID.randomUUID(), "lg", "LG Twins", "LG", "LG Twins", null);
+        Team home = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
+        Game game = new Game(
+                UUID.randomUUID(), "20260511-LG-DOO", "kbo", "20260511LGOB0",
+                LocalDate.of(2026, 5, 11), null, "잠실", GameStatus.SCHEDULED,
+                home, away, null, null, null, false, false, null, null, null
+        );
+        setLineupData(game, "{invalid-json");
+        when(gameRepository.findByPublicGameId(eq(game.getPublicGameId()))).thenReturn(java.util.Optional.of(game));
+
+        var response = gameReadService.getGameLineup(game.getPublicGameId());
+
+        assertThat(response.away().isArray()).isTrue();
+        assertThat(response.away()).isEmpty();
+        assertThat(response.home().isArray()).isTrue();
+        assertThat(response.home()).isEmpty();
+    }
+
+    @Test
     void getGamesByDateMapsCancelledGameWithKnownCancelReason() {
         Team kia = new Team(
                 UUID.fromString("11111111-1111-1111-1111-111111111111"),
@@ -566,6 +668,16 @@ class GameReadServiceTest {
             updatedAtField.set(game, updatedAt);
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Failed to set timestamps for test fixture", exception);
+        }
+    }
+
+    private void setLineupData(Game game, String lineupData) {
+        try {
+            java.lang.reflect.Field field = Game.class.getDeclaredField("lineupData");
+            field.setAccessible(true);
+            field.set(game, lineupData);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Failed to set lineup data for test fixture", exception);
         }
     }
 }

@@ -14,6 +14,7 @@ build/
 .DS_Store
 
 # Private keys and certificates
+secrets/
 *.p8
 *.pem
 *.key

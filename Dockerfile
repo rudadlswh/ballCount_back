@@ -1,19 +1,29 @@
-FROM eclipse-temurin:17-jdk AS build
-WORKDIR /app
+# syntax=docker/dockerfile:1.7
 
-COPY gradlew settings.gradle build.gradle ./
+FROM eclipse-temurin:17-jdk-jammy AS build
+WORKDIR /workspace
+
+COPY --chmod=0755 gradlew ./gradlew
 COPY gradle ./gradle
-RUN chmod +x gradlew
-
+COPY settings.gradle build.gradle ./
 COPY src ./src
-RUN ./gradlew clean bootJar -x test --no-daemon
 
-FROM eclipse-temurin:17-jre
+RUN ./gradlew bootJar --no-daemon
+
+FROM eclipse-temurin:17-jre-jammy AS runtime
 WORKDIR /app
 
-COPY --from=build /app/build/libs/*.jar app.jar
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app
 
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
+COPY --from=build --chown=app:app /workspace/build/libs/*.jar /app/app.jar
+
+ENV JAVA_TOOL_OPTIONS="-Xms128m -Xmx256m -Dfile.encoding=UTF-8"
+
+USER app
 EXPOSE 8088
 
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Dserver.port=${PORT:-8088} -jar app.jar"]
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
