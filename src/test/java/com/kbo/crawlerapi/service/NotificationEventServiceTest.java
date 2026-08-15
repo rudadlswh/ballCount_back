@@ -70,7 +70,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void favoriteTeamOnlyAwayFavoriteReceivesHomeScoreChangedEvent() {
+    void favoriteTeamOnlyAwayFavoriteSkipsHomeScoreChangedEvent() {
         Game game = fixtureGame("doosan", "lotte");
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -83,12 +83,13 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(game, draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(lotteDevice);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
-    void favoriteTeamOnlyHomeFavoriteReceivesAwayScoreChangedEvent() {
+    void favoriteTeamOnlyHomeFavoriteSkipsAwayScoreChangedEvent() {
         Game game = fixtureGame("kia", "ssg");
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -101,8 +102,9 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(game, draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(ssgDevice);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
@@ -488,7 +490,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void favoriteTeamOnlyAllowsOpponentScoreNotificationsForFavoriteTeamGame() {
+    void favoriteTeamOnlySkipsOpponentScoreNotificationsForFavoriteTeamGame() {
         NotificationDevice device = deviceWithSettings("kia", "token-a", true, true, true, true, true, true, true, false);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -500,12 +502,13 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
-    void favoriteTeamOnlyAllowsOpponentOnBaseNotificationsForFavoriteTeamGame() {
+    void favoriteTeamOnlySkipsOpponentOnBaseNotificationsForFavoriteTeamGame() {
         NotificationDevice device = deviceWithSettings("kia", "token-a", true, true, true, true, true, true, true, false);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -517,8 +520,9 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
@@ -539,7 +543,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void favoriteTeamOnlyAllowsOpponentLeadChangeNotificationsForFavoriteTeamGame() {
+    void favoriteTeamOnlySkipsOpponentLeadChangeNotificationsForFavoriteTeamGame() {
         NotificationDevice device = deviceWithSettings("kia", "token-a", true, true, true, true, true, true, true, false);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -551,12 +555,13 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
-    void favoriteTeamOnlyAllowsScoreNotificationsWhenEventTeamIdIsMissingForFavoriteTeamGame() {
+    void favoriteTeamOnlySkipsScoreNotificationsWhenEventTeamIdIsMissingForFavoriteTeamGame() {
         NotificationDevice device = deviceWithSettings("kia", "token-a", true, true, true, true, true, true, true, false);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -568,8 +573,9 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test
@@ -645,7 +651,7 @@ class NotificationEventServiceTest {
     }
 
     @Test
-    void muteWhenLosingDoesNotApplyToInningChangeNotificationsWhenFavoriteTeamIsLosing() {
+    void muteWhenLosingSkipsInningChangeNotificationsWhenFavoriteTeamIsLosing() {
         NotificationDevice device = deviceWithSettings("lg", "token-a", true, true, true, true, true, true, false, true);
         RecordingApnsPushService pushService = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
         NotificationEventService service = service(pushService);
@@ -657,8 +663,9 @@ class NotificationEventServiceTest {
 
         var result = service.createAndDeliver(fixtureGame(), draft);
 
-        assertThat(result.sentCount()).isEqualTo(1);
-        assertThat(pushService.sentDevices).containsExactly(device);
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(pushService.sentDevices).isEmpty();
     }
 
     @Test

@@ -313,6 +313,7 @@ public class NotificationEventService {
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> isMonitoredGame(device, game) || favoriteTeamGameSkipReason(device, game) == null)
                 .filter(device -> isMonitoredGame(device, game) || eventSettingEnabled(device, draft.eventType()))
+                .filter(device -> isMonitoredGame(device, game) || favoriteTeamOnlyAllows(device, draft))
                 .filter(device -> isMonitoredGame(device, game) || muteWhenLosingAllows(device, draft.eventType(), game))
                 .filter(device -> isMonitoredGame(device, game) || quietHoursAllow(device))
                 .toList();
@@ -446,6 +447,7 @@ public class NotificationEventService {
             return favoriteTeamGameSkipReason;
         }
         if (!eventSettingEnabled(device, draft.eventType())
+                || !favoriteTeamOnlyAllows(device, draft)
                 || !muteWhenLosingAllows(device, draft.eventType(), game)) {
             return ApnsPushService.DEVICE_NOTIFICATION_SETTINGS_DISABLED;
         }
@@ -544,6 +546,7 @@ public class NotificationEventService {
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> favoriteTeamGameSkipReason(device, game) == null)
                 .filter(device -> eventSettingEnabled(device, draft.eventType()))
+                .filter(device -> favoriteTeamOnlyAllows(device, draft))
                 .filter(device -> muteWhenLosingAllows(device, draft.eventType(), game))
                 .filter(this::quietHoursAllow)
                 .toList();
@@ -634,6 +637,14 @@ public class NotificationEventService {
         return ApnsPushService.FAVORITE_TEAM_MISMATCH;
     }
 
+    private boolean favoriteTeamOnlyAllows(NotificationDevice device, NotificationEventDraft draft) {
+        if (!device.isFavoriteTeamOnlyEnabled() || !isTeamScopedRealtimeEvent(draft.eventType())) {
+            return true;
+        }
+        String eventTeamId = payloadText(draft, PAYLOAD_EVENT_TEAM_ID);
+        return eventTeamId != null && eventTeamId.equalsIgnoreCase(device.getFavoriteTeamId());
+    }
+
     private boolean isMonitoredGame(NotificationDevice device, Game game) {
         return device.getMonitoredGameId() != null
                 && game != null
@@ -641,7 +652,8 @@ public class NotificationEventService {
     }
 
     private boolean muteWhenLosingAllows(NotificationDevice device, String eventType, Game game) {
-        if (!device.isMuteWhenLosingEnabled() || !isTeamScopedRealtimeEvent(eventType)) {
+        if (!device.isMuteWhenLosingEnabled()
+                || (!isTeamScopedRealtimeEvent(eventType) && !EVENT_INNING_CHANGED.equals(eventType))) {
             return true;
         }
         String favoriteTeamId = device.getFavoriteTeamId();
@@ -661,6 +673,15 @@ public class NotificationEventService {
         return EVENT_SCORE_CHANGED.equals(eventType)
                 || EVENT_ON_BASE.equals(eventType)
                 || EVENT_LEAD_CHANGED.equals(eventType);
+    }
+
+    private String payloadText(NotificationEventDraft draft, String key) {
+        Object value = draft.payload().get(key);
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 
     private List<String> legacyEventKeys(NotificationEventDraft draft) {
