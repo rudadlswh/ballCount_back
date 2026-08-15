@@ -81,8 +81,15 @@ public class AttendanceService {
         if (identifier.length() > 100) {
             throw new InvalidParameterException("gameId is too long");
         }
-        return attendanceRepository.resolveGameId(identifier)
-                .orElseThrow(() -> new ResourceNotFoundException("game not found: " + identifier));
+        String normalizedIdentifier = identifier;
+        try {
+            normalizedIdentifier = UUID.fromString(identifier).toString();
+        } catch (IllegalArgumentException ignored) {
+            // public/provider 경기 ID는 원문으로 조회합니다.
+        }
+        String lookupIdentifier = normalizedIdentifier;
+        return attendanceRepository.resolveGameId(lookupIdentifier)
+                .orElseThrow(() -> new ResourceNotFoundException("game not found: " + lookupIdentifier));
     }
 
     private UUID requireUuid(String value, String fieldName) {
