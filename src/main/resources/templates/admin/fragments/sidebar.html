@@ -13,6 +13,9 @@
         <a href="/admin/issues" th:classappend="${activePage == 'issues'} ? 'is-active'">
             <span class="nav__icon">!</span>오류 의심 건
         </a>
+        <a href="/admin/games" th:classappend="${activePage == 'games'} ? 'is-active'">
+            <span class="nav__icon">▦</span>월별 경기
+        </a>
         <a href="/admin/notifications" th:classappend="${activePage == 'notifications'} ? 'is-active'">
             <span class="nav__icon">↗</span>알림 발송 내역
         </a>

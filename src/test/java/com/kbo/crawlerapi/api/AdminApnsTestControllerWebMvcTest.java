@@ -70,6 +70,19 @@ class AdminApnsTestControllerWebMvcTest {
     }
 
     @Test
+    void endpointIsEnabledForDevelopmentProfile() throws Exception {
+        apnsProperties.setTestEnabled(false);
+        environment.setActiveProfiles("development");
+        when(notificationDeviceRepository.findByPlatformAndFavoriteTeamIdAndNotificationsEnabledTrue(eq("ios"), eq("ssg")))
+                .thenReturn(List.of());
+
+        mockMvc.perform(post("/admin/test/apns")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestJson("ssg")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void endpointFindsMatchingEnabledSandboxDevices() throws Exception {
         NotificationDevice matching = device("ios", "sandbox", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndFavoriteTeamIdAndNotificationsEnabledTrue(eq("ios"), eq("ssg")))

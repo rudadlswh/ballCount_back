@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow"><title>월별 경기 · KBO 운영실</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
+    <main class="main">
+        <header class="page-header">
+            <div><p class="eyebrow">GET /API/V1/GAMES/MONTH</p><h1>월별 경기</h1><p>앱에 제공되는 월별 경기 일정과 상태를 확인합니다.</p></div>
+            <a class="button button--primary" target="_blank" rel="noopener"
+               th:href="@{/api/v1/games/month(year=${requestedMonth.year},month=${requestedMonth.monthValue})}">JSON 응답 열기</a>
+        </header>
+        <section class="panel">
+            <form class="filter-bar month-filter" method="get" action="/admin/games">
+                <label><span>연도</span><input type="number" name="year" min="1900" max="2100" required th:value="${requestedMonth.year}"></label>
+                <label><span>월</span><input type="number" name="month" min="1" max="12" required th:value="${requestedMonth.monthValue}"></label>
+                <button class="button button--primary" type="submit">조회</button>
+            </form>
+            <div class="result-meta">
+                <span th:text="${requestedMonth + ' · ' + monthResult.games.size() + '경기'}">0경기</span>
+                <small th:text="${monthResult.updatedAt == null ? '갱신 정보 없음' : '최종 갱신 ' + monthResult.updatedAt}">갱신 정보 없음</small>
+            </div>
+            <div class="table-wrap notification-table-wrap">
+                <table>
+                    <thead><tr><th>날짜</th><th>상태</th><th>경기</th><th>점수</th><th>구장 / 시작</th><th>경기 ID</th></tr></thead>
+                    <tbody>
+                    <tr th:each="game : ${monthResult.games}">
+                        <td class="nowrap" th:text="${game.gameDate}">-</td>
+                        <td><span class="badge badge--muted" th:text="${game.status}">scheduled</span></td>
+                        <td><strong th:text="${game.awayTeam.shortName + ' vs ' + game.homeTeam.shortName}">원정 vs 홈</strong></td>
+                        <td class="mono" th:text="${game.awayScore == null || game.homeScore == null ? '- : -' : game.awayScore + ' : ' + game.homeScore}">- : -</td>
+                        <td><span th:text="${game.stadium == null ? '-' : game.stadium}">-</span><br><small th:text="${game.scheduledAt}">-</small></td>
+                        <td><a class="panel-link mono" th:href="@{/admin/games/{id}(id=${game.id})}" th:text="${game.id}">GAME-ID</a></td>
+                    </tr>
+                    <tr th:if="${monthResult.games.empty}"><td colspan="6" class="table-empty">해당 월에 등록된 경기가 없습니다.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</div>
+</body>
+</html>
