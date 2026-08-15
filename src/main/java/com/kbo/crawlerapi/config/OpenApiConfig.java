@@ -9,10 +9,10 @@ import io.swagger.v3.oas.annotations.info.Info;
 @OpenAPIDefinition(
         info = @Info(
                 title = "KBO Crawler API",
-                description = "Internal/app-facing API for normalized KBO schedule, detail, and scoreboard data.",
+                description = "정규화된 KBO 일정, 경기 상세, 스코어보드 데이터를 제공하는 내부 및 앱용 API입니다.",
                 version = "v1",
                 contact = @Contact(
-                        name = "KBO Crawler API Maintainers",
+                        name = "KBO Crawler API 운영팀",
                         email = "maintainers@example.com"
                 )
         )

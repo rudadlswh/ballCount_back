@@ -12,8 +12,62 @@
     <main class="main">
         <header class="page-header">
             <div><p class="eyebrow">NOTIFICATION DELIVERY HISTORY</p><h1>알림 발송 내역</h1><p>경기별 알림 생성·발송 결과와 실패 사유를 확인합니다.</p></div>
-            <span class="badge badge--muted">읽기 전용</span>
+            <span class="badge badge--muted">관리자 전용</span>
         </header>
+        <section class="panel">
+            <div class="panel__header">
+                <div><p class="eyebrow">DEVICES BY FAVORITE TEAM</p><h2>응원 팀별 기기 수</h2></div>
+                <span class="count" th:text="${notificationTeamDeviceCounts.size()}">0</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>응원 팀</th><th>전체</th><th>알림 켬</th><th>iOS</th><th>Android</th></tr></thead>
+                    <tbody>
+                    <tr th:each="team : ${notificationTeamDeviceCounts}">
+                        <td><strong th:text="${team.name}">팀</strong><small class="mono" th:text="${' · ' + team.code}">코드</small></td>
+                        <td><span class="count" th:text="${team.total}">0</span></td>
+                        <td><span class="badge badge--success" th:text="${team.enabled}">0</span></td>
+                        <td th:text="${team.ios}">0</td>
+                        <td th:text="${team.android}">0</td>
+                    </tr>
+                    <tr th:if="${notificationTeamDeviceCounts.empty}"><td colspan="5" class="table-empty">등록된 팀 정보가 없습니다.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="result-meta"><small>응원 팀 미설정 기기는 제외하며, installation_id 기준으로 중복 제거합니다.</small></div>
+        </section>
+        <section class="panel">
+            <div class="panel__header">
+                <div><p class="eyebrow">MANUAL APNS</p><h2>iOS 수동 알림</h2></div>
+                <span class="badge" th:classappend="${manualNotificationEnabled} ? 'badge--success' : 'badge--warning'"
+                      th:text="${manualNotificationEnabled} ? '발송 가능' : '비활성'">발송 가능</span>
+            </div>
+            <div class="alert" th:if="${manualNotificationResult != null}"
+                 th:classappend="${manualNotificationResult.sentCount > 0 && manualNotificationResult.failedCount == 0} ? 'alert--success' : 'alert--warning'">
+                <strong th:text="${manualNotificationResult.sentCount + '건 발송 완료'}">0건 발송 완료</strong>
+                <span th:text="${' · 대상 ' + manualNotificationResult.matchedDeviceCount + '건 · 실패 ' + manualNotificationResult.failedCount + '건'}">결과</span>
+                <small th:unless="${manualNotificationResult.failureReasons.empty}"
+                       th:text="${' · 실패 사유: ' + #strings.listJoin(manualNotificationResult.failureReasons, ', ')}">실패 사유</small>
+            </div>
+            <div class="alert alert--danger" th:if="${manualNotificationError != null}" th:text="${manualNotificationError}">발송 실패</div>
+            <form class="manual-notification-form" method="post" action="/admin/notifications/manual"
+                  th:if="${manualNotificationEnabled}">
+                <label><span>대상 응원 팀</span><select name="favoriteTeamId" required>
+                    <option value="" selected disabled>팀 선택</option>
+                    <option th:each="option : ${notificationTeams}" th:value="${option.code}" th:text="${option.name}">팀</option>
+                </select></label>
+                <label><span>딥링크</span><input name="deepLink" maxlength="500" value="kboscore://test" placeholder="kboscore://test"></label>
+                <label class="manual-notification-form__wide"><span>제목</span><input name="title" maxlength="100" required placeholder="알림 제목"></label>
+                <label class="manual-notification-form__wide"><span>내용</span><textarea name="body" maxlength="500" required rows="4" placeholder="알림 내용을 입력하세요."></textarea></label>
+                <div class="manual-notification-form__wide manual-notification-actions">
+                    <small>선택한 팀을 응원 팀으로 설정하고 알림을 켠 iOS 기기에 즉시 전송됩니다.</small>
+                    <button class="button button--primary" type="submit">수동 알림 보내기</button>
+                </div>
+            </form>
+            <div class="alert alert--warning" th:unless="${manualNotificationEnabled}">
+                운영 환경에서는 <span class="mono">KBO_APNS_TEST_ENABLED=true</span> 설정이 필요합니다.
+            </div>
+        </section>
         <section class="panel">
             <form class="filter-bar notification-filter" method="get" action="/admin/notifications"
                   hx-get="/admin/fragments/notifications" hx-target="#notification-results"

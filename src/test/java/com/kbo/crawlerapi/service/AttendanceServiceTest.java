@@ -56,6 +56,21 @@ class AttendanceServiceTest {
     }
 
     @Test
+    void deleteNormalizesUppercaseGameUuidBeforeLookup() {
+        UUID installationId = UUID.randomUUID();
+        UUID gameId = UUID.randomUUID();
+        RecordingAttendanceRepository attendanceRepository = new RecordingAttendanceRepository();
+        attendanceRepository.resolvedGameId = gameId;
+        AttendanceService service = new AttendanceService(attendanceRepository);
+
+        service.delete(installationId.toString(), gameId.toString().toUpperCase());
+
+        org.assertj.core.api.Assertions.assertThat(attendanceRepository.lastResolvedIdentifier)
+                .isEqualTo(gameId.toString());
+        org.assertj.core.api.Assertions.assertThat(attendanceRepository.deletedGameId).isEqualTo(gameId);
+    }
+
+    @Test
     void upsertAcceptsPublicGameIdentifier() {
         UUID installationId = UUID.randomUUID();
         UUID databaseGameId = UUID.randomUUID();

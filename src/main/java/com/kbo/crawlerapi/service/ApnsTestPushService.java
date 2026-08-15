@@ -52,7 +52,9 @@ public class ApnsTestPushService {
             return true;
         }
         for (String profile : environment.getActiveProfiles()) {
-            if ("local".equalsIgnoreCase(profile) || "dev".equalsIgnoreCase(profile)) {
+            if ("local".equalsIgnoreCase(profile)
+                    || "dev".equalsIgnoreCase(profile)
+                    || "development".equalsIgnoreCase(profile)) {
                 return true;
             }
         }

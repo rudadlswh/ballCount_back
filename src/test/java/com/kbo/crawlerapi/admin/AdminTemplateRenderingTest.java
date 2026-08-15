@@ -2,7 +2,10 @@ package com.kbo.crawlerapi.admin;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kbo.crawlerapi.admin.AdminDataService.DashboardView;
@@ -11,8 +14,20 @@ import com.kbo.crawlerapi.admin.AdminDataService.GameHeaderView;
 import com.kbo.crawlerapi.admin.AdminDataService.NotificationHistoryView;
 import com.kbo.crawlerapi.admin.AdminDataService.NotificationSearchView;
 import com.kbo.crawlerapi.admin.AdminDataService.TeamFilterView;
+import com.kbo.crawlerapi.admin.AdminDataService.TeamDeviceCountView;
+import com.kbo.crawlerapi.api.dto.GameSummaryDto;
+import com.kbo.crawlerapi.api.dto.GamesByMonthResponse;
+import com.kbo.crawlerapi.api.dto.TeamSummaryDto;
+import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.service.ApnsTestPushService;
+import com.kbo.crawlerapi.service.ApnsTestPushService.ApnsTestPushCommand;
+import com.kbo.crawlerapi.service.ApnsTestPushService.ApnsTestPushResult;
+import com.kbo.crawlerapi.service.GameReadService;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,13 +42,19 @@ class AdminTemplateRenderingTest {
 
     private AdminDataService dataService;
     private AdminLogBuffer logBuffer;
+    private StubGameReadService gameReadService;
+    private StubApnsTestPushService apnsTestPushService;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         dataService = new StubAdminDataService();
         logBuffer = new StubAdminLogBuffer();
-        mockMvc = MockMvcBuilders.standaloneSetup(new AdminPageController(dataService, logBuffer))
+        gameReadService = new StubGameReadService();
+        apnsTestPushService = new StubApnsTestPushService();
+        mockMvc = MockMvcBuilders.standaloneSetup(
+                        new AdminPageController(dataService, logBuffer, gameReadService, apnsTestPushService)
+                )
                 .setViewResolvers(viewResolver())
                 .build();
     }
@@ -93,6 +114,9 @@ class AdminTemplateRenderingTest {
                         .param("eventType", "SCORE"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("알림 발송 내역")))
+                .andExpect(content().string(containsString("응원 팀별 기기 수")))
+                .andExpect(content().string(containsString("12")))
+                .andExpect(content().string(containsString("iOS 수동 알림")))
                 .andExpect(content().string(containsString("KIA vs LG")))
                 .andExpect(content().string(containsString("APNS timeout")));
 
@@ -100,6 +124,57 @@ class AdminTemplateRenderingTest {
         org.assertj.core.api.Assertions.assertThat(stub.requestedFrom).isEqualTo(LocalDate.of(2026, 7, 28));
         org.assertj.core.api.Assertions.assertThat(stub.requestedTeam).isEqualTo("LG");
         org.assertj.core.api.Assertions.assertThat(stub.requestedStatus).isEqualTo("failed");
+    }
+
+    @Test
+    void manualNotificationSendsAndRedirectsToHistory() throws Exception {
+        mockMvc.perform(post("/admin/notifications/manual")
+                        .param("favoriteTeamId", "ssg")
+                        .param("title", "경기 시작")
+                        .param("body", "잠시 후 경기가 시작됩니다.")
+                        .param("deepLink", "kboscore://game/20260815-SSG-LG"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin/notifications"))
+                .andExpect(flash().attributeExists("manualNotificationResult"));
+
+        org.assertj.core.api.Assertions.assertThat(apnsTestPushService.command.favoriteTeamId()).isEqualTo("ssg");
+        org.assertj.core.api.Assertions.assertThat(apnsTestPushService.command.title()).isEqualTo("경기 시작");
+    }
+
+    @Test
+    void manualNotificationRejectsBlankContent() throws Exception {
+        mockMvc.perform(post("/admin/notifications/manual")
+                        .param("favoriteTeamId", "ssg")
+                        .param("title", "경기 시작")
+                        .param("body", " "))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attributeExists("manualNotificationError"));
+    }
+
+    @Test
+    void monthlyGamesRendersApiResult() throws Exception {
+        TeamSummaryDto away = new TeamSummaryDto("away-id", "KIA 타이거즈", "KIA", null);
+        TeamSummaryDto home = new TeamSummaryDto("home-id", "LG 트윈스", "LG", null);
+        GameSummaryDto game = new GameSummaryDto(
+                "20260728-KIA-LG", "KBO", "provider-1", LocalDate.of(2026, 7, 28),
+                OffsetDateTime.parse("2026-07-28T18:30:00+09:00"), "잠실", "final", false, false,
+                null, away, home, 2, 3, null, null, OffsetDateTime.parse("2026-07-28T22:00:00+09:00"),
+                OffsetDateTime.parse("2026-07-28T22:00:00+09:00"), false
+        );
+        gameReadService.monthResult = new GamesByMonthResponse(2026, 7, List.of(game), game.updatedAt(), false);
+
+        mockMvc.perform(get("/admin/games").param("year", "2026").param("month", "7"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("GET /API/V1/GAMES/MONTH")))
+                .andExpect(content().string(containsString("KIA vs LG")))
+                .andExpect(content().string(containsString("20260728-KIA-LG")));
+        org.assertj.core.api.Assertions.assertThat(gameReadService.requestedMonth).isEqualTo(YearMonth.of(2026, 7));
+    }
+
+    @Test
+    void monthlyGamesRejectsInvalidMonth() throws Exception {
+        mockMvc.perform(get("/admin/games").param("year", "2026").param("month", "13"))
+                .andExpect(status().isBadRequest());
     }
 
     private ThymeleafViewResolver viewResolver() {
@@ -151,6 +226,14 @@ class AdminTemplateRenderingTest {
         }
 
         @Override
+        public List<TeamDeviceCountView> notificationTeamDeviceCounts() {
+            return List.of(
+                    new TeamDeviceCountView("LG", "LG", 12, 10, 8, 4),
+                    new TeamDeviceCountView("KIA", "KIA", 7, 6, 5, 2)
+            );
+        }
+
+        @Override
         public NotificationSearchView notificationHistory(
                 LocalDate from,
                 LocalDate to,
@@ -179,6 +262,47 @@ class AdminTemplateRenderingTest {
         @Override
         public int size() {
             return 0;
+        }
+    }
+
+    private static final class StubGameReadService extends GameReadService {
+        private GamesByMonthResponse monthResult = new GamesByMonthResponse(2026, 1, List.of(), null, false);
+        private YearMonth requestedMonth;
+
+        private StubGameReadService() {
+            super(null, null, null, null, java.time.Clock.systemUTC());
+        }
+
+        @Override
+        public GamesByMonthResponse getGamesByMonth(YearMonth yearMonth) {
+            requestedMonth = yearMonth;
+            return monthResult;
+        }
+    }
+
+    private static final class StubApnsTestPushService extends ApnsTestPushService {
+        private ApnsTestPushCommand command;
+
+        private StubApnsTestPushService() {
+            super(
+                    null,
+                    null,
+                    new ApnsProperties(),
+                    new com.fasterxml.jackson.databind.ObjectMapper(),
+                    new org.springframework.mock.env.MockEnvironment(),
+                    java.time.Clock.systemUTC()
+            );
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public ApnsTestPushResult sendTestPush(ApnsTestPushCommand command) {
+            this.command = command;
+            return new ApnsTestPushResult(2, 2, 2, 0, List.of(), Map.of());
         }
     }
 }

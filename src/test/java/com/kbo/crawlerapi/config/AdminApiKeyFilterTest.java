@@ -139,6 +139,32 @@ class AdminApiKeyFilterTest {
     }
 
     @Test
+    void authenticatedBrowserSessionPassesMonthlyGamesFilter() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+
+        mockMvc.perform(get("/admin/games")
+                        .session(session)
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void authenticatedBrowserSessionPassesManualNotificationUiFilter() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+
+        mockMvc.perform(post("/admin/notifications/manual").session(session))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void manualNotificationUiRequiresAuthenticatedSession() throws Exception {
+        mockMvc.perform(post("/admin/notifications/manual"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void internalRequestWithoutApiKeyReturnsUnauthorized() throws Exception {
         mockMvc.perform(post("/internal/orchestration/detail-refresh-pass"))
                 .andExpect(status().isUnauthorized());

@@ -246,6 +246,30 @@ public class AdminDataService {
         ));
     }
 
+    public List<TeamDeviceCountView> notificationTeamDeviceCounts() {
+        return jdbcTemplate.query("""
+                SELECT t.team_code, t.short_name,
+                       COUNT(DISTINCT COALESCE(NULLIF(d.installation_id, ''), d.id::text)) AS total_count,
+                       COUNT(DISTINCT COALESCE(NULLIF(d.installation_id, ''), d.id::text))
+                           FILTER (WHERE d.notifications_enabled) AS enabled_count,
+                       COUNT(DISTINCT COALESCE(NULLIF(d.installation_id, ''), d.id::text))
+                           FILTER (WHERE LOWER(d.platform) = 'ios') AS ios_count,
+                       COUNT(DISTINCT COALESCE(NULLIF(d.installation_id, ''), d.id::text))
+                           FILTER (WHERE LOWER(d.platform) = 'android') AS android_count
+                FROM teams t
+                LEFT JOIN notification_devices d ON LOWER(d.favorite_team_id) = LOWER(t.team_code)
+                GROUP BY t.team_code, t.short_name
+                ORDER BY t.short_name ASC, t.team_code ASC
+                """, (rs, rowNum) -> new TeamDeviceCountView(
+                text(rs, "team_code"),
+                text(rs, "short_name"),
+                rs.getLong("total_count"),
+                rs.getLong("enabled_count"),
+                rs.getLong("ios_count"),
+                rs.getLong("android_count")
+        ));
+    }
+
     public NotificationSearchView notificationHistory(
             LocalDate from,
             LocalDate to,
@@ -610,6 +634,16 @@ public class AdminDataService {
     }
 
     public record TeamFilterView(String code, String name) {
+    }
+
+    public record TeamDeviceCountView(
+            String code,
+            String name,
+            long total,
+            long enabled,
+            long ios,
+            long android
+    ) {
     }
 
     public record NotificationSearchView(
