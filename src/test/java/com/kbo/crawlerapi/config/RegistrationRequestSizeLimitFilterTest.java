@@ -98,6 +98,21 @@ class RegistrationRequestSizeLimitFilterTest {
     }
 
     @Test
+    void adminFormRejectsPayloadLargerThan32Kb() throws Exception {
+        AdminUiProperties adminProperties = new AdminUiProperties();
+        MockMvc adminMockMvc = MockMvcBuilders.standaloneSetup(
+                        new AdminAuthenticationController(new AdminAuthenticationService(adminProperties))
+                )
+                .addFilters(new RegistrationRequestSizeLimitFilter(properties()))
+                .build();
+
+        adminMockMvc.perform(post("/admin/login")
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .content("username=" + "a".repeat((32 * 1024) + 1)))
+                .andExpect(status().isPayloadTooLarge());
+    }
+
+    @Test
     void rejectsUnknownLengthRequestWhenReadBodyExceedsLimit() throws Exception {
         AppSecurityProperties properties = new AppSecurityProperties();
         properties.setRegistrationRequestMaxBytes(8);

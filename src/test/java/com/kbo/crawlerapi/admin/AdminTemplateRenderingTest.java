@@ -18,7 +18,9 @@ import com.kbo.crawlerapi.admin.AdminDataService.TeamDeviceCountView;
 import com.kbo.crawlerapi.api.dto.GameSummaryDto;
 import com.kbo.crawlerapi.api.dto.GamesByMonthResponse;
 import com.kbo.crawlerapi.api.dto.TeamSummaryDto;
+import com.kbo.crawlerapi.config.AppSecurityProperties;
 import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.config.RegistrationRequestSizeLimitFilter;
 import com.kbo.crawlerapi.service.ApnsTestPushService;
 import com.kbo.crawlerapi.service.ApnsTestPushService.ApnsTestPushCommand;
 import com.kbo.crawlerapi.service.ApnsTestPushService.ApnsTestPushResult;
@@ -32,6 +34,7 @@ import java.util.Optional;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.thymeleaf.spring6.SpringTemplateEngine;
@@ -52,9 +55,12 @@ class AdminTemplateRenderingTest {
         logBuffer = new StubAdminLogBuffer();
         gameReadService = new StubGameReadService();
         apnsTestPushService = new StubApnsTestPushService();
+        AppSecurityProperties securityProperties = new AppSecurityProperties();
+        securityProperties.setRegistrationRequestMaxBytes(32 * 1024);
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new AdminPageController(dataService, logBuffer, gameReadService, apnsTestPushService)
                 )
+                .addFilters(new RegistrationRequestSizeLimitFilter(securityProperties))
                 .setViewResolvers(viewResolver())
                 .build();
     }
@@ -129,16 +135,15 @@ class AdminTemplateRenderingTest {
     @Test
     void manualNotificationSendsAndRedirectsToHistory() throws Exception {
         mockMvc.perform(post("/admin/notifications/manual")
-                        .param("favoriteTeamId", "ssg")
-                        .param("title", "경기 시작")
-                        .param("body", "잠시 후 경기가 시작됩니다.")
-                        .param("deepLink", "kboscore://game/20260815-SSG-LG"))
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .content("favoriteTeamId=ssg&title=game+start&body=starting+soon"
+                                + "&deepLink=kboscore%3A%2F%2Fgame%2F20260815-SSG-LG"))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/admin/notifications"))
                 .andExpect(flash().attributeExists("manualNotificationResult"));
 
         org.assertj.core.api.Assertions.assertThat(apnsTestPushService.command.favoriteTeamId()).isEqualTo("ssg");
-        org.assertj.core.api.Assertions.assertThat(apnsTestPushService.command.title()).isEqualTo("경기 시작");
+        org.assertj.core.api.Assertions.assertThat(apnsTestPushService.command.title()).isEqualTo("game start");
     }
 
     @Test
