@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@Tag(name = "Games", description = "App-facing read and refresh APIs for normalized KBO game data.")
+@Tag(name = "경기", description = "정규화된 KBO 경기 데이터를 조회하고 갱신하는 앱용 API입니다.")
 public class StaleGameReconciliationController {
 
     private final StaleGameReconciliationService staleGameReconciliationService;
@@ -22,8 +22,8 @@ public class StaleGameReconciliationController {
 
     @PostMapping({"/api/v1/games/reconcile-stale", "/games/reconcile-stale"})
     @Operation(
-            summary = "Reconcile stale past schedule games",
-            description = "Refreshes schedule data and runs eligible detail imports for explicit dates selected by the app."
+            summary = "갱신되지 않은 과거 경기 보정",
+            description = "앱에서 지정한 날짜의 일정 데이터를 갱신하고, 대상 경기에 대해 상세 정보 수집을 실행합니다."
     )
     public StaleGameReconciliationResult reconcileStaleGames(
             @RequestBody StaleGameReconciliationRequest request
