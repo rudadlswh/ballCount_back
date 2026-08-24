@@ -1,263 +1,373 @@
-# KBO Crawler API
+<h1 align="center">KBO Score Backend</h1>
 
-## Local setup
+<p align="center">
+  KBO 경기 데이터를 신뢰 가능한 상태로 정규화하고 실시간으로 전달하는 백엔드
+</p>
 
-1. Create a repository-root `.env` file.
-2. Set at least these keys in `.env`:
-   - `SPRING_PROFILES_ACTIVE=local`
-   - `APP_DB_SCHEMA=kbo_crawler_api_dev`
-   - `APP_RUNTIME_ROLE=reader`
-   - `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/<database>?currentSchema=kbo_crawler_api_dev`
-   - `SPRING_DATASOURCE_USERNAME`
-   - `SPRING_DATASOURCE_PASSWORD`
-3. Optionally override:
-   - `SPRING_PROFILES_ACTIVE`
+<p align="center">
+  <img src="https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white" alt="Java 17">
+  <img src="https://img.shields.io/badge/Spring_Boot-3.4.0-6DB33F?logo=springboot&logoColor=white" alt="Spring Boot 3.4.0">
+  <img src="https://img.shields.io/badge/PostgreSQL-Flyway-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL and Flyway">
+  <img src="https://img.shields.io/badge/Tests-604-34C759" alt="604 tests">
+</p>
 
-Flyway versioned migrations are immutable after application. Schema corrections must be added as a new
-versioned migration and must target `${appSchema}` (or the active default schema), rather than hard-coding
-the production schema. V35 repairs notification-device columns for databases where earlier qualified
-migrations were recorded in the development history but executed against a different schema.
+## 소개
 
-## Admin console
+KBO Score Backend는 공식 KBO 데이터를 수집·파싱·정규화해 iOS 앱에 REST와 SSE로 제공하고, 경기 변화를 APNs·FCM·Live Activity로 전달하는 Spring Boot 서비스입니다.
 
-The server provides a Thymeleaf + HTMX operations console at `http://localhost:8088/admin`.
-Set the following values outside Git before using it:
+외부 원천의 지연과 형식 변화, 초 단위 중복 응답, 부분 실패를 정상적인 운영 조건으로 다룹니다. 동일한 입력은 다시 저장하거나 알리지 않고, 트랜잭션이 완료된 상태만 외부로 전달하며, 실패한 작업도 다음 실행과 진단 기록을 잃지 않도록 설계했습니다.
 
-- `ADMIN_USERNAME` (defaults to `admin`)
-- `ADMIN_PASSWORD` (required; there is no default password)
-- `ADMIN_SESSION_TIMEOUT` (defaults to `30m`)
-- `ADMIN_SESSION_COOKIE_SECURE` (`true` behind production HTTPS, `false` for local HTTP)
-- `ADMIN_STALE_GAME_THRESHOLD` (defaults to `2m`)
-- `ADMIN_LOG_CAPACITY` (defaults to `2000`, minimum effective capacity `100`)
+## 핵심 기능
 
-The console masks configured usernames/passwords and never renders database URLs or secret values.
-Browser sessions are accepted only by the read-only console routes. Existing mutating `/admin/crawl`,
-`/admin/ranks`, and `/admin/test` APIs continue to require `X-Admin-Key` or `X-Admin-Api-Key`.
-Application logs are retained in memory from process startup and the log screen returns at most 500 rows per search.
+| 영역 | 구현 내용 |
+| --- | --- |
+| 데이터 수집 | 일정, 경기 상세, 문자 중계, 라인스코어와 박스스코어 수집 |
+| 도메인 정규화 | 외부 상태·식별자·취소 사유를 안정적인 앱용 모델로 변환 |
+| 적응형 동기화 | 경기 상태에 따라 30분 → 5분/1분 → 1초 → 30초로 수집 주기 전환 |
+| 멱등 처리 | SHA-256 raw hash와 고유 event key로 중복 저장·알림 차단 |
+| 앱 API | 일정, 스코어보드, 상세, 라인업, 순위와 직관 기록 제공 |
+| 실시간 전달 | SSE, APNs, FCM과 Live Activity 업데이트 |
+| 운영 도구 | Thymeleaf + HTMX 관리자 콘솔, 작업·실패·로그 조회 |
+| 배포 안전성 | 스키마·runtime role·APNs 설정 검증, Docker와 GitHub Actions |
 
-The application loads `.env` automatically through Spring Boot config import when you run from the repository root.
-Local, development, and test profiles use the dedicated `kbo_crawler_api_dev` schema. Production uses `kbo_crawler_api`.
-Startup fails when a non-production profile is configured with the production schema, or when local/development/test is configured with anything other than `kbo_crawler_api_dev`.
-`APP_RUNTIME_ROLE` defaults to reader behavior. Reader or unset local runs must keep `APP_SYNC_ENABLED=false`.
+## 기술 스택
 
-## Run locally
+- **Runtime:** Java 17, Spring Boot 3.4.0, Gradle 9.3.1
+- **Web:** Spring MVC, Thymeleaf, HTMX, springdoc-openapi
+- **Data:** PostgreSQL, Spring Data JPA/JDBC, Flyway
+- **Collection:** Java HTTP Client, jsoup
+- **Realtime:** Server-Sent Events, APNs, FCM, Live Activity
+- **Operations:** Docker, Docker Compose, GHCR, GitHub Actions
+- **Test:** JUnit 5, Spring Boot Test
 
-```bash
-./gradlew build
-./gradlew bootRun
-```
+현재 코드베이스에는 186개의 main Java 파일, 37개의 Flyway 마이그레이션과 67개 테스트 클래스의 **604개 @Test 선언**이 있습니다.
 
-## Production profile
+## 아키텍처
 
-Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Create a repository-root
-`.env` file, then set the real database and APNs values outside Git:
+~~~mermaid
+flowchart LR
+    KBO[Official KBO] --> Client[Crawler Clients]
+    Client --> Parser[Parsers / Normalizers]
+    Parser --> Sync[Sync Services]
+    Sync --> DB[(PostgreSQL)]
+    DB --> REST[REST API]
+    DB --> SSE[SSE Stream]
+    Sync --> Event[Notification Events]
+    Event --> APNS[APNs / Live Activity]
+    Event --> FCM[FCM]
+    DB --> Admin[Admin Console]
+~~~
 
-- `APP_DB_SCHEMA=kbo_crawler_api`
-- `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/<database>?currentSchema=kbo_crawler_api`
-- `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
-- `APNS_ENV=production`
-- `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID=com.chogm.kboScore`
-- `APNS_PRIVATE_KEY_PATH`
-- `KBO_PUSH_ENABLED=true`
+### 신뢰성 설계
 
-The production profile disables Swagger/OpenAPI UI, keeps automatic sync opt-in
-through `APP_SYNC_ENABLED`, and defaults APNs to the production gateway. Startup
-fails under the production profile when sync is enabled unless `KBO_PUSH_ENABLED=true`, `APNS_ENV=production`,
-`APNS_BUNDLE_ID=com.chogm.kboScore`, `APNS_TEAM_ID`, `APNS_KEY_ID`, and
-`APNS_PRIVATE_KEY_PATH` are all configured.
+1. **상태 기반 스케줄링**
 
-## Docker production deployment
+   고정 주기 대신 경기 상태와 시작 시각을 기준으로 다음 실행 시점을 계산합니다.
 
-The production container uses Java 17 and listens on `8088`. Docker Compose publishes that port only on
-the host loopback interface (`127.0.0.1`), so expose it through an HTTPS reverse proxy rather than opening
-`8088` in the public firewall. Supabase PostgreSQL remains external; this Compose project does not run a
-database container.
+2. **동시 실행 제어**
 
-Prepare the server configuration:
+   AtomicBoolean로 프로세스 내부 중복 실행을 막고, writer 환경에서는 PostgreSQL advisory lock으로 날짜별 경합을 제어할 수 있습니다.
 
-```bash
-touch .env
-chmod 600 .env
-mkdir -p secrets
-```
+3. **멱등 저장과 전달**
 
-Replace every placeholder in `.env` with the existing production values. In particular, production needs
-`APP_DB_SCHEMA=kbo_crawler_api`, a Supabase JDBC URL containing `currentSchema=kbo_crawler_api`, and
-`APP_RUNTIME_ROLE=writer` when `APP_SYNC_ENABLED=true`. The existing HikariCP lifetime, keepalive, and TCP
-keepalive controls are passed through `DB_POOL_MAX_LIFETIME`, `DB_POOL_KEEPALIVE_TIME`, and
-`DB_TCP_KEEP_ALIVE`.
+   정규화한 응답의 SHA-256 hash가 이전 값과 같으면 snapshot, line score, 알림과 Live Activity 갱신을 생략합니다. 알림 event key에는 DB unique constraint를 적용합니다.
 
-Copy the APNs `.p8` file into `./secrets` and set `APNS_PRIVATE_KEY_PATH` to its container path, for example
-`/run/secrets/AuthKey_ABC123.p8`. If FCM is enabled, copy its service-account JSON there and set
-`GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json`. The container runs as UID/GID
-`10001`, so mounted key files must be readable by that identity. The `secrets` directory, `.env`, private-key
-extensions, and the entire local build output are excluded from Git or the Docker build context.
+4. **커밋 이후 발행**
 
-Build, start, inspect, and stop the service with:
+   SSE와 Live Activity는 트랜잭션이 완료된 뒤 발행해 사용자가 롤백될 상태를 먼저 보지 않도록 합니다.
 
-```bash
-docker compose build
-docker compose up -d
-docker compose ps
-docker compose logs -f
-docker compose down
-curl -i http://localhost:8088/healthz
-```
+5. **실패 후 재예약**
 
-`docker compose config` validates the resolved configuration, but its output can contain values loaded from
-`.env`; do not paste that output into tickets or public logs. On a systemd-based server, enable the Docker
-daemon at boot (`sudo systemctl enable --now docker`). Together with `restart: unless-stopped`, this restarts
-the backend after a host reboot or an unexpected JVM/container exit. The `/healthz` healthcheck is a liveness
-probe; Docker Compose reports an unhealthy process but does not restart a process that remains running.
+   실행 중 예외가 발생해도 다음 tick을 예약합니다. 실패 시 기본 재시도 간격은 10초이며 작업과 실패 기록은 별도 트랜잭션으로 남깁니다.
 
-### HTTPS reverse proxy and SSE
+## 동기화 주기
 
-Terminate TLS on Nginx, Caddy, or an equivalent reverse proxy. Forward the original host/protocol headers
-because the production profile uses native forwarded-header handling. For Nginx, a minimal configuration is:
+~~~mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Pregame: 경기 접근
+    Pregame --> FastPregame: 시작 30분 전
+    FastPregame --> Live: 경기 시작
+    Live --> Finalizing: 종료 감지
+    Finalizing --> Closed: 최종 상태 확인
+    Idle: 30분
+    Pregame: 5분
+    FastPregame: 1분
+    Live: 1초
+    Finalizing: 30초
+~~~
 
-```nginx
-server {
-    listen 80;
-    server_name api.example.com;
-    return 301 https://$host$request_uri;
-}
+자동 동기화는 기본적으로 꺼져 있습니다.
 
-server {
-    listen 443 ssl http2;
-    server_name api.example.com;
+| 환경 | 스키마 | Runtime role | 자동 동기화 |
+| --- | --- | --- | --- |
+| local, development | kbo_crawler_api_dev | 기본 reader | 기본 false |
+| test | kbo_crawler_api_dev | 기본 reader | 기본 false |
+| production | kbo_crawler_api | writer 명시 필요 | 명시적으로 활성화 |
 
-    ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+잘못된 profile·schema·role 조합은 시작 단계에서 차단됩니다. APP_SYNC_ENABLED=true인 production writer는 production APNs 설정도 모두 유효해야 실행됩니다.
 
-    location / {
-        proxy_pass http://127.0.0.1:8088;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
+## 프로젝트 구조
 
-    location ~ ^/api/v1/games/[^/]+/stream$ {
-        proxy_pass http://127.0.0.1:8088;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Connection "";
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 6h;
-        proxy_send_timeout 6h;
-        add_header X-Accel-Buffering no always;
-    }
-}
-```
+~~~text
+src/main/
+├── java/com/kbo/crawlerapi/
+│   ├── admin/          # 운영 콘솔과 세션 인증
+│   ├── api/            # Public, internal, admin controller와 DTO
+│   ├── config/         # 환경 설정, 보안 필터와 startup guard
+│   ├── crawler/        # 공식 데이터 HTTP client
+│   ├── domain/         # 경기, snapshot, 이벤트와 등록 토큰
+│   ├── parser/         # 일정·상세·중계·박스스코어 parser
+│   ├── repository/     # JPA/JDBC 저장소
+│   ├── scheduler/      # 상태 적응형 동기화 scheduler
+│   ├── service/        # 수집, 조회, 전달과 운영 서비스
+│   └── support/        # hash, 입력 정규화와 팀 catalog
+└── resources/
+    ├── db/migration/   # Flyway 마이그레이션
+    ├── templates/      # Thymeleaf 관리자 화면
+    └── application-*.yml
+~~~
 
-Obtain and renew a trusted certificate (for example with Certbot), allow inbound `80/443`, and keep `8088`
-closed publicly. The application emits an SSE heartbeat every 10 seconds and keeps an emitter for up to six
-hours; any CDN or load balancer in front of Nginx must also have buffering disabled and an idle timeout longer
-than the heartbeat interval. This deployment is intentionally a single backend instance because SSE
-subscribers are held in process memory. Before enabling the new writer, stop the Render writer to prevent
-duplicate scheduling and notifications.
+## 로컬 실행
 
-## OpenAPI and Swagger UI
+### 요구 사항
 
-When the app is running locally, inspect the documented public API surface at:
+- JDK 17
+- PostgreSQL
+- 저장소에 포함된 Gradle Wrapper
 
-- Swagger UI: `http://localhost:8088/swagger-ui.html`
-- OpenAPI JSON: `http://localhost:8088/v3/api-docs`
-- OpenAPI YAML: `http://localhost:8088/v3/api-docs.yaml`
+### 1. 저장소 받기
 
-Policy:
+~~~bash
+git clone https://github.com/rudadlswh/ballCount_back.git
+cd ballCount_back
+~~~
 
-- App-facing `GET /api/v1/*` endpoints are included in OpenAPI.
-- Internal `/internal/*` import and orchestration endpoints are intentionally hidden from Swagger UI so they are not casually used as public API operations.
-- Public game payloads now include `cancelReason`:
-  - cancelled + explicit `우천취소` -> `rain`
-  - cancelled + explicit `그라운드사정` -> `ground`
-  - cancelled + no clear official reason -> `unknown`
-  - non-cancelled games -> `null`
+### 2. 환경 설정
 
-## Trigger schedule ingestion
+저장소 루트에 .env를 만들고 최소한 다음 값을 설정합니다.
 
-Use the internal verification endpoint to fetch and upsert a month of official KBO schedule data:
-
-```bash
-curl -X POST 'http://localhost:8088/internal/schedule/import?year=2026&month=4'
-```
-
-## Trigger game detail ingestion
-
-Use the internal verification endpoint to fetch and persist the latest snapshot and line score data for one imported game:
-
-```bash
-curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/import'
-```
-
-To validate repeated same-game refresh behavior without a scheduler, use:
-
-```bash
-curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
-```
-
-When the source is unchanged, later runs should report `snapshotCreated=false` and `lineScoresUpdated=false`.
-
-## Run one orchestration pass
-
-Use the internal orchestration endpoint to evaluate a date's games and optionally execute one controlled detail-refresh pass:
-
-```bash
-curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
-curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
-```
-
-## Sync scheduler
-
-The sync scheduler is production-safe by default:
-
-- `app.sync.enabled=false` by default, so normal startup performs no automatic refresh.
-- Runtime writer jobs require `APP_RUNTIME_ROLE=writer` plus the profile's allowed schema.
-- `LiveGameSyncScheduler` is the single automatic scheduler. It handles pregame, live, and post-final confirmation cadence from game state.
-- Legacy `app.scheduler.*`, `APP_SCHEDULER_*`, `app.live-sync.enabled`, and old live-sync enabled env vars are not used as scheduler switches.
-
-Environment policy:
-
-- `local` / `development`: reader or unset role is safe only with `APP_SYNC_ENABLED=false`. Use `APP_RUNTIME_ROLE=writer` with `kbo_crawler_api_dev` for controlled write testing. The production schema is always blocked.
-- `test`: reader by default. The production schema is always blocked. Writer tests must explicitly use `APP_RUNTIME_ROLE=writer` with `kbo_crawler_api_dev`.
-- `production`: writer jobs require `APP_RUNTIME_ROLE=writer` with `kbo_crawler_api`. The development schema is blocked.
-
-Local reader example:
-
-```env
+~~~env
 SPRING_PROFILES_ACTIVE=local
 APP_DB_SCHEMA=kbo_crawler_api_dev
 APP_RUNTIME_ROLE=reader
 APP_SYNC_ENABLED=false
-SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/postgres?sslmode=require&currentSchema=kbo_crawler_api_dev
-SPRING_DATASOURCE_USERNAME=<user>
-SPRING_DATASOURCE_PASSWORD=<password>
-```
 
-```bash
-./gradlew bootRun --args='--spring.profiles.active=local'
-```
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/postgres?currentSchema=kbo_crawler_api_dev
+SPRING_DATASOURCE_USERNAME=postgres
+SPRING_DATASOURCE_PASSWORD=your-password
+~~~
 
-Local writer example:
+로컬에서 동기화를 직접 검증할 때만 reader를 writer로 바꾸고 APP_SYNC_ENABLED=true를 사용합니다.
 
-```env
-SPRING_PROFILES_ACTIVE=local
-APP_DB_SCHEMA=kbo_crawler_api_dev
+> .env, APNs .p8, FCM service-account JSON과 인증서는 Git에 커밋하지 마세요.
+
+### 3. 실행
+
+~~~bash
+./gradlew bootRun
+~~~
+
+서버는 기본적으로 http://localhost:8088에서 실행됩니다.
+
+~~~bash
+curl http://localhost:8088/healthz
+~~~
+
+### 4. 테스트와 빌드
+
+~~~bash
+./gradlew test
+./gradlew build
+~~~
+
+테스트 task는 test profile을 사용하며 production 스키마 접근과 자동 동기화를 차단합니다.
+
+## API
+
+### Public API
+
+| Method | Endpoint | 설명 |
+| --- | --- | --- |
+| GET | /healthz | 프로세스 liveness |
+| GET | /api/v1/games?date=2026-04-09 | 날짜별 경기 |
+| GET | /api/v1/games/month?year=2026&month=4 | 월별 일정 |
+| GET | /api/v1/games/{gameId} | 경기 요약 |
+| GET | /api/v1/games/{gameId}/detail | 통합 경기 상세 |
+| GET | /api/v1/games/{gameId}/live-state | 간결한 실시간 상태 |
+| GET | /api/v1/games/{gameId}/linescore | 이닝별 점수 |
+| GET | /api/v1/games/{gameId}/boxscore | 타자·투수 기록 |
+| GET | /api/v1/games/{gameId}/lineup | 라인업 |
+| GET | /api/v1/games/{gameId}/stream | SSE 실시간 스트림 |
+| GET | /api/v1/scoreboard | 날짜별 스코어보드 |
+| GET | /api/v1/teams | 팀 목록 |
+| GET | /api/v1/standings?season=2026 | 시즌 순위 |
+| GET/POST/DELETE | /api/v1/attendance | 설치 ID 기반 직관 기록 |
+
+로컬·개발 환경에서는 다음 문서도 사용할 수 있습니다.
+
+- Swagger UI: http://localhost:8088/swagger-ui.html
+- OpenAPI JSON: http://localhost:8088/v3/api-docs
+- OpenAPI YAML: http://localhost:8088/v3/api-docs.yaml
+
+production에서는 Swagger와 OpenAPI endpoint가 비활성화됩니다.
+
+<details>
+<summary><strong>수동 수집 및 검증 endpoint</strong></summary>
+
+Internal endpoint는 운영 앱용 public API가 아닙니다.
+
+~~~bash
+# 한 달의 공식 일정 수집
+curl -X POST 'http://localhost:8088/internal/schedule/import?year=2026&month=4'
+
+# 한 경기의 상세·라인스코어 수집
+curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/import'
+
+# 같은 경기를 반복 갱신해 멱등성 확인
+curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
+
+# 실행 계획만 확인하거나 한 번의 orchestration pass 수행
+curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
+curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
+~~~
+
+원천 상태가 같으면 반복 실행 결과의 snapshotCreated와 lineScoresUpdated는 false가 됩니다.
+
+</details>
+
+## 실시간 스트림
+
+SSE 구독 시 현재 최신 snapshot을 먼저 전송하고 이후 변경된 상태만 발행합니다.
+
+- emitter timeout: 6시간
+- heartbeat: 10초
+- 종료 경기: 최종 event 전송 후 연결 정리
+- registry: 현재 프로세스 메모리에 저장
+
+따라서 현재 배포 구성은 **단일 백엔드 인스턴스**를 전제로 합니다. 수평 확장 전에는 공유 pub/sub 또는 외부 stream broker가 필요합니다.
+
+Nginx 등 reverse proxy에서는 SSE buffering을 끄고 idle timeout을 heartbeat보다 길게 설정해야 합니다.
+
+~~~nginx
+location ~ ^/api/v1/games/[^/]+/stream$ {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 6h;
+    proxy_send_timeout 6h;
+    add_header X-Accel-Buffering no always;
+}
+~~~
+
+## 관리자 콘솔
+
+Thymeleaf + HTMX 기반 운영 화면은 http://localhost:8088/admin에서 확인할 수 있습니다.
+
+~~~env
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your-strong-password
+ADMIN_SESSION_TIMEOUT=30m
+ADMIN_SESSION_COOKIE_SECURE=false
+ADMIN_STALE_GAME_THRESHOLD=2m
+ADMIN_LOG_CAPACITY=2000
+~~~
+
+- 브라우저 session은 read-only 콘솔 경로에만 사용됩니다.
+- 변경 가능한 /admin/crawl, /admin/ranks, /admin/test API는 별도의 X-Admin-Key 또는 X-Admin-Api-Key가 필요합니다.
+- 사용자명과 비밀번호, DB URL과 secret은 화면에 노출하지 않습니다.
+- 애플리케이션 로그는 메모리에 보관하며 검색 결과는 최대 500행입니다.
+
+production HTTPS 환경에서는 ADMIN_SESSION_COOKIE_SECURE=true를 사용하세요.
+
+## Database와 Flyway
+
+- 개발·테스트 스키마: kbo_crawler_api_dev
+- 운영 스키마: kbo_crawler_api
+- Hibernate: ddl-auto=validate
+- Flyway placeholder: ${appSchema}
+
+한 번 적용된 versioned migration은 수정하지 않습니다. 스키마 변경은 항상 새 migration으로 추가하고 production 스키마 이름을 SQL에 직접 하드코딩하지 마세요.
+
+~~~text
+src/main/resources/db/migration/
+└── V{version}__{description}.sql
+~~~
+
+public Supabase view는 앱의 read boundary입니다. migration이 table, view 또는 grant를 변경했다면 배포 전에 다음 SQL을 다시 확인합니다.
+
+- [Public read policy](docs/supabase-public-read-policies.sql)
+- [Security check](docs/supabase-security-check.sql)
+
+## Docker 배포
+
+production image는 Java 17 multi-stage build를 사용하고 UID/GID 10001의 non-root 사용자로 실행됩니다. Compose는 8088을 host loopback에만 공개하며 secret 디렉터리를 read-only로 mount합니다.
+
+~~~bash
+chmod 600 .env
+mkdir -p secrets
+
+docker compose config --quiet
+docker compose build
+docker compose up -d
+docker compose ps
+curl http://127.0.0.1:8088/healthz
+~~~
+
+APNs private key는 ./secrets에 두고 container 경로를 설정합니다.
+
+~~~env
+SPRING_PROFILES_ACTIVE=production
+APP_DB_SCHEMA=kbo_crawler_api
 APP_RUNTIME_ROLE=writer
 APP_SYNC_ENABLED=true
-SPRING_DATASOURCE_URL=jdbc:postgresql://<host>:5432/postgres?sslmode=require&currentSchema=kbo_crawler_api_dev
-SPRING_DATASOURCE_USERNAME=<user>
-SPRING_DATASOURCE_PASSWORD=<password>
-```
 
-Writer mode:
+SPRING_DATASOURCE_URL=jdbc:postgresql://host:5432/postgres?currentSchema=kbo_crawler_api
+SPRING_DATASOURCE_USERNAME=your-user
+SPRING_DATASOURCE_PASSWORD=your-password
 
-```bash
-./gradlew bootRun --args='--spring.profiles.active=local --app.sync.enabled=true'
-```
+KBO_PUSH_ENABLED=true
+APNS_ENV=production
+APNS_TEAM_ID=your-team-id
+APNS_KEY_ID=your-key-id
+APNS_BUNDLE_ID=com.chogm.kboScore
+APNS_PRIVATE_KEY_PATH=/run/secrets/AuthKey_ABC123.p8
+~~~
+
+FCM을 활성화하는 경우 service-account JSON도 ./secrets에 두고 GOOGLE_APPLICATION_CREDENTIALS로 container 경로를 전달합니다. mount한 파일은 UID/GID 10001이 읽을 수 있어야 합니다.
+
+> docker compose config 결과에는 .env 값이 포함될 수 있으므로 공개 로그나 이슈에 붙이지 마세요.
+
+## CI/CD
+
+~~~mermaid
+flowchart LR
+    Push[Push to main] --> Test[Gradle Test]
+    Test --> Image[amd64 / arm64 Image]
+    Image --> GHCR[Push to GHCR]
+    GHCR --> Deploy[SSH Deploy]
+    Deploy --> Health[/healthz up to 5 min]
+~~~
+
+GitHub Actions는 테스트 성공 후 linux/amd64, linux/arm64 이미지를 GHCR에 게시합니다. 실제 SSH 배포는 repository variable PRODUCTION_DEPLOY_ENABLED=true일 때만 실행되며, 배포 스크립트는 최대 5분 동안 /healthz를 확인합니다.
+
+## 운영 안전 규칙
+
+- production port 8088은 외부에 직접 공개하지 않고 HTTPS reverse proxy 뒤에 둡니다.
+- production writer는 하나만 실행해 중복 수집과 알림을 방지합니다.
+- .env, DB credential, admin key, APNs·FCM credential은 저장소 밖에서 관리합니다.
+- APNs key가 노출됐을 가능성이 있으면 즉시 폐기하고 새 key로 교체합니다.
+- reader 또는 role 미지정 환경에서는 APP_SYNC_ENABLED=false를 유지합니다.
+- production 배포 후에는 /healthz, 관리자 작업 상태와 실패 로그를 확인합니다.
+
+## 관련 문서
+
+- [게임 식별자와 점수 저장 ADR](docs/adr/0001-game-identity-and-score-storage.md)
+- [Supabase public read 정책](docs/supabase-public-read-policies.sql)
+- [Supabase 보안 점검 SQL](docs/supabase-security-check.sql)
+- [iOS 앱 저장소](https://github.com/rudadlswh/ballCount)
