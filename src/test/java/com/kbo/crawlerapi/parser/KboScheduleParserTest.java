@@ -112,7 +112,7 @@ class KboScheduleParserTest {
     }
 
     @Test
-    void missingProviderGameIdRowsAreReturnedWithoutWarnLogging(CapturedOutput output) {
+    void missingProviderGameIdRowsRemainImportableWithoutWarnLogging(CapturedOutput output) {
         String payload = """
                 {
                   "rows": [
@@ -135,8 +135,9 @@ class KboScheduleParserTest {
 
         var result = parser.parseMonthlyScheduleResult(payload, YearMonth.of(2026, 5));
 
-        assertThat(result.skippedRows()).hasSize(1);
-        assertThat(result.skippedRows().get(0).reason()).isEqualTo("MISSING_PROVIDER_GAME_ID");
+        assertThat(result.games()).hasSize(1);
+        assertThat(result.games().get(0).providerGameId()).isNull();
+        assertThat(result.skippedRows()).isEmpty();
         assertThat(output.getOut()).doesNotContain("WARN");
         assertThat(output.getOut()).doesNotContain("Skipped malformed KBO schedule row");
     }

@@ -11,7 +11,7 @@ class KboScheduleParserSkipPolicyTest {
     private final KboScheduleParser parser = new KboScheduleParser(new ObjectMapper());
 
     @Test
-    void countsRowsSkippedForMissingProviderGameId() {
+    void keepsRowsWithoutProviderGameIdAsImportableSchedules() {
         String payload = """
                 {
                   "rows": [
@@ -36,8 +36,7 @@ class KboScheduleParserSkipPolicyTest {
 
         assertThat(result.games()).hasSize(1);
         assertThat(result.games().get(0).providerGameId()).isNull();
-        assertThat(result.skippedRows()).hasSize(1);
-        assertThat(result.skippedRows().get(0).reason()).isEqualTo("MISSING_PROVIDER_GAME_ID");
-        assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
+        assertThat(result.skippedRows()).isEmpty();
+        assertThat(result.skippedMissingProviderGameIdCount()).isZero();
     }
 }
