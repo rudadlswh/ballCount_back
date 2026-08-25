@@ -159,6 +159,21 @@ class AdminApiKeyFilterTest {
     }
 
     @Test
+    void authenticatedBrowserSessionPassesScheduleImportUiFilter() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+
+        mockMvc.perform(post("/admin/schedule/import").session(session))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void scheduleImportUiRequiresAuthenticatedSession() throws Exception {
+        mockMvc.perform(post("/admin/schedule/import"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void manualNotificationUiRequiresAuthenticatedSession() throws Exception {
         mockMvc.perform(post("/admin/notifications/manual"))
                 .andExpect(status().isUnauthorized());
