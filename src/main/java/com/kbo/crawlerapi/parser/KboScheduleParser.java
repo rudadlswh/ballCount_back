@@ -210,14 +210,6 @@ public class KboScheduleParser {
                 null
         );
 
-        if (!hasText(providerGameId)) {
-            return new ParseOutcome(parsedScheduleGame, new SkippedScheduleRow(
-                    gameDate,
-                    "MISSING_PROVIDER_GAME_ID",
-                    "%s vs %s".formatted(awayProviderTeamName, homeProviderTeamName),
-                    rawCancelText
-            ), gameDate);
-        }
         return new ParseOutcome(parsedScheduleGame, null, gameDate);
     }
 
@@ -277,15 +269,6 @@ public class KboScheduleParser {
                 statusReason,
                 null
         );
-
-        if (providerGameId == null) {
-            return new ParseOutcome(parsedScheduleGame, new SkippedScheduleRow(
-                    gameDate,
-                    "MISSING_PROVIDER_GAME_ID",
-                    playText,
-                    note.isBlank() ? null : note
-            ), gameDate);
-        }
 
         return new ParseOutcome(parsedScheduleGame, null, gameDate);
     }

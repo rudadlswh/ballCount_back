@@ -506,18 +506,6 @@ public class KboScheduleImportService {
         int gameUpdatedCount = 0;
 
         for (ParsedScheduleGame parsedGame : parsedGames) {
-            if (parsedGame.providerGameId() == null || parsedGame.providerGameId().isBlank()) {
-                if (!isCancellationTarget(parsedGame.status())) {
-                    log.debug(
-                            "Skipped schedule game without providerGameId. date={}, away={}, home={}, status={}",
-                            parsedGame.gameDate(),
-                            parsedGame.awayProviderTeamName(),
-                            parsedGame.homeProviderTeamName(),
-                            parsedGame.status()
-                    );
-                }
-                continue;
-            }
             TeamUpsertResult awayTeamResult = upsertTeam(parsedGame.awayProviderTeamName());
             TeamUpsertResult homeTeamResult = upsertTeam(parsedGame.homeProviderTeamName());
             String publicGameId = buildPublicGameId(parsedGame, homeTeamResult.team(), awayTeamResult.team());
