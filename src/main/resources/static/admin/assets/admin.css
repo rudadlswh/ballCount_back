@@ -186,6 +186,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .manual-notification-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .manual-notification-form__wide { grid-column: 1 / -1; }
 .manual-notification-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); }
+.schedule-import-panel { margin-top: 16px; }
+.schedule-import-form { grid-template-columns: minmax(170px, 220px) minmax(170px, 220px) auto; justify-content: start; margin-top: 18px; }
+.panel-description { margin: -8px 0 0; color: var(--muted); }
+.panel-note { display: block; margin-top: 14px; color: var(--muted); }
 
 .login-page { min-height: 100vh; background: radial-gradient(circle at 15% 15%, #214d36 0, #12271d 32%, #0c1712 75%); }
 .login-shell { min-height: 100vh; padding: 24px; display: grid; place-items: center; }
@@ -236,4 +240,5 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
     .filter-bar { grid-template-columns: 1fr 1fr; }
     .filter-bar .button { grid-column: span 2; }
     .notification-metrics { grid-template-columns: 1fr 1fr; }
+    .schedule-import-form { grid-template-columns: 1fr 1fr; }
 }

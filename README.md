@@ -269,6 +269,9 @@ location ~ ^/api/v1/games/[^/]+/stream$ {
 
 Thymeleaf + HTMX 기반 운영 화면은 http://localhost:8088/admin에서 확인할 수 있습니다.
 
+- **운영 관리자 페이지:** [https://kboscore-back.onrender.com/admin](https://kboscore-back.onrender.com/admin)
+- **로컬 관리자 페이지:** [http://localhost:8088/admin](http://localhost:8088/admin)
+
 ~~~env
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your-strong-password
@@ -347,11 +350,11 @@ FCM을 활성화하는 경우 service-account JSON도 ./secrets에 두고 GOOGLE
 
 ~~~mermaid
 flowchart LR
-    Push[Push to main] --> Test[Gradle Test]
-    Test --> Image[amd64 / arm64 Image]
-    Image --> GHCR[Push to GHCR]
-    GHCR --> Deploy[SSH Deploy]
-    Deploy --> Health[/healthz up to 5 min]
+    Push["Push to main"] --> Test["Gradle Test"]
+    Test --> Image["amd64 / arm64 Image"]
+    Image --> GHCR["Push to GHCR"]
+    GHCR --> Deploy["SSH Deploy"]
+    Deploy --> Health["/healthz · 최대 5분 확인"]
 ~~~
 
 GitHub Actions는 테스트 성공 후 linux/amd64, linux/arm64 이미지를 GHCR에 게시합니다. 실제 SSH 배포는 repository variable PRODUCTION_DEPLOY_ENABLED=true일 때만 실행되며, 배포 스크립트는 최대 5분 동안 /healthz를 확인합니다.

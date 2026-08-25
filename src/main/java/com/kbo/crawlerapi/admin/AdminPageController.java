@@ -46,8 +46,11 @@ public class AdminPageController {
 
     @GetMapping("/admin/dashboard")
     public String dashboard(Model model) {
+        YearMonth nextMonth = YearMonth.now(ZoneId.of("Asia/Seoul")).plusMonths(1);
         model.addAttribute("activePage", "dashboard");
         model.addAttribute("dashboard", dataService.dashboard());
+        model.addAttribute("scheduleImportFromMonth", nextMonth);
+        model.addAttribute("scheduleImportToMonth", nextMonth.plusMonths(1));
         return "admin/dashboard";
     }
 

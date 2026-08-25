@@ -75,7 +75,32 @@ class AdminTemplateRenderingTest {
         mockMvc.perform(get("/admin/dashboard"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("대시보드")))
+                .andExpect(content().string(containsString("월간 일정 수동 수집")))
                 .andExpect(content().string(containsString("현재 진행 중인 경기가 없습니다")));
+    }
+
+    @Test
+    void dashboardTemplateRendersScheduleImportResult() throws Exception {
+        ((StubAdminDataService) dataService).dashboard = new DashboardView(
+                "정상", "1시간 2분", "정상", "3 ms", "실행 중", "success", "PT1S",
+                null, 12, 1, List.of(), 0, "a****", "••••••••", "d****"
+        );
+        var september = new AdminScheduleImportService.ScheduleImportMonthResult(
+                YearMonth.of(2026, 9), true, 76, 30, 0, null
+        );
+        var october = new AdminScheduleImportService.ScheduleImportMonthResult(
+                YearMonth.of(2026, 10), true, 29, 0, 0, null
+        );
+        var result = new AdminScheduleImportService.ScheduleImportRangeResult(
+                YearMonth.of(2026, 9), YearMonth.of(2026, 10), 2, 2, 0, 105, 30, 0,
+                List.of(september, october)
+        );
+
+        mockMvc.perform(get("/admin/dashboard").flashAttr("scheduleImportResult", result))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("2/2개월 수집 완료")))
+                .andExpect(content().string(containsString("2026-09")))
+                .andExpect(content().string(containsString("2026-10")));
     }
 
     @Test

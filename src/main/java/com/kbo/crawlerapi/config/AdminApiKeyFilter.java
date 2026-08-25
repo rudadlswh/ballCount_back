@@ -66,6 +66,7 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
                 || path.equals("/admin/games")
                 || path.equals("/admin/notifications")
                 || path.equals("/admin/notifications/manual")
+                || path.equals("/admin/schedule/import")
                 || path.equals("/admin/logs")
                 || path.equals("/admin/logout")
                 || path.startsWith("/admin/games/")
