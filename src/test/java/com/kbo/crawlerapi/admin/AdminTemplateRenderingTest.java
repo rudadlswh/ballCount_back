@@ -76,6 +76,11 @@ class AdminTemplateRenderingTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("대시보드")))
                 .andExpect(content().string(containsString("월간 일정 수동 수집")))
+                .andExpect(content().string(containsString("hx-post=\"/admin/schedule/import\"")))
+                .andExpect(content().string(containsString("role=\"status\"")))
+                .andExpect(content().string(containsString("aria-live=\"polite\"")))
+                .andExpect(content().string(containsString("월간 일정을 수집하고 있습니다")))
+                .andExpect(content().string(containsString("아직 수집 결과가 없습니다")))
                 .andExpect(content().string(containsString("현재 진행 중인 경기가 없습니다")));
     }
 
@@ -99,8 +104,22 @@ class AdminTemplateRenderingTest {
         mockMvc.perform(get("/admin/dashboard").flashAttr("scheduleImportResult", result))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("2/2개월 수집 완료")))
+                .andExpect(content().string(containsString("월간 일정 수동 수집 결과")))
                 .andExpect(content().string(containsString("2026-09")))
                 .andExpect(content().string(containsString("2026-10")));
+    }
+
+    @Test
+    void dashboardTemplateRendersAccessibleScheduleImportError() throws Exception {
+        ((StubAdminDataService) dataService).dashboard = new DashboardView(
+                "정상", "1시간 2분", "정상", "3 ms", "실행 중", "success", "PT1S",
+                null, 12, 1, List.of(), 0, "a****", "••••••••", "d****"
+        );
+
+        mockMvc.perform(get("/admin/dashboard").flashAttr("scheduleImportError", "다른 월간 일정 수집이 진행 중입니다."))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("role=\"alert\"")))
+                .andExpect(content().string(containsString("다른 월간 일정 수집이 진행 중입니다.")));
     }
 
     @Test

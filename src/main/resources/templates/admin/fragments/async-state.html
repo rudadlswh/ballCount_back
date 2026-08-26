@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="loading(id, title, description)"
+     th:id="${id}"
+     class="async-state async-state--loading htmx-indicator"
+     role="status"
+     aria-live="polite"
+     aria-atomic="true">
+    <span class="async-state__visual" aria-hidden="true"><span class="loading-spinner"></span></span>
+    <span class="async-state__copy">
+        <strong th:text="${title}">데이터를 불러오고 있습니다</strong>
+        <small th:text="${description}">잠시만 기다려 주세요.</small>
+    </span>
+</div>
+
+<div th:fragment="empty(id, title, description)"
+     th:id="${id}"
+     class="empty-state empty-state--small async-empty-state"
+     role="status">
+    <span aria-hidden="true">–</span>
+    <strong th:text="${title}">표시할 데이터가 없습니다</strong>
+    <small th:text="${description}">조건을 변경해 다시 시도해 주세요.</small>
+</div>
+</body>
+</html>
