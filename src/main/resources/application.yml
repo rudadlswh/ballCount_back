@@ -61,6 +61,11 @@ app:
     registration-rate-limit-enabled: ${REGISTRATION_RATE_LIMIT_ENABLED:true}
     registration-rate-limit-max-requests: ${REGISTRATION_RATE_LIMIT_MAX_REQUESTS:12}
     registration-rate-limit-window: ${REGISTRATION_RATE_LIMIT_WINDOW:1m}
+    admin-login-max-attempts: ${ADMIN_LOGIN_MAX_ATTEMPTS:5}
+    admin-login-global-max-attempts: ${ADMIN_LOGIN_GLOBAL_MAX_ATTEMPTS:60}
+    admin-login-rate-limit-window: ${ADMIN_LOGIN_RATE_LIMIT_WINDOW:1m}
+    live-stream-max-connections: ${LIVE_STREAM_MAX_CONNECTIONS:1000}
+    live-stream-max-connections-per-client: ${LIVE_STREAM_MAX_CONNECTIONS_PER_CLIENT:10}
   sync:
     enabled: ${APP_SYNC_ENABLED:false}
   live-sync:

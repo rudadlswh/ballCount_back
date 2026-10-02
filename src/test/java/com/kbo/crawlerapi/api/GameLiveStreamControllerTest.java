@@ -1,10 +1,14 @@
 package com.kbo.crawlerapi.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
+import com.kbo.crawlerapi.config.AppSecurityProperties;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
@@ -17,6 +21,8 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class GameLiveStreamControllerTest {
 
@@ -31,7 +37,7 @@ class GameLiveStreamControllerTest {
         when(gameRepository.findByPublicGameId("20260707SKOB0")).thenReturn(Optional.empty());
         when(gameRepository.findByProviderAndProviderGameId("kbo", "20260707SKOB0")).thenReturn(Optional.of(game));
 
-        controller.streamGame("20260707SKOB0");
+        controller.streamGame("20260707SKOB0", new MockHttpServletRequest());
 
         assertThat(streamRegistry.subscriberCount("20260707-DOO-SSG")).isEqualTo(1);
         assertThat(streamRegistry.subscriberCount("20260707SKOB0")).isZero();
@@ -44,14 +50,39 @@ class GameLiveStreamControllerTest {
         LiveGameStreamRegistry streamRegistry = new LiveGameStreamRegistry();
         GameLiveStreamController controller = new GameLiveStreamController(gameRepository, gameReadService, streamRegistry);
 
-        when(gameRepository.findByPublicGameId("20260708-lot-kia")).thenReturn(Optional.empty());
-        when(gameRepository.findByProviderAndProviderGameId("kbo", "20260708-lot-kia")).thenReturn(Optional.empty());
-        when(gameRepository.findByProviderGameId("20260708-lot-kia")).thenReturn(Optional.empty());
+        when(gameRepository.findByPublicGameId("20260707-DOO-SSG")).thenReturn(Optional.of(game()));
+        controller.streamGame(" 20260707-doo-ssg ", new MockHttpServletRequest());
+        assertThat(streamRegistry.subscriberCount("20260707-DOO-SSG")).isEqualTo(1);
+    }
 
-        controller.streamGame(" 20260708-lot-kia ");
+    @Test
+    void unknownGameDoesNotAllocateAConnection() {
+        GameRepository repository = mock(GameRepository.class);
+        LiveGameStreamRegistry registry = new LiveGameStreamRegistry();
+        GameLiveStreamController controller = new GameLiveStreamController(repository, new EmptySnapshotGameReadService(), registry);
+        assertThatThrownBy(() -> controller.streamGame("unknown", new MockHttpServletRequest()))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(registry.subscriberCount("unknown")).isZero();
+    }
 
-        assertThat(streamRegistry.subscriberCount("20260708-LOT-KIA")).isEqualTo(1);
-        assertThat(streamRegistry.subscriberCount("20260708-lot-kia")).isEqualTo(1);
+    @Test
+    void httpRejectsUnknownGamesAndExcessSubscriptionsBeforeStartingAsync() throws Exception {
+        GameRepository repository = mock(GameRepository.class);
+        when(repository.findByPublicGameId("20260707-DOO-SSG")).thenReturn(Optional.of(game()));
+        AppSecurityProperties properties = new AppSecurityProperties();
+        properties.setLiveStreamMaxConnections(1);
+        LiveGameStreamRegistry registry = new LiveGameStreamRegistry(properties);
+        var mvc = MockMvcBuilders.standaloneSetup(new GameLiveStreamController(repository,
+                new EmptySnapshotGameReadService(), registry)).setControllerAdvice(new ApiExceptionHandler()).build();
+        var unknown = mvc.perform(get("/api/v1/games/unknown/stream")).andExpect(status().isNotFound()).andReturn();
+        assertThat(unknown.getRequest().isAsyncStarted()).isFalse();
+        var accepted = mvc.perform(get("/api/v1/games/20260707-DOO-SSG/stream")).andExpect(status().isOk()).andReturn();
+        assertThat(accepted.getRequest().isAsyncStarted()).isTrue();
+        var limited = mvc.perform(get("/api/v1/games/20260707-DOO-SSG/stream"))
+                .andExpect(status().isTooManyRequests()).andReturn();
+        assertThat(limited.getRequest().isAsyncStarted()).isFalse();
+        assertThat(registry.subscriberCount("20260707-DOO-SSG")).isEqualTo(1);
+        registry.complete("20260707-DOO-SSG");
     }
 
     private static final class EmptySnapshotGameReadService extends GameReadService {
