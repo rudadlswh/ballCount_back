@@ -5,42 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow">
     <title>대시보드 · KBO 운영실</title>
-    <link rel="stylesheet" href="/admin/assets/admin.css">
-    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js"></script>
+    <meta name="color-scheme" content="light dark">
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
+    <script src="/admin/assets/admin.js" th:src="@{/admin/assets/admin.js}"></script>
+    <link rel="stylesheet" href="/admin/assets/admin.css" th:href="@{/admin/assets/admin.css}">
+    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js" th:src="@{/webjars/htmx.org/2.0.4/dist/htmx.min.js}"></script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
 <div class="app-shell">
     <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
-    <main class="main">
+    <main class="main" id="main-content" tabindex="-1">
         <header class="page-header">
-            <div><p class="eyebrow">LIVE OPERATIONS</p><h1>대시보드</h1></div>
-            <div class="live-pill"><span></span>15초 자동 갱신</div>
+            <div><p class="eyebrow">실시간 운영</p><h1>대시보드</h1><p>경기 수집과 알림, 서버 상태를 한곳에서 확인합니다.</p></div>
+            <div class="header-actions">
+                <div class="live-pill"><span aria-hidden="true"></span><span data-refresh-status>15초마다 자동 갱신</span></div>
+                <button class="button button--subtle" type="button" data-refresh-toggle aria-pressed="false" aria-controls="dashboard-content" hidden>자동 갱신 일시정지</button>
+            </div>
         </header>
         <section th:replace="~{admin/fragments/dashboard :: content}"></section>
         <section class="panel schedule-import-panel">
             <div class="panel__header">
-                <div><p class="eyebrow">MANUAL SCHEDULE IMPORT</p><h2>월간 일정 수동 수집</h2></div>
+                <div><p class="eyebrow">경기 일정 관리</p><h2>월간 일정 수동 수집</h2></div>
                 <span class="badge badge--muted">최대 3개월</span>
             </div>
             <p class="panel-description">KBO 공식 월간 일정을 다시 읽어 신규 경기 추가와 변경 사항을 반영합니다.</p>
 
-            <div class="alert"
+            <div class="alert" role="status"
                  th:if="${scheduleImportResult != null}"
                  th:classappend="${scheduleImportResult.failedMonthCount == 0} ? 'alert--success' : 'alert--warning'">
                 <strong th:text="${scheduleImportResult.succeededMonthCount + '/' + scheduleImportResult.requestedMonthCount + '개월 수집 완료'}">2/2개월 수집 완료</strong>
                 <span th:text="${' · 신규 ' + scheduleImportResult.createdCount + '경기 · 갱신 ' + scheduleImportResult.updatedCount + '경기 · 건너뜀 ' + scheduleImportResult.skippedCount + '건'}">결과</span>
             </div>
-            <div class="alert alert--danger" th:if="${scheduleImportError != null}" th:text="${scheduleImportError}">수집 실패</div>
+            <div class="alert alert--danger" role="alert" th:if="${scheduleImportError != null}" th:text="${scheduleImportError}">수집 실패</div>
 
-            <form class="filter-bar schedule-import-form" method="post" action="/admin/schedule/import">
+            <form class="filter-bar schedule-import-form" method="post" action="/admin/schedule/import" th:action="@{/admin/schedule/import}">
                 <label><span>시작 월</span><input type="month" name="fromMonth" required th:value="${scheduleImportFromMonth}"></label>
                 <label><span>종료 월</span><input type="month" name="toMonth" required th:value="${scheduleImportToMonth}"></label>
                 <button class="button button--primary" type="submit">일정 수집 실행</button>
             </form>
 
-            <div class="table-wrap" th:if="${scheduleImportResult != null}">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="표 데이터 · 가로로 스크롤하여 모든 열 보기" th:if="${scheduleImportResult != null}">
                 <table>
-                    <thead><tr><th>대상 월</th><th>상태</th><th>신규</th><th>갱신</th><th>건너뜀</th><th>오류</th></tr></thead>
+                    <thead><tr><th scope="col">대상 월</th><th scope="col">상태</th><th scope="col">신규</th><th scope="col">갱신</th><th scope="col">건너뜀</th><th scope="col">오류</th></tr></thead>
                     <tbody>
                     <tr th:each="month : ${scheduleImportResult.months}">
                         <td class="mono" th:text="${month.month}">2026-09</td>

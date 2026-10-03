@@ -119,7 +119,7 @@ class AdminTemplateRenderingTest {
                 .andExpect(content().string(containsString("KIA vs LG")));
         mockMvc.perform(get("/admin/issues"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("현재 탐지된 오류 의심 건이 없습니다")));
+                .andExpect(content().string(containsString("현재 탐지된 운영 이슈가 없습니다")));
         mockMvc.perform(get("/admin/logs"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("조건에 맞는 로그가 없습니다")));
@@ -195,7 +195,7 @@ class AdminTemplateRenderingTest {
 
         mockMvc.perform(get("/admin/games").param("year", "2026").param("month", "7"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("GET /API/V1/GAMES/MONTH")))
+                .andExpect(content().string(containsString("href=\"/api/v1/games/month?year=2026&amp;month=7\"")))
                 .andExpect(content().string(containsString("KIA vs LG")))
                 .andExpect(content().string(containsString("20260728-KIA-LG")));
         org.assertj.core.api.Assertions.assertThat(gameReadService.requestedMonth).isEqualTo(YearMonth.of(2026, 7));

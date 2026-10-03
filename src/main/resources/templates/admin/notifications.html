@@ -3,25 +3,29 @@
 <head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex,nofollow"><title>알림 발송 내역 · KBO 운영실</title>
-    <link rel="stylesheet" href="/admin/assets/admin.css">
-    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js"></script>
+    <meta name="color-scheme" content="light dark">
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
+    <script src="/admin/assets/admin.js" th:src="@{/admin/assets/admin.js}"></script>
+    <link rel="stylesheet" href="/admin/assets/admin.css" th:href="@{/admin/assets/admin.css}">
+    <script defer src="/webjars/htmx.org/2.0.4/dist/htmx.min.js" th:src="@{/webjars/htmx.org/2.0.4/dist/htmx.min.js}"></script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
 <div class="app-shell">
     <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
-    <main class="main">
+    <main class="main" id="main-content" tabindex="-1">
         <header class="page-header">
-            <div><p class="eyebrow">NOTIFICATION DELIVERY HISTORY</p><h1>알림 발송 내역</h1><p>경기별 알림 생성·발송 결과와 실패 사유를 확인합니다.</p></div>
+            <div><p class="eyebrow">알림 관리</p><h1>알림 발송 내역</h1><p>경기별 알림 생성·발송 결과와 실패 사유를 확인합니다.</p></div>
             <span class="badge badge--muted">관리자 전용</span>
         </header>
         <section class="panel">
             <div class="panel__header">
-                <div><p class="eyebrow">DEVICES BY FAVORITE TEAM</p><h2>응원 팀별 기기 수</h2></div>
+                <div><p class="eyebrow">기기 현황</p><h2>응원 팀별 기기 수</h2></div>
                 <span class="count" th:text="${notificationTeamDeviceCounts.size()}">0</span>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="표 데이터 · 가로로 스크롤하여 모든 열 보기">
                 <table>
-                    <thead><tr><th>응원 팀</th><th>전체</th><th>알림 켬</th><th>iOS</th><th>Android</th></tr></thead>
+                    <thead><tr><th scope="col">응원 팀</th><th scope="col">전체</th><th scope="col">알림 켬</th><th scope="col">iOS</th><th scope="col">Android</th></tr></thead>
                     <tbody>
                     <tr th:each="team : ${notificationTeamDeviceCounts}">
                         <td><strong th:text="${team.name}">팀</strong><small class="mono" th:text="${' · ' + team.code}">코드</small></td>
@@ -34,23 +38,23 @@
                     </tbody>
                 </table>
             </div>
-            <div class="result-meta"><small>응원 팀 미설정 기기는 제외하며, installation_id 기준으로 중복 제거합니다.</small></div>
+            <div class="result-meta"><small>응원 팀을 설정한 기기만 집계하며, 기기별로 한 번씩 계산합니다.</small></div>
         </section>
         <section class="panel">
             <div class="panel__header">
-                <div><p class="eyebrow">MANUAL APNS</p><h2>iOS 수동 알림</h2></div>
+                <div><p class="eyebrow">직접 발송</p><h2>iOS 수동 알림</h2></div>
                 <span class="badge" th:classappend="${manualNotificationEnabled} ? 'badge--success' : 'badge--warning'"
                       th:text="${manualNotificationEnabled} ? '발송 가능' : '비활성'">발송 가능</span>
             </div>
-            <div class="alert" th:if="${manualNotificationResult != null}"
+            <div class="alert" role="status" th:if="${manualNotificationResult != null}"
                  th:classappend="${manualNotificationResult.sentCount > 0 && manualNotificationResult.failedCount == 0} ? 'alert--success' : 'alert--warning'">
                 <strong th:text="${manualNotificationResult.sentCount + '건 발송 완료'}">0건 발송 완료</strong>
                 <span th:text="${' · 대상 ' + manualNotificationResult.matchedDeviceCount + '건 · 실패 ' + manualNotificationResult.failedCount + '건'}">결과</span>
                 <small th:unless="${manualNotificationResult.failureReasons.empty}"
                        th:text="${' · 실패 사유: ' + #strings.listJoin(manualNotificationResult.failureReasons, ', ')}">실패 사유</small>
             </div>
-            <div class="alert alert--danger" th:if="${manualNotificationError != null}" th:text="${manualNotificationError}">발송 실패</div>
-            <form class="manual-notification-form" method="post" action="/admin/notifications/manual"
+            <div class="alert alert--danger" role="alert" th:if="${manualNotificationError != null}" th:text="${manualNotificationError}">발송 실패</div>
+            <form class="manual-notification-form" method="post" action="/admin/notifications/manual" th:action="@{/admin/notifications/manual}"
                   th:if="${manualNotificationEnabled}">
                 <label><span>대상 응원 팀</span><select name="favoriteTeamId" required>
                     <option value="" selected disabled>팀 선택</option>
@@ -64,13 +68,13 @@
                     <button class="button button--primary" type="submit">수동 알림 보내기</button>
                 </div>
             </form>
-            <div class="alert alert--warning" th:unless="${manualNotificationEnabled}">
+            <div class="alert alert--warning" role="status" th:unless="${manualNotificationEnabled}">
                 운영 환경에서는 <span class="mono">KBO_APNS_TEST_ENABLED=true</span> 설정이 필요합니다.
             </div>
         </section>
         <section class="panel">
-            <form class="filter-bar notification-filter" method="get" action="/admin/notifications"
-                  hx-get="/admin/fragments/notifications" hx-target="#notification-results"
+            <form class="filter-bar notification-filter" method="get" action="/admin/notifications" th:action="@{/admin/notifications}"
+                  hx-get="/admin/fragments/notifications" th:attr="hx-get=@{/admin/fragments/notifications}" hx-target="#notification-results"
                   hx-swap="outerHTML" hx-indicator="#notification-loading">
                 <label><span>시작일</span><input type="date" name="from" th:value="${from}"></label>
                 <label><span>종료일</span><input type="date" name="to" th:value="${to}"></label>

@@ -13,9 +13,9 @@
         <small th:if="${notificationResult.total > notificationResult.items.size()}" th:text="${'전체 ' + notificationResult.total + '건 중 최신 500건'}">최신 500건</small>
         <small th:unless="${notificationResult.total > notificationResult.items.size()}">처리 시각 기준 최신순</small>
     </div>
-    <div class="table-wrap notification-table-wrap">
+    <div class="table-wrap notification-table-wrap" tabindex="0" role="region" aria-label="표 데이터 · 가로로 스크롤하여 모든 열 보기">
         <table class="notification-table">
-            <thead><tr><th>처리 시각</th><th>결과</th><th>팀 / 경기</th><th>유형</th><th>알림 내용</th><th>실패 사유</th></tr></thead>
+            <thead><tr><th scope="col">처리 시각</th><th scope="col">결과</th><th scope="col">팀 / 경기</th><th scope="col">유형</th><th scope="col">알림 내용</th><th scope="col">실패 사유</th></tr></thead>
             <tbody>
             <tr th:each="event : ${notificationResult.items}">
                 <td class="nowrap"><strong th:text="${event.occurredAt}">-</strong><small th:text="${'생성 ' + event.createdAt}">-</small></td>
