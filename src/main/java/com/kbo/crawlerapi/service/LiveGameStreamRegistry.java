@@ -1,15 +1,27 @@
 package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.api.dto.GameLiveStateResponse;
+import com.kbo.crawlerapi.config.AppSecurityProperties;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.context.request.async.DeferredResult;
+import org.springframework.web.context.request.async.DeferredResultProcessingInterceptor;
+import org.springframework.web.context.request.async.WebAsyncUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Component
@@ -20,36 +32,72 @@ public class LiveGameStreamRegistry {
 
     private final ConcurrentHashMap<String, Set<SseEmitter>> emittersByGameId = new ConcurrentHashMap<>();
 
-    public SseEmitter subscribe(String publicGameId) {
+    private final AppSecurityProperties properties;
+    // All membership changes and quota releases share one lock, so an empty game
+    // cannot be removed while another subscriber is joining it.
+    private final Map<SseEmitter, String> clientsByEmitter = new HashMap<>();
+    private final Map<String, Integer> connectionsByClient = new HashMap<>();
+
+    public LiveGameStreamRegistry() {
+        this(new AppSecurityProperties());
+    }
+
+    @Autowired
+    public LiveGameStreamRegistry(AppSecurityProperties properties) {
+        this.properties = properties;
+    }
+
+    public SseEmitter subscribe(String publicGameId, HttpServletRequest request) {
+        String clientAddress = request.getRemoteAddr();
         String normalizedPublicGameId = normalizePublicGameId(publicGameId);
-        log.info(
-                "[SseStream] subscribe start publicGameId={} normalizedPublicGameId={}",
-                publicGameId,
-                normalizedPublicGameId
-        );
-        SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MILLIS);
-        emittersByGameId.computeIfAbsent(normalizedPublicGameId, ignored -> ConcurrentHashMap.newKeySet()).add(emitter);
-        log.info(
-                "[SseStream] subscribe registered publicGameId={} count={}",
-                normalizedPublicGameId,
-                subscriberCount(normalizedPublicGameId)
-        );
-        emitter.onCompletion(() -> {
-            log.info("[SseStream] onCompletion publicGameId={}", normalizedPublicGameId);
-            remove(normalizedPublicGameId, emitter);
-        });
-        emitter.onTimeout(() -> {
-            log.warn("[SseStream] onTimeout publicGameId={}", normalizedPublicGameId);
-            remove(normalizedPublicGameId, emitter);
-        });
-        emitter.onError(error -> {
-            log.warn(
-                    "[SseStream] onError publicGameId={} reason={}",
-                    normalizedPublicGameId,
-                    error == null ? null : error.getMessage()
-            );
-            remove(normalizedPublicGameId, emitter);
-        });
+        SseEmitter emitter;
+        synchronized (this) {
+            int clientConnections = connectionsByClient.getOrDefault(clientAddress, 0);
+            if (clientsByEmitter.size() >= Math.max(1, properties.getLiveStreamMaxConnections())
+                    || clientConnections >= Math.max(1, properties.getLiveStreamMaxConnectionsPerClient())) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "stream connection limit reached");
+            }
+            emitter = new SseEmitter(EMITTER_TIMEOUT_MILLIS);
+            emitter.onCompletion(() -> {
+                log.info("[SseStream] onCompletion publicGameId={}", normalizedPublicGameId);
+                remove(normalizedPublicGameId, emitter);
+            });
+            emitter.onTimeout(() -> {
+                log.warn("[SseStream] onTimeout publicGameId={}", normalizedPublicGameId);
+                remove(normalizedPublicGameId, emitter);
+            });
+            emitter.onError(error -> {
+                log.warn("[SseStream] onError publicGameId={} reason={}", normalizedPublicGameId,
+                        error == null ? null : error.getMessage());
+                remove(normalizedPublicGameId, emitter);
+            });
+            emittersByGameId.computeIfAbsent(normalizedPublicGameId, ignored -> ConcurrentHashMap.newKeySet()).add(emitter);
+            clientsByEmitter.put(emitter, clientAddress);
+            connectionsByClient.put(clientAddress, clientConnections + 1);
+        }
+        // Spring can fail while flushing buffered events before it attaches emitter
+        // callbacks. The request interceptor is installed before that first write.
+        WebAsyncUtils.getAsyncManager(request).registerDeferredResultInterceptor(emitter,
+                new DeferredResultProcessingInterceptor() {
+                    @Override
+                    public <T> void afterCompletion(NativeWebRequest webRequest, DeferredResult<T> result) {
+                        remove(normalizedPublicGameId, emitter);
+                    }
+
+                    @Override
+                    public <T> boolean handleError(NativeWebRequest webRequest, DeferredResult<T> result, Throwable error) {
+                        remove(normalizedPublicGameId, emitter);
+                        return true;
+                    }
+
+                    @Override
+                    public <T> boolean handleTimeout(NativeWebRequest webRequest, DeferredResult<T> result) {
+                        remove(normalizedPublicGameId, emitter);
+                        return true;
+                    }
+                });
+        log.info("[SseStream] subscribe registered publicGameId={} count={}",
+                normalizedPublicGameId, subscriberCount(normalizedPublicGameId));
         send(normalizedPublicGameId, emitter, "heartbeat", "");
         return emitter;
     }
@@ -71,11 +119,14 @@ public class LiveGameStreamRegistry {
 
     public void complete(String publicGameId) {
         String normalizedPublicGameId = normalizePublicGameId(publicGameId);
-        Set<SseEmitter> emitters = emittersByGameId.remove(normalizedPublicGameId);
-        if (emitters == null) {
-            return;
+        List<SseEmitter> completed;
+        synchronized (this) {
+            Set<SseEmitter> emitters = emittersByGameId.get(normalizedPublicGameId);
+            if (emitters == null) return;
+            completed = List.copyOf(emitters);
+            completed.forEach(emitter -> remove(normalizedPublicGameId, emitter));
         }
-        emitters.forEach(SseEmitter::complete);
+        completed.forEach(SseEmitter::complete);
     }
 
     public int subscriberCount(String publicGameId) {
@@ -143,7 +194,10 @@ public class LiveGameStreamRegistry {
         }
     }
 
-    private void remove(String publicGameId, SseEmitter emitter) {
+    private synchronized void remove(String publicGameId, SseEmitter emitter) {
+        if (!clientsByEmitter.containsKey(emitter)) return;
+        String client = clientsByEmitter.remove(emitter);
+        connectionsByClient.computeIfPresent(client, (ignored, count) -> count == 1 ? null : count - 1);
         Set<SseEmitter> emitters = emittersByGameId.get(publicGameId);
         if (emitters == null) {
             return;

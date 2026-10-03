@@ -2,30 +2,44 @@
 <html lang="ko" xmlns:th="http://www.thymeleaf.org">
 <body>
 <aside class="sidebar" th:fragment="sidebar(activePage)">
-    <a class="brand" href="/admin/dashboard" aria-label="KBO 운영실 대시보드">
-        <span class="brand__mark">K</span>
-        <span><strong>KBO 운영실</strong><small>Operations console</small></span>
+    <a class="brand" href="/admin/dashboard" th:href="@{/admin/dashboard}" aria-label="KBO 운영실 대시보드">
+        <span class="brand__mark" th:fragment="brandMark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M6 5c4 4 4 10 0 14M18 5c-4 4-4 10 0 14M6 8l3-1M7 12h3M6 16l3 1M18 8l-3-1M17 12h-3M18 16l-3 1"/></svg>
+        </span>
+        <span><strong>KBO 운영실</strong><small>경기와 알림을 한눈에</small></span>
     </a>
+    <p class="sidebar__label">운영</p>
     <nav class="nav" aria-label="관리자 메뉴">
-        <a href="/admin/dashboard" th:classappend="${activePage == 'dashboard'} ? 'is-active'">
-            <span class="nav__icon">⌁</span>대시보드
+        <a th:href="@{/admin/dashboard}" href="/admin/dashboard" th:classappend="${activePage == 'dashboard'} ? 'is-active'" th:attr="aria-current=${activePage == 'dashboard'} ? 'page' : null">
+            <svg class="nav__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+            <span>대시보드</span>
         </a>
-        <a href="/admin/issues" th:classappend="${activePage == 'issues'} ? 'is-active'">
-            <span class="nav__icon">!</span>오류 의심 건
+        <a th:href="@{/admin/issues}" href="/admin/issues" th:classappend="${activePage == 'issues'} ? 'is-active'" th:attr="aria-current=${activePage == 'issues'} ? 'page' : null">
+            <svg class="nav__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.6 3 17.2a2 2 0 0 0 1.7 3h14.6a2 2 0 0 0 1.7-3L13.7 4.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/></svg>
+            <span>운영 이슈</span>
         </a>
-        <a href="/admin/games" th:classappend="${activePage == 'games'} ? 'is-active'">
-            <span class="nav__icon">▦</span>월별 경기
+        <a th:href="@{/admin/games}" href="/admin/games" th:classappend="${activePage == 'games'} ? 'is-active'" th:attr="aria-current=${activePage == 'games'} ? 'page' : null">
+            <svg class="nav__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-13 5h1m6 0h1"/></svg>
+            <span>월별 경기</span>
         </a>
-        <a href="/admin/notifications" th:classappend="${activePage == 'notifications'} ? 'is-active'">
-            <span class="nav__icon">↗</span>알림 발송 내역
+        <a th:href="@{/admin/notifications}" href="/admin/notifications" th:classappend="${activePage == 'notifications'} ? 'is-active'" th:attr="aria-current=${activePage == 'notifications'} ? 'page' : null">
+            <svg class="nav__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-11 9h10m-7 3h4"/></svg>
+            <span>알림 발송</span>
         </a>
-        <a href="/admin/logs" th:classappend="${activePage == 'logs'} ? 'is-active'">
-            <span class="nav__icon">≡</span>로그
+        <a th:href="@{/admin/logs}" href="/admin/logs" th:classappend="${activePage == 'logs'} ? 'is-active'" th:attr="aria-current=${activePage == 'logs'} ? 'page' : null">
+            <svg class="nav__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+            <span>서버 로그</span>
         </a>
     </nav>
     <div class="sidebar__footer">
-        <span class="status-dot"></span> 관리자 세션 활성
-        <form method="post" action="/admin/logout">
+        <p class="session-status"><span class="status-dot" aria-hidden="true"></span>관리자 세션 활성</p>
+        <div class="appearance-control" hidden>
+            <label for="appearance">화면 모드</label>
+            <select id="appearance" data-appearance>
+                <option value="system">시스템 설정</option><option value="light">라이트</option><option value="dark">다크</option>
+            </select>
+        </div>
+        <form method="post" action="/admin/logout" th:action="@{/admin/logout}">
             <button class="button button--ghost button--full" type="submit">로그아웃</button>
         </form>
     </div>

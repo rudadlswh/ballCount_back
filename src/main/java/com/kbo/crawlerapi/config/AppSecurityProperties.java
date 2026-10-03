@@ -12,6 +12,23 @@ public class AppSecurityProperties {
     private int registrationRateLimitMaxRequests = 12;
     private Duration registrationRateLimitWindow = Duration.ofMinutes(1);
 
+    private int adminLoginMaxAttempts = 5;
+    private int adminLoginGlobalMaxAttempts = 60;
+    private Duration adminLoginRateLimitWindow = Duration.ofMinutes(1);
+    private int liveStreamMaxConnections = 1_000;
+    private int liveStreamMaxConnectionsPerClient = 10;
+
+    public int getAdminLoginMaxAttempts() { return adminLoginMaxAttempts; }
+    public void setAdminLoginMaxAttempts(int value) { adminLoginMaxAttempts = value; }
+    public int getAdminLoginGlobalMaxAttempts() { return adminLoginGlobalMaxAttempts; }
+    public void setAdminLoginGlobalMaxAttempts(int value) { adminLoginGlobalMaxAttempts = value; }
+    public Duration getAdminLoginRateLimitWindow() { return adminLoginRateLimitWindow; }
+    public void setAdminLoginRateLimitWindow(Duration value) { adminLoginRateLimitWindow = value; }
+    public int getLiveStreamMaxConnections() { return liveStreamMaxConnections; }
+    public void setLiveStreamMaxConnections(int value) { liveStreamMaxConnections = value; }
+    public int getLiveStreamMaxConnectionsPerClient() { return liveStreamMaxConnectionsPerClient; }
+    public void setLiveStreamMaxConnectionsPerClient(int value) { liveStreamMaxConnectionsPerClient = value; }
+
     public String getAdminApiKey() {
         return adminApiKey;
     }

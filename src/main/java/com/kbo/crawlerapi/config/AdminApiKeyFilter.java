@@ -109,12 +109,7 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
     }
 
     private String pathWithoutContext(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        String contextPath = request.getContextPath();
-        if (contextPath != null && !contextPath.isBlank() && path.startsWith(contextPath)) {
-            path = path.substring(contextPath.length());
-        }
-        return path;
+        return SecurityRequestPath.withinApplication(request);
     }
 
     private boolean apiKeyMatches(String candidate) {
