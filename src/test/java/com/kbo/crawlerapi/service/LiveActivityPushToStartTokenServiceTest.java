@@ -73,6 +73,45 @@ class LiveActivityPushToStartTokenServiceTest {
     }
 
     @Test
+    void failedStartCanBeRetriedAndOnlySuccessfulDeliveryIsDeduplicated() {
+        LiveActivityPushToStartToken token = token("start-token", "lg");
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService() {
+            private boolean first = true;
+
+            @Override
+            public ApnsSendResult sendLiveActivityStart(Game game, LiveActivityPushToStartToken startToken,
+                                                       Map<String, Object> attributes, Map<String, Object> contentState) {
+                if (first) {
+                    first = false;
+                    return new ApnsSendResult(false, false, false, APNS_SERVER_ERROR);
+                }
+                return super.sendLiveActivityStart(game, startToken, attributes, contentState);
+            }
+        };
+        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        LiveActivityPushToStartTokenService service = service(apnsPushService);
+
+        assertThat(service.deliverStart(game()).failedCount()).isEqualTo(1);
+        assertThat(token.getLastStartedGameKey()).isNull();
+        assertThat(token.isActive()).isTrue();
+        assertThat(service.deliverStart(game()).sentCount()).isEqualTo(1);
+        assertThat(service.deliverStart(game()).skippedCount()).isEqualTo(1);
+        assertThat(apnsPushService.sentCount).isEqualTo(1);
+    }
+
+    @Test
+    void tokenRegisteredAfterGameStartReceivesStartOnNextAttempt() {
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService();
+        when(repository.findByActiveTrue()).thenReturn(List.of(), List.of(token("late-token", "lg")));
+        LiveActivityPushToStartTokenService service = service(apnsPushService);
+
+        assertThat(service.deliverStart(game()).skippedCount()).isEqualTo(1);
+        assertThat(service.deliverStart(game()).sentCount()).isEqualTo(1);
+        assertThat(service.deliverStart(game()).skippedCount()).isEqualTo(1);
+        assertThat(apnsPushService.sentCount).isEqualTo(1);
+    }
+
+    @Test
     void disabledAutoStartSkipsWithoutSendingApns() {
         LiveActivityPushToStartToken token = token("start-token", "lg");
         RecordingApnsPushService apnsPushService = new RecordingApnsPushService();

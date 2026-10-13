@@ -69,7 +69,7 @@ public class KboScheduleClient {
     public ScheduleResponse fetchMonthlyScheduleResponse(YearMonth yearMonth) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("leId", "1");
-        form.add("srIdList", "0,9,6");
+        form.add("srIdList", "0,9,6,3,4,5,7");
         form.add("seasonId", String.valueOf(yearMonth.getYear()));
         form.add("gameMonth", String.format("%02d", yearMonth.getMonthValue()));
         form.add("teamId", "");

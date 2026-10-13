@@ -297,7 +297,6 @@ public class LiveGameSyncService {
                             game.getScheduledAt(),
                             delivery.eventKey()
                     );
-                    deliverLiveActivityStart(game, draft);
                 } else {
                     log.info(
                             "[LiveGameSync] schedule-level event created game={} eventType={} eventKey={}",
@@ -408,7 +407,6 @@ public class LiveGameSyncService {
                                 delivery.eventKey()
                         );
                         logGameStartTiming(after, draft, "detail-import");
-                        deliverLiveActivityStart(after, draft);
                     }
                     if (NotificationEventService.EVENT_GAME_CANCELLED.equals(draft.eventType())) {
                         log.info(
@@ -438,6 +436,8 @@ public class LiveGameSyncService {
                 nextRefreshAtByGameId.put(candidate.getId(), Instant.now(applicationClock).plus(Duration.ofMinutes(1)));
             }
         }
+
+        syncLiveActivityStarts(targetDate);
 
         boolean notable = updatedCount > 0 || eventCreatedCount > 0 || notificationSentCount > 0 || failedCount > 0;
         if (notable) {
@@ -643,28 +643,32 @@ public class LiveGameSyncService {
         return snapshots;
     }
 
-    private void deliverLiveActivityStart(Game game, NotificationEventDraft draft) {
-        if (liveActivityPushToStartTokenService == null) {
-            log.info(
-                    "[LiveActivityStart] APNs skipped publicGameId={} providerGameId={} databaseId={} eventKey={} reason=unsupported_os_or_capability",
-                    game.getPublicGameId(),
-                    game.getProviderGameId(),
-                    game.getId(),
-                    draft.eventKey()
-            );
+    private void syncLiveActivityStarts(LocalDate targetDate) {
+        if (liveActivityPushToStartTokenService == null || !targetDate.equals(todayKst())) {
             return;
         }
-        LiveActivityPushToStartTokenService.LiveActivityStartDeliveryResult result = liveActivityPushToStartTokenService.deliverStart(game);
-        log.info(
-                "[LiveActivityStart] APNs result publicGameId={} providerGameId={} databaseId={} eventKey={} sent={} skipped={} failed={}",
-                game.getPublicGameId(),
-                game.getProviderGameId(),
-                game.getId(),
-                draft.eventKey(),
-                result.sentCount(),
-                result.skippedCount(),
-                result.failedCount()
-        );
+        // Retry independently of GAME_START event creation: tokens can arrive late or APNs can fail.
+        // The token service remembers successful starts and skips them on subsequent syncs.
+        for (Game game : gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate)) {
+            if (game.getStatus() != GameStatus.LIVE) {
+                continue;
+            }
+            try {
+                if (!hasReliableLiveStartEvidence(game, GameState.from(game, latestSnapshot(game)))) {
+                    continue;
+                }
+                LiveActivityPushToStartTokenService.LiveActivityStartDeliveryResult result = liveActivityPushToStartTokenService.deliverStart(game);
+                if (result.sentCount() > 0 || result.failedCount() > 0) {
+                    log.info(
+                            "[LiveActivityStart] APNs result publicGameId={} providerGameId={} databaseId={} sent={} skipped={} failed={}",
+                            game.getPublicGameId(), game.getProviderGameId(), game.getId(),
+                            result.sentCount(), result.skippedCount(), result.failedCount()
+                    );
+                }
+            } catch (RuntimeException exception) {
+                log.warn("[LiveActivityStart] start sync failed publicGameId={} reason={}", game.getPublicGameId(), exception.getMessage());
+            }
+        }
     }
 
     private void refreshScheduleBeforeDetailImport(LocalDate targetDate) {

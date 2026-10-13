@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.config.LiveSyncProperties;
@@ -59,6 +61,93 @@ class LiveGameSyncServiceTest {
 
     @Mock
     private GameSnapshotRepository gameSnapshotRepository;
+
+    @Test
+    void alreadyLiveGameRetriesStartWithoutNewEventOrDetailRefresh() {
+        Game game = fixtureGame(GameStatus.LIVE, 1, 0, "Top 1");
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(game.getGameDate()))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(game.getPublicGameId())).thenReturn(Optional.of(game));
+        var starts = mock(LiveActivityPushToStartTokenService.class);
+        when(starts.deliverStart(game)).thenReturn(
+                new LiveActivityPushToStartTokenService.LiveActivityStartDeliveryResult(0, 1, 0),
+                new LiveActivityPushToStartTokenService.LiveActivityStartDeliveryResult(1, 0, 0)
+        );
+        var imports = new StubGameDetailImportService();
+        var notifications = new StubNotificationEventService();
+        LiveGameSyncService service = serviceWithActivityStarts(ACTIVE_KST_CLOCK, imports, notifications, starts);
+
+        service.sync(game.getGameDate(), false);
+        var retry = service.sync(game.getGameDate(), false);
+
+        verify(starts, times(2)).deliverStart(game);
+        assertThat(retry.candidateCount()).isZero();
+        assertThat(imports.importedGameIds).hasSize(1);
+        assertThat(notifications.drafts).isEmpty();
+    }
+
+    @Test
+    void startFailureDoesNotBlockNextSync() {
+        Game game = fixtureGame(GameStatus.LIVE, 1, 0, "Top 1");
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(game.getGameDate()))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(game.getPublicGameId())).thenReturn(Optional.of(game));
+        var starts = mock(LiveActivityPushToStartTokenService.class);
+        when(starts.deliverStart(game)).thenThrow(new IllegalStateException("APNs unavailable"))
+                .thenReturn(new LiveActivityPushToStartTokenService.LiveActivityStartDeliveryResult(1, 0, 0));
+        LiveGameSyncService service = serviceWithActivityStarts(
+                ACTIVE_KST_CLOCK, new StubGameDetailImportService(), new StubNotificationEventService(), starts
+        );
+
+        assertThat(service.sync(game.getGameDate(), false).failedCount()).isZero();
+        service.sync(game.getGameDate(), false);
+
+        verify(starts, times(2)).deliverStart(game);
+    }
+
+    @Test
+    void historicalSyncDoesNotStartActivities() {
+        Game game = fixtureGame(GameStatus.LIVE, 1, 0, "Top 1");
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(game.getGameDate()))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(game.getPublicGameId())).thenReturn(Optional.of(game));
+        var starts = mock(LiveActivityPushToStartTokenService.class);
+        Clock nextDay = Clock.offset(ACTIVE_KST_CLOCK, Duration.ofDays(1));
+        LiveGameSyncService service = serviceWithActivityStarts(
+                nextDay, new StubGameDetailImportService(), new StubNotificationEventService(), starts
+        );
+
+        service.sync(game.getGameDate(), true);
+
+        verifyNoInteractions(starts);
+    }
+
+    @Test
+    void liveWithoutStartEvidenceDoesNotStartActivity() {
+        Game game = fixtureGame(GameStatus.LIVE, 0, 0, "Top 1");
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(game.getGameDate()))
+                .thenReturn(List.of(game));
+        when(gameRepository.findByPublicGameId(game.getPublicGameId())).thenReturn(Optional.of(game));
+        var starts = mock(LiveActivityPushToStartTokenService.class);
+        LiveGameSyncService service = serviceWithActivityStarts(
+                ACTIVE_KST_CLOCK, new StubGameDetailImportService(), new StubNotificationEventService(), starts
+        );
+
+        service.sync(game.getGameDate(), true);
+
+        verifyNoInteractions(starts);
+    }
+
+    private LiveGameSyncService serviceWithActivityStarts(
+            Clock clock, StubGameDetailImportService imports, StubNotificationEventService notifications,
+            LiveActivityPushToStartTokenService starts
+    ) {
+        return new LiveGameSyncService(
+                gameRepository, gameSnapshotRepository, null, imports, new StubScheduleImportService(),
+                notifications, starts, new StubTeamRankService(false), new LiveSyncProperties(), clock,
+                new DateSyncLockService()
+        );
+    }
 
     @Test
     void todayUsesAsiaSeoulDate() {

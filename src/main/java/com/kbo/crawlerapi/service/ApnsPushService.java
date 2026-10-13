@@ -540,6 +540,12 @@ public class ApnsPushService {
         Map<String, Object> aps = new LinkedHashMap<>();
         aps.put("timestamp", Instant.now(applicationClock).getEpochSecond());
         aps.put("event", "start");
+        // ActivityKit requires an alert for remotely started activities.
+        aps.put("alert", Map.of(
+                "title", "경기가 시작됐어요",
+                "body", attributes.getOrDefault("favoriteTeamShortName", "응원팀") + " vs "
+                        + attributes.getOrDefault("opponentTeamShortName", "상대팀") + " · 실시간 점수를 확인하세요"
+        ));
         aps.put("attributes-type", "FavoriteTeamGameActivityAttributes");
         aps.put("attributes", attributes);
         aps.put("content-state", contentState);

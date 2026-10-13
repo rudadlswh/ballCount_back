@@ -169,6 +169,8 @@ class ApnsPushServiceTest {
                         "gameID", "game-1",
                         "favoriteTeamID", "lg",
                         "opponentTeamID", "doosan",
+                        "favoriteTeamShortName", "LG",
+                        "opponentTeamShortName", "두산",
                         "venue", "잠실",
                         "isHomeGame", true
                 ),
@@ -190,7 +192,10 @@ class ApnsPushServiceTest {
                 "\"favoriteTeamID\":\"lg\"",
                 "\"content-state\":",
                 "\"favoriteScoreText\":\"3\"",
-                "\"input-push-token\":1"
+                "\"input-push-token\":1",
+                "\"alert\":",
+                "\"title\":\"경기가 시작됐어요\"",
+                "\"body\":\"LG vs 두산 · 실시간 점수를 확인하세요\""
         );
     }
 
