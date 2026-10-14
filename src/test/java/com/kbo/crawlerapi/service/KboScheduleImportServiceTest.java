@@ -8,11 +8,13 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,11 +36,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient.KboScheduleEndpointException;
@@ -819,6 +824,40 @@ class KboScheduleImportServiceTest {
         assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
         assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
         assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
+    }
+
+    @Test
+    void scheduleClientIncludesPostseasonGamesInMonthlySchedule() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KboScheduleClient client = new TestableKboScheduleClient(builder, "https://www.koreabaseball.com");
+        var form = new LinkedMultiValueMap<String, String>();
+        form.add("leId", "1");
+        form.add("srIdList", "0,9,6,3,4,5,7");
+        form.add("seasonId", "2026");
+        form.add("gameMonth", "10");
+        form.add("teamId", "");
+        String payload = new ClassPathResource("fixtures/kbo/schedule-postseason-202610.json")
+                .getContentAsString(StandardCharsets.UTF_8);
+        server.expect(requestTo("https://www.koreabaseball.com/ws/Schedule.asmx/GetScheduleList"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().formData(form))
+                .andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
+
+        YearMonth month = YearMonth.of(2026, 10);
+        var games = new KboScheduleParser(new ObjectMapper())
+                .parseMonthlySchedule(client.fetchMonthlySchedule(month), month);
+
+        assertThat(games).extracting(ParsedScheduleGame::providerGameId)
+                .containsExactly("20261014OBLG0", "20261015OBLG0");
+        assertThat(games).allSatisfy(game -> {
+            assertThat(game.awayProviderTeamName()).isEqualTo("두산");
+            assertThat(game.homeProviderTeamName()).isEqualTo("LG");
+            assertThat(game.status()).isEqualTo(GameStatus.SCHEDULED);
+            assertThat(game.scheduledAt().getHour()).isEqualTo(18);
+            assertThat(game.scheduledAt().getMinute()).isEqualTo(30);
+        });
+        server.verify();
     }
 
     @Test
