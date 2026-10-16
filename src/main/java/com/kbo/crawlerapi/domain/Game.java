@@ -32,6 +32,23 @@ public class Game {
     @Column(name = "provider_game_id", length = 100)
     private String providerGameId;
 
+    @Column(name = "series_id")
+    private Integer seriesId;
+
+    @Column(name = "season_type", nullable = false, length = 30)
+    private String seasonType = GameSeasonType.UNKNOWN.getApiValue();
+
+    public Integer getSeriesId() { return seriesId; }
+
+    public String getSeasonType() { return seasonType; }
+
+    public void syncSeries(Integer seriesId) {
+        if (seriesId != null && GameSeasonType.fromSeriesId(seriesId) != GameSeasonType.UNKNOWN) {
+            this.seriesId = seriesId;
+            this.seasonType = GameSeasonType.fromSeriesId(seriesId).getApiValue();
+        }
+    }
+
     @Column(name = "game_date", nullable = false)
     private LocalDate gameDate;
 

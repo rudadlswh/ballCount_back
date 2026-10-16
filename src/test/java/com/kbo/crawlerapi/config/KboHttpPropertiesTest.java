@@ -32,7 +32,7 @@ class KboHttpPropertiesTest {
         properties.setReadTimeout(Duration.ofSeconds(9));
         properties.setRequestTimeout(Duration.ofSeconds(12));
 
-        assertThat(KboHttpClientFactory.apnsHttpClient(properties).connectTimeout())
+        assertThat(KboHttpClientFactory.pushHttpClient(properties).connectTimeout())
                 .contains(Duration.ofSeconds(5));
         assertThat(KboHttpClientFactory.requestTimeout(properties)).isEqualTo(Duration.ofSeconds(12));
         assertThat(KboHttpClientFactory.restClientRequestFactory(properties)).isNotNull();

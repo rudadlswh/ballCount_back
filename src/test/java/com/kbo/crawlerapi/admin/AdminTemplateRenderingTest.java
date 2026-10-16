@@ -34,6 +34,7 @@ import java.util.Optional;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.jsoup.Jsoup;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -189,16 +190,61 @@ class AdminTemplateRenderingTest {
                 "20260728-KIA-LG", "KBO", "provider-1", LocalDate.of(2026, 7, 28),
                 OffsetDateTime.parse("2026-07-28T18:30:00+09:00"), "잠실", "final", false, false,
                 null, away, home, 2, 3, null, null, OffsetDateTime.parse("2026-07-28T22:00:00+09:00"),
-                OffsetDateTime.parse("2026-07-28T22:00:00+09:00"), false
-        );
+                OffsetDateTime.parse("2026-07-28T22:00:00+09:00"), false, "regular_season", 0);
         gameReadService.monthResult = new GamesByMonthResponse(2026, 7, List.of(game), game.updatedAt(), false);
 
-        mockMvc.perform(get("/admin/games").param("year", "2026").param("month", "7"))
+        var response = mockMvc.perform(get("/admin/games").param("year", "2026").param("month", "7"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("href=\"/api/v1/games/month?year=2026&amp;month=7\"")))
                 .andExpect(content().string(containsString("KIA vs LG")))
-                .andExpect(content().string(containsString("20260728-KIA-LG")));
+                .andExpect(content().string(containsString("20260728-KIA-LG")))
+                .andReturn().getResponse();
+        var document = Jsoup.parse(response.getContentAsString());
+        var day = document.selectFirst(".calendar-day[data-date=2026-07-28]");
+        org.assertj.core.api.Assertions.assertThat(day.select(".calendar-game")).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(day.select(".calendar-game__score").text()).isEqualTo("2 : 3");
+        org.assertj.core.api.Assertions.assertThat(day.text()).contains("18:30", "종료", "잠실");
         org.assertj.core.api.Assertions.assertThat(gameReadService.requestedMonth).isEqualTo(YearMonth.of(2026, 7));
+    }
+
+    @Test
+    void monthlyCalendarAlignsLeapMonthAndKeepsBothGamesOnTheSameDate() throws Exception {
+        var team = new TeamSummaryDto("LG", "LG 트윈스", "LG", null);
+        var first = new GameSummaryDto("first", "KBO", "first", LocalDate.of(2028, 2, 29),
+                OffsetDateTime.parse("2028-02-29T14:00:00+09:00"), "잠실", "scheduled", false, false,
+                null, team, team, 0, 0, null, null, null, null, false, "postseason", 3);
+        var second = new GameSummaryDto("second", "KBO", "second", first.gameDate(),
+                null, null, "postponed", false, true,
+                null, team, team, 0, 0, null, null, null, null, false, "postseason", 3);
+        gameReadService.monthResult = new GamesByMonthResponse(2028, 2, List.of(second, first), null, false);
+
+        var response = mockMvc.perform(get("/admin/games").param("year", "2028").param("month", "2"))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        var document = Jsoup.parse(response.getContentAsString());
+        var days = document.select(".calendar-day");
+        org.assertj.core.api.Assertions.assertThat(days).hasSize(35);
+        org.assertj.core.api.Assertions.assertThat(days.first().attr("data-date")).isEqualTo("2028-01-30");
+        org.assertj.core.api.Assertions.assertThat(days.last().attr("data-date")).isEqualTo("2028-03-04");
+        org.assertj.core.api.Assertions.assertThat(document.select(".calendar-day:not(.calendar-day--outside)")).hasSize(29);
+        var games = document.select(".calendar-day[data-date=2028-02-29] .calendar-game");
+        org.assertj.core.api.Assertions.assertThat(games.eachAttr("href"))
+                .containsExactly("/admin/games/first", "/admin/games/second");
+        org.assertj.core.api.Assertions.assertThat(games.select(".calendar-game__score")).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(games.text()).contains("14:00", "시간 미정", "연기", "포스트시즌");
+    }
+
+    @Test
+    void emptyMonthlyCalendarKeepsDatesAndNavigatesAcrossYears() throws Exception {
+        var response = mockMvc.perform(get("/admin/games").param("year", "2027").param("month", "1"))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        var document = Jsoup.parse(response.getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(document.select(".calendar-day")).hasSize(42);
+        org.assertj.core.api.Assertions.assertThat(document.selectFirst("a[aria-label=이전 달]").attr("href"))
+                .isEqualTo("/admin/games?year=2026&month=12");
+        org.assertj.core.api.Assertions.assertThat(document.selectFirst("a[aria-label=다음 달]").attr("href"))
+                .isEqualTo("/admin/games?year=2027&month=2");
+        org.assertj.core.api.Assertions.assertThat(document.select(".calendar-empty").text())
+                .isEqualTo("해당 월에 등록된 경기가 없습니다.");
     }
 
     @Test

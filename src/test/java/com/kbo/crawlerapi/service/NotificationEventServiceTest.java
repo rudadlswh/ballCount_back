@@ -835,6 +835,73 @@ class NotificationEventServiceTest {
     }
 
 
+    @Test
+    void durableRecoverySkipsAlreadySentDevicesAndRecordsEachNewSuccess() {
+        var outbox = org.mockito.Mockito.mock(com.kbo.crawlerapi.repository.NotificationOutboxRepository.class);
+        Game game = fixtureGame();
+        var first = device("lg", "already-sent");
+        var second = device("lg", "pending");
+        var draft = draft();
+        NotificationEvent event = new NotificationEvent(UUID.randomUUID(), game, draft.eventType(), draft.eventKey(), draft.title(), draft.body(), "{}");
+        var push = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        var service = new NotificationEventService(notificationEventRepository, notificationDeviceRepository, push,
+                null, null, new ObjectMapper(), CLOCK, null, Runnable::run, outbox);
+        UUID lease = UUID.randomUUID();
+        when(outbox.claim(eq(event.getId()), any())).thenReturn(lease);
+        when(notificationEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(outbox.targets(event.getId(), "ios")).thenReturn(List.of(first.getId(), second.getId()));
+        when(notificationDeviceRepository.findAllById(List.of(first.getId(), second.getId()))).thenReturn(List.of(first, second));
+        when(outbox.beforeSend(eq(event.getId()), eq(lease), eq(first.getId()), any())).thenReturn("sent");
+        when(outbox.beforeSend(eq(event.getId()), eq(lease), eq(second.getId()), any())).thenReturn("pending");
+        var result = service.deliverDurable(event.getId());
+        assertThat(result.sentCount()).isEqualTo(2);
+        assertThat(push.sentDevices).containsExactly(second);
+        verify(outbox).record(eq(event.getId()), eq(lease), eq(second.getId()), eq("sent"), any(), any());
+        verify(outbox, never()).record(eq(event.getId()), eq(lease), eq(first.getId()), any(), any(), any());
+        verify(outbox).finish(eq(event.getId()), eq(lease), eq(true), eq(false), any(), any());
+    }
+
+    @Test
+    void durableWorkerUsesStoredAndroidTargetsAndRecordsFcmSuccess() {
+        var outbox = org.mockito.Mockito.mock(com.kbo.crawlerapi.repository.NotificationOutboxRepository.class);
+        var fcm = org.mockito.Mockito.mock(FcmPushService.class);
+        var game = fixtureGame();
+        var target = device("android", "sandbox", "lg", "android-token", true);
+        var event = new NotificationEvent(UUID.randomUUID(), game, draft().eventType(), "fcm-key", "title", "body", "{}");
+        var push = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult(), "disabled", "sandbox");
+        var service = new NotificationEventService(notificationEventRepository, notificationDeviceRepository, push,
+                null, fcm, new ObjectMapper(), CLOCK, null, Runnable::run, outbox);
+        UUID lease = UUID.randomUUID();
+        when(fcm.configuredEnvironment()).thenReturn("sandbox");
+        when(fcm.send(event, target)).thenReturn(new FcmPushService.FcmSendResult(true, false, false, null, "message-id"));
+        when(outbox.claim(eq(event.getId()), any())).thenReturn(lease);
+        when(notificationEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(outbox.targets(event.getId(), "ios")).thenReturn(List.of());
+        when(notificationDeviceRepository.findAllById(List.of())).thenReturn(List.of());
+        when(outbox.targets(event.getId(), "android")).thenReturn(List.of(target.getId()));
+        when(notificationDeviceRepository.findAllById(List.of(target.getId()))).thenReturn(List.of(target));
+        when(outbox.beforeSend(eq(event.getId()), eq(lease), eq(target.getId()), any())).thenReturn("pending");
+        assertThat(service.deliverDurable(event.getId()).sentCount()).isEqualTo(1);
+        verify(fcm).send(event, target);
+        verify(outbox).record(eq(event.getId()), eq(lease), eq(target.getId()), eq("sent"), any(), any());
+    }
+
+    @Test
+    void rejectedMemoryQueueKeepsDurableWorkForRecovery() {
+        var outbox = org.mockito.Mockito.mock(com.kbo.crawlerapi.repository.NotificationOutboxRepository.class);
+        var push = new RecordingApnsPushService(ApnsPushService.ApnsSendResult.sentResult());
+        var target = device("lg", "target");
+        var service = new NotificationEventService(notificationEventRepository, notificationDeviceRepository, push,
+                null, null, new ObjectMapper(), CLOCK, null,
+                task -> { throw new java.util.concurrent.RejectedExecutionException("full"); }, outbox);
+        when(notificationEventRepository.save(any(NotificationEvent.class))).thenAnswer(call -> call.getArgument(0));
+        when(notificationDeviceRepository.findDeliveryTargets(any(), any(), any())).thenReturn(List.of(target));
+        var result = service.createAndDeliverAsync(fixtureGame(), draft());
+        assertThat(result.eventCreated()).isTrue();
+        verify(outbox).enqueue(eq(result.eventId()), eq(List.of(target)), any());
+        assertThat(push.sentDevices).isEmpty();
+    }
+
     private NotificationEventService service(RecordingApnsPushService pushService) {
         return service(pushService, null);
     }

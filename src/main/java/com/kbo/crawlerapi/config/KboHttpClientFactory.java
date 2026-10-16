@@ -20,7 +20,7 @@ public final class KboHttpClientFactory {
         return requestFactory;
     }
 
-    public static HttpClient apnsHttpClient(KboHttpProperties properties) {
+    public static HttpClient pushHttpClient(KboHttpProperties properties) {
         KboHttpProperties effectiveProperties = properties == null ? new KboHttpProperties() : properties;
         return HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_2)

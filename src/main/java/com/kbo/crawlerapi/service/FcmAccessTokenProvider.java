@@ -3,6 +3,8 @@ package com.kbo.crawlerapi.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.config.FcmProperties;
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -15,6 +17,7 @@ import java.security.KeyFactory;
 import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,12 +32,20 @@ public class FcmAccessTokenProvider {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final Clock applicationClock;
+    private final Duration requestTimeout;
 
     private volatile CachedToken cachedToken;
 
-    @Autowired
     public FcmAccessTokenProvider(FcmProperties properties, ObjectMapper objectMapper, Clock applicationClock) {
-        this(properties, objectMapper, HttpClient.newHttpClient(), applicationClock);
+        this(properties, objectMapper, applicationClock, new KboHttpProperties());
+    }
+
+    @Autowired
+    public FcmAccessTokenProvider(
+            FcmProperties properties, ObjectMapper objectMapper, Clock applicationClock, KboHttpProperties httpProperties
+    ) {
+        this(properties, objectMapper, KboHttpClientFactory.pushHttpClient(httpProperties), applicationClock,
+                KboHttpClientFactory.requestTimeout(httpProperties));
     }
 
     FcmAccessTokenProvider(
@@ -43,10 +54,19 @@ public class FcmAccessTokenProvider {
             HttpClient httpClient,
             Clock applicationClock
     ) {
+        this(properties, objectMapper, httpClient, applicationClock,
+                KboHttpClientFactory.requestTimeout(null));
+    }
+
+    FcmAccessTokenProvider(
+            FcmProperties properties, ObjectMapper objectMapper, HttpClient httpClient,
+            Clock applicationClock, Duration requestTimeout
+    ) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
         this.applicationClock = applicationClock;
+        this.requestTimeout = requestTimeout;
     }
 
     public synchronized String accessToken() {
@@ -60,6 +80,7 @@ public class FcmAccessTokenProvider {
             String body = "grant_type=" + urlEncode("urn:ietf:params:oauth:grant-type:jwt-bearer")
                     + "&assertion=" + urlEncode(assertion);
             HttpRequest request = HttpRequest.newBuilder(URI.create(account.tokenUri()))
+                    .timeout(requestTimeout)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();

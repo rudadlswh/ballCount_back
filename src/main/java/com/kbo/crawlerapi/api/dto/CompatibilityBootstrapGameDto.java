@@ -26,6 +26,7 @@ public record CompatibilityBootstrapGameDto(
         Integer outs,
         String highlightText,
         List<CompatibilityBootstrapGameEventDto> events,
-        String note
+        String note,
+        Integer seriesId
 ) {
 }

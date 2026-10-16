@@ -24,25 +24,64 @@
                 <label><span>월</span><input type="number" name="month" min="1" max="12" required th:value="${requestedMonth.monthValue}"></label>
                 <button class="button button--primary" type="submit">조회</button>
             </form>
+            <div class="calendar-toolbar">
+                <div class="calendar-heading">
+                    <h2 id="calendar-title" th:text="${requestedMonth.year + '년 ' + requestedMonth.monthValue + '월'}">월간 달력</h2>
+                    <span class="badge badge--muted" th:text="${monthResult.games.size() + '경기'}">0경기</span>
+                </div>
+                <nav class="calendar-navigation" aria-label="달력 월 이동">
+                    <a class="button button--ghost" aria-label="이전 달" th:href="@{/admin/games(year=${previousMonth.year},month=${previousMonth.monthValue})}">‹</a>
+                    <a class="button button--ghost" th:href="@{/admin/games(year=${currentMonth.year},month=${currentMonth.monthValue})}">이번 달</a>
+                    <a class="button button--ghost" aria-label="다음 달" th:href="@{/admin/games(year=${nextMonth.year},month=${nextMonth.monthValue})}">›</a>
+                </nav>
+            </div>
             <div class="result-meta">
-                <span th:text="${requestedMonth + ' · ' + monthResult.games.size() + '경기'}">0경기</span>
+                <span>경기를 선택하면 상세 화면으로 이동합니다.</span>
                 <small th:text="${monthResult.updatedAt == null ? '갱신 정보 없음' : '최종 갱신 ' + monthResult.updatedAt}">갱신 정보 없음</small>
             </div>
-            <div class="table-wrap notification-table-wrap" tabindex="0" role="region" aria-label="표 데이터 · 가로로 스크롤하여 모든 열 보기">
-                <table>
-                    <thead><tr><th scope="col">날짜</th><th scope="col">상태</th><th scope="col">경기</th><th scope="col">점수</th><th scope="col">구장 / 시작</th><th scope="col">경기 ID</th></tr></thead>
-                    <tbody>
-                    <tr th:each="game : ${monthResult.games}">
-                        <td class="nowrap" th:text="${game.gameDate}">-</td>
-                        <td><span class="badge badge--muted" th:text="${game.status}">scheduled</span></td>
-                        <td><strong th:text="${game.awayTeam.shortName + ' vs ' + game.homeTeam.shortName}">원정 vs 홈</strong></td>
-                        <td class="mono" th:text="${game.awayScore == null || game.homeScore == null ? '- : -' : game.awayScore + ' : ' + game.homeScore}">- : -</td>
-                        <td><span th:text="${game.stadium == null ? '-' : game.stadium}">-</span><br><small th:text="${game.scheduledAt}">-</small></td>
-                        <td><a class="panel-link mono" th:href="@{/admin/games/{id}(id=${game.id})}" th:text="${game.id}">GAME-ID</a></td>
-                    </tr>
-                    <tr th:if="${monthResult.games.empty}"><td colspan="6" class="table-empty">해당 월에 등록된 경기가 없습니다.</td></tr>
-                    </tbody>
-                </table>
+            <p class="calendar-empty" th:if="${monthResult.games.empty}">해당 월에 등록된 경기가 없습니다.</p>
+            <p class="calendar-scroll-hint">좁은 화면에서는 달력을 좌우로 스크롤할 수 있습니다.</p>
+            <div class="calendar-scroll" tabindex="0" role="region" aria-labelledby="calendar-title">
+                <div class="game-calendar">
+                    <div class="calendar-weekday calendar-weekday--sunday">일</div>
+                    <div class="calendar-weekday">월</div><div class="calendar-weekday">화</div>
+                    <div class="calendar-weekday">수</div><div class="calendar-weekday">목</div>
+                    <div class="calendar-weekday">금</div><div class="calendar-weekday calendar-weekday--saturday">토</div>
+                    <section class="calendar-day" th:each="day : ${calendarDays}"
+                             th:classappend="${(!day.inMonth ? 'calendar-day--outside ' : '') + (day.today ? 'calendar-day--today' : '')}"
+                             th:attr="data-date=${day.date},aria-label=${day.date}">
+                        <div class="calendar-day__heading">
+                            <time class="calendar-day__number" th:datetime="${day.date}" th:text="${day.date.dayOfMonth}" th:attr="aria-current=${day.today ? 'date' : null}">1</time>
+                            <small th:if="${day.today}">오늘</small>
+                            <small th:if="${!day.games.empty}" th:text="${day.games.size() + '경기'}">1경기</small>
+                        </div>
+                        <a class="calendar-game" th:each="game : ${day.games}"
+                           th:href="@{/admin/games/{id}(id=${game.id})}"
+                           th:attr="data-status=${game.status},aria-label=${game.awayTeam.shortName + ' vs ' + game.homeTeam.shortName + ' 경기 상세'}">
+                            <div class="calendar-game__meta">
+                                <time th:if="${game.scheduledAt != null}" th:datetime="${game.scheduledAt}"
+                                      th:text="${#temporals.format(game.scheduledAt, 'HH:mm')}">18:30</time>
+                                <span th:if="${game.scheduledAt == null}">시간 미정</span>
+                                <span class="calendar-game__status" th:switch="${game.status}">
+                                    <span th:case="'scheduled'">예정</span><span th:case="'live'">진행 중</span>
+                                    <span th:case="'final'">종료</span><span th:case="'cancelled'">취소</span>
+                                    <span th:case="'postponed'">연기</span><span th:case="'delayed'">지연</span>
+                                    <span th:case="'suspended'">중단</span><span th:case="*">미정</span>
+                                </span>
+                            </div>
+                            <div class="calendar-game__matchup">
+                            <strong class="calendar-game__teams" th:text="${game.awayTeam.shortName + ' vs ' + game.homeTeam.shortName}">원정 vs 홈</strong>
+                            <strong class="calendar-game__score" th:if="${(game.status == 'live' || game.status == 'final' || game.status == 'suspended') &amp;&amp; game.awayScore != null &amp;&amp; game.homeScore != null}"
+                                    th:text="${game.awayScore + ' : ' + game.homeScore}">2 : 3</strong>
+                            </div>
+                            <div class="calendar-game__footer">
+                                <span th:text="${game.stadium == null ? '구장 미정' : game.stadium}">잠실</span>
+                                <span class="calendar-game__postseason" th:if="${game.seasonClassification == 'postseason'}">포스트시즌</span>
+                            </div>
+                        </a>
+                        <span class="calendar-day__empty" th:if="${day.inMonth &amp;&amp; day.games.empty}">경기 없음</span>
+                    </section>
+                </div>
             </div>
         </section>
     </main>

@@ -456,8 +456,11 @@ public class GameDetailImportService {
         if (providerGameId == null || providerGameId.isBlank()) {
             return LiveTextFetchResult.skipped("missingProviderGameId");
         }
+        if (game.getSeriesId() == null) {
+            return LiveTextFetchResult.skipped("missingSeriesId");
+        }
         try {
-            var response = kboLiveTextClient.fetchLiveText(providerGameId, game.getGameDate().getYear());
+            var response = kboLiveTextClient.fetchLiveText(providerGameId, game.getGameDate().getYear(), 1, game.getSeriesId());
             var parsedLiveText = kboLiveTextParser.parse(response.body());
             if (!parsedLiveText.hasRecords() && !parsedLiveText.hasEvents()) {
                 log.info(

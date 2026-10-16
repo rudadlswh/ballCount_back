@@ -88,6 +88,28 @@ class DateSyncLockServiceTest {
         third.close();
     }
 
+    @Test
+    void postgresFailureDoesNotGrantAnInMemoryLockAndNextAttemptCanRecover() throws Exception {
+        DataSource source = org.mockito.Mockito.mock(DataSource.class);
+        FakeJdbc jdbc = new FakeJdbc(true, true);
+        org.mockito.Mockito.when(source.getConnection()).thenThrow(new java.sql.SQLException("database unavailable"))
+                .thenReturn(jdbc.connection());
+        var service = new DateSyncLockService(source, properties("postgres-session"));
+        try (var failed = service.tryLock(LocalDate.of(2026, 10, 16))) {
+            assertThat(failed.acquired()).isFalse();
+        }
+        try (var recovered = service.tryLock(LocalDate.of(2026, 10, 16))) {
+            assertThat(recovered.acquired()).isTrue();
+        }
+        assertThat(jdbc.operations).contains("execute:select pg_try_advisory_lock(hashtext(?), hashtext(?))");
+    }
+
+    @Test
+    void postgresModeWithoutDataSourceDoesNotAcquireALock() {
+        var service = new DateSyncLockService(null, properties("postgres-session"));
+        assertThat(service.tryLock(LocalDate.of(2026, 10, 16)).acquired()).isFalse();
+    }
+
     private static LiveSyncProperties properties(String lockMode) {
         LiveSyncProperties properties = new LiveSyncProperties();
         properties.setLockMode(lockMode);

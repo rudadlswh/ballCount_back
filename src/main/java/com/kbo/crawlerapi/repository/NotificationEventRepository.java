@@ -3,9 +3,13 @@ package com.kbo.crawlerapi.repository;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 import com.kbo.crawlerapi.domain.NotificationEvent;
 
 public interface NotificationEventRepository extends JpaRepository<NotificationEvent, UUID> {
+
+    @EntityGraph(attributePaths = {"game", "game.homeTeam", "game.awayTeam"})
+    Optional<NotificationEvent> findById(UUID id);
 
     Optional<NotificationEvent> findByEventKey(String eventKey);
 

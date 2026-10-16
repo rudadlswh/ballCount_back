@@ -7,6 +7,7 @@ import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
 import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
 import com.kbo.crawlerapi.repository.NotificationEventRepository;
+import com.kbo.crawlerapi.repository.NotificationOutboxRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -27,6 +28,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class NotificationEventService {
@@ -58,6 +61,7 @@ public class NotificationEventService {
     private final Clock applicationClock;
     private final TransactionTemplate transactionTemplate;
     private final Executor notificationDeliveryExecutor;
+    private final NotificationOutboxRepository outbox;
 
     public NotificationEventService(
             NotificationEventRepository notificationEventRepository,
@@ -67,6 +71,21 @@ public class NotificationEventService {
             Clock applicationClock
     ) {
         this(notificationEventRepository, notificationDeviceRepository, apnsPushService, null, null, objectMapper, applicationClock, null, Runnable::run);
+    }
+
+    public NotificationEventService(
+            NotificationEventRepository notificationEventRepository,
+            NotificationDeviceRepository notificationDeviceRepository,
+            ApnsPushService apnsPushService,
+            LiveActivityUpdateService liveActivityUpdateService,
+            FcmPushService fcmPushService,
+            ObjectMapper objectMapper,
+            Clock applicationClock,
+            PlatformTransactionManager transactionManager,
+            @Qualifier("notificationDeliveryExecutor") Executor notificationDeliveryExecutor
+    ) {
+        this(notificationEventRepository, notificationDeviceRepository, apnsPushService, liveActivityUpdateService,
+                fcmPushService, objectMapper, applicationClock, transactionManager, notificationDeliveryExecutor, null);
     }
 
     @Autowired
@@ -79,8 +98,10 @@ public class NotificationEventService {
             ObjectMapper objectMapper,
             Clock applicationClock,
             PlatformTransactionManager transactionManager,
-            @Qualifier("notificationDeliveryExecutor") Executor notificationDeliveryExecutor
+            @Qualifier("notificationDeliveryExecutor") Executor notificationDeliveryExecutor,
+            NotificationOutboxRepository outbox
     ) {
+        this.outbox = outbox;
         this.notificationEventRepository = notificationEventRepository;
         this.notificationDeviceRepository = notificationDeviceRepository;
         this.apnsPushService = apnsPushService;
@@ -139,8 +160,9 @@ public class NotificationEventService {
         List<String> eventTeamIds = prepared.eventTeamIds();
         List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
         deliverLiveActivityEnd(game, draft.eventType());
+        if (outbox != null) return deliverDurable(event.getId());
 
-        return deliverPrepared(game, draft, event, eventTeamIds, relevantTeamDevices);
+        return deliverPrepared(game, draft, event, eventTeamIds, relevantTeamDevices, null);
     }
 
     public EventDeliveryResult createAndDeliverAsync(Game game, NotificationEventDraft draft) {
@@ -170,6 +192,20 @@ public class NotificationEventService {
         NotificationEvent event = prepared.event();
         List<NotificationDevice> relevantTeamDevices = prepared.relevantTeamDevices();
         deliverLiveActivityEnd(game, draft.eventType());
+        if (outbox != null) {
+            Runnable dispatch = () -> {
+                try { notificationDeliveryExecutor.execute(() -> deliverDurable(event.getId())); }
+                catch (java.util.concurrent.RejectedExecutionException exception) {
+                    log.warn("[Notifications] dispatch deferred eventId={} recoveryWillRetry=true", event.getId());
+                }
+            };
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override public void afterCommit() { dispatch.run(); }
+                });
+            } else { dispatch.run(); }
+            return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 0, 0);
+        }
         if (relevantTeamDevices.isEmpty() && initialFcmSkipReason != null) {
             markEventDelivery(event, "skipped", ApnsPushService.NO_RELEVANT_DEVICES);
             return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 1, 0);
@@ -189,8 +225,35 @@ public class NotificationEventService {
                 deliverableDevices.size(),
                 environmentCounts(deliverableDevices)
         );
-        notificationDeliveryExecutor.execute(() -> deliverPrepared(game, draft, event, prepared.eventTeamIds(), relevantTeamDevices));
+        notificationDeliveryExecutor.execute(() -> deliverPrepared(game, draft, event, prepared.eventTeamIds(), relevantTeamDevices, null));
         return new EventDeliveryResult(event.getId(), draft.eventKey(), true, 0, 0, 0);
+    }
+
+    private String deliveryState(NotificationEvent event, UUID token, NotificationDevice device) {
+        return outbox == null ? "pending" : outbox.beforeSend(event.getId(), token, device.getId(), OffsetDateTime.now(applicationClock));
+    }
+
+    public EventDeliveryResult deliverDurable(UUID eventId) {
+        UUID token = outbox.claim(eventId, OffsetDateTime.now(applicationClock));
+        if (token == null) return EventDeliveryResult.duplicate(eventId.toString());
+        String error = null;
+        try {
+            NotificationEvent event = notificationEventRepository.findById(eventId).orElseThrow();
+            Game game = event.getGame();
+            Map<String, Object> payload = objectMapper.readValue(event.getPayload(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            var draft = new NotificationEventDraft(event.getEventType(), event.getEventKey(), event.getTitle(), event.getBody(), payload);
+            var devices = notificationDeviceRepository.findAllById(outbox.targets(eventId, "ios"));
+            return deliverPrepared(game, draft, event, eventTeamIds(game), devices, token);
+        } catch (Exception exception) {
+            error = exception.getMessage();
+            if (error == null) error = exception.getClass().getSimpleName();
+            log.warn("[Notifications] durable delivery failed eventId={} retryPending=true", eventId, exception);
+            return new EventDeliveryResult(eventId, eventId.toString(), true, 0, 0, 1);
+        } finally {
+            outbox.finish(eventId, token, apnsPushService.readinessSkipReason() == null,
+                    fcmPushService != null && fcmPushService.readinessSkipReason() == null,
+                    OffsetDateTime.now(applicationClock), error);
+        }
     }
 
     private EventDeliveryResult deliverPrepared(
@@ -198,9 +261,10 @@ public class NotificationEventService {
             NotificationEventDraft draft,
             NotificationEvent event,
             List<String> eventTeamIds,
-            List<NotificationDevice> relevantTeamDevices
+            List<NotificationDevice> relevantTeamDevices,
+            UUID deliveryToken
     ) {
-        ProviderDelivery fcmDelivery = deliverFcm(event, draft, game, eventTeamIds);
+        ProviderDelivery fcmDelivery = deliverFcm(event, draft, game, eventTeamIds, deliveryToken);
         ApnsPushService.ApnsDiagnostics diagnostics = apnsPushService.diagnostics();
         log.info(
                 "[Notifications] delivery diagnostics eventId={} eventKey={} pushEnabled={} configTeamIdPresent={} configKeyIdPresent={} configBundleIdPresent={} privateKeyPathPresent={} inlinePrivateKeyPresent={} configuredEnv={} eventTeamIds={} relevantDeviceCount={} relevantDeviceEnvCounts={}",
@@ -256,7 +320,13 @@ public class NotificationEventService {
                 environmentCounts(deliverableDevices)
         );
         for (NotificationDevice device : deliverableDevices) {
+            String prior = deliveryState(event, deliveryToken, device);
+            if ("sent".equals(prior)) { sent++; continue; }
+            if (!"pending".equals(prior)) { skipped++; continue; }
             ApnsPushService.ApnsSendResult result = apnsPushService.send(event, device);
+            if (outbox != null) outbox.record(event.getId(), deliveryToken, device.getId(),
+                    result.sent() ? "sent" : result.skipped() || result.invalidToken() ? "skipped" : "failed",
+                    result.reason(), OffsetDateTime.now(applicationClock));
             if (result.sent()) {
                 sent++;
             } else if (result.skipped()) {
@@ -296,12 +366,15 @@ public class NotificationEventService {
             NotificationEvent event,
             NotificationEventDraft draft,
             Game game,
-            List<String> eventTeamIds
+            List<String> eventTeamIds,
+            UUID deliveryToken
     ) {
         if (fcmPushService == null || fcmPushService.readinessSkipReason() != null) {
             return ProviderDelivery.none(fcmReadinessSkipReason());
         }
-        List<NotificationDevice> candidates = notificationDeviceRepository.findAndroidDeliveryTargets(
+        List<NotificationDevice> candidates = outbox != null
+                ? notificationDeviceRepository.findAllById(outbox.targets(event.getId(), "android"))
+                : notificationDeviceRepository.findAndroidDeliveryTargets(
                 fcmPushService.configuredEnvironment(),
                 eventTeamIds.stream().map(value -> value.toLowerCase(java.util.Locale.ROOT)).toList(),
                 game.getPublicGameId()
@@ -310,6 +383,8 @@ public class NotificationEventService {
             return ProviderDelivery.none(ApnsPushService.NO_RELEVANT_DEVICES);
         }
         List<NotificationDevice> deliverable = candidates.stream()
+                .filter(device -> "android".equalsIgnoreCase(device.getPlatform()))
+                .filter(device -> fcmPushService.configuredEnvironment().equalsIgnoreCase(device.getEnvironment()))
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> isMonitoredGame(device, game) || favoriteTeamGameSkipReason(device, game) == null)
                 .filter(device -> isMonitoredGame(device, game) || eventSettingEnabled(device, draft.eventType()))
@@ -327,7 +402,13 @@ public class NotificationEventService {
         String lastFailure = null;
         List<NotificationDevice> invalidDevices = new java.util.ArrayList<>();
         for (NotificationDevice device : deliverable) {
+            String prior = deliveryState(event, deliveryToken, device);
+            if ("sent".equals(prior)) { sent++; continue; }
+            if (!"pending".equals(prior)) { skipped++; continue; }
             FcmPushService.FcmSendResult result = fcmPushService.send(event, device);
+            if (outbox != null) outbox.record(event.getId(), deliveryToken, device.getId(),
+                    result.sent() ? "sent" : result.skipped() || result.invalidToken() ? "skipped" : "failed",
+                    result.reason(), OffsetDateTime.now(applicationClock));
             if (result.sent()) {
                 sent++;
             } else if (result.skipped()) {
@@ -490,6 +571,15 @@ public class NotificationEventService {
                                 .toList()
                 )
                 : notificationDeviceRepository.findByPlatformAndNotificationsEnabledTrue("ios");
+        if (outbox != null) {
+            notificationEventRepository.flush();
+            List<NotificationDevice> targets = new java.util.ArrayList<>(relevantTeamDevices);
+            if (fcmPushService != null && fcmPushService.readinessSkipReason() == null) {
+                targets.addAll(notificationDeviceRepository.findAndroidDeliveryTargets(fcmPushService.configuredEnvironment(),
+                        eventTeamIds.stream().map(value -> value.toLowerCase(java.util.Locale.ROOT)).toList(), game.getPublicGameId()));
+            }
+            outbox.enqueue(event.getId(), targets, OffsetDateTime.now(applicationClock));
+        }
         return new PreparedDelivery(false, event, eventTeamIds, relevantTeamDevices);
     }
 

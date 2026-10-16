@@ -192,8 +192,7 @@ class GameReadControllerWebMvcTest {
                             null,
                             OffsetDateTime.of(2026, 4, 9, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
                             OffsetDateTime.of(2026, 4, 9, 17, 58, 14, 0, ZoneOffset.ofHours(9)),
-                            false
-                    )),
+                            false, "regular_season", 0)),
                     OffsetDateTime.of(2026, 4, 9, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
                     false
             );
@@ -258,8 +257,7 @@ class GameReadControllerWebMvcTest {
                     null,
                     OffsetDateTime.of(2026, 4, 9, 20, 12, 0, 0, ZoneOffset.ofHours(9)),
                     null,
-                    false
-            );
+                    false, "regular_season", 0);
         }
 
         @Override
