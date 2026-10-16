@@ -1199,10 +1199,12 @@ class GameDetailImportServiceTest {
         assertThat(gameBoxscoreRecordService.savedBoxscore).isSameAs(kboBoxscoreParser.result);
     }
 
-    @Test
-    void importsLiveTextRecordsForLiveDetailImport() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {-1, 0, 3, 4, 5, 7, 9})
+    void importsLiveTextRecordsForLiveDetailImport(int seriesId) {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
+        game.syncSeries(seriesId);
         StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
         StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
         StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
@@ -1268,6 +1270,12 @@ class GameDetailImportServiceTest {
 
         gameDetailImportService.importGameDetail(game.getPublicGameId());
 
+        if (seriesId < 0) {
+            assertThat(liveTextClient.requestedProviderGameId).isNull();
+            assertThat(liveTextRecordService.savedGame).isNull();
+            return;
+        }
+        assertThat(liveTextClient.requestedSeriesId).isEqualTo(seriesId);
         assertThat(liveTextClient.requestedProviderGameId).isEqualTo(game.getProviderGameId());
         assertThat(liveTextParser.parsedHtml).isEqualTo(liveTextClient.responseBody);
         assertThat(liveTextRecordService.savedGame).isSameAs(game);
@@ -1314,6 +1322,7 @@ class GameDetailImportServiceTest {
                 null
         );
         CrawlJob crawlJob = crawlJob(game);
+        game.syncSeries(0);
         StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
         StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
         StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
@@ -1437,6 +1446,7 @@ class GameDetailImportServiceTest {
                 null
         );
         CrawlJob crawlJob = crawlJob(game);
+        game.syncSeries(0);
         StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
         StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
         StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
@@ -1530,6 +1540,7 @@ class GameDetailImportServiceTest {
     void explicitBasePinchRunnerOverridesMismatchedOriginalLineupRunnerName(CapturedOutput output) {
         Game game = fixtureGame();
         CrawlJob crawlJob = crawlJob(game);
+        game.syncSeries(0);
         StubKboLiveTextClient liveTextClient = new StubKboLiveTextClient();
         StubKboLiveTextParser liveTextParser = new StubKboLiveTextParser();
         StubGameLiveTextRecordService liveTextRecordService = new StubGameLiveTextRecordService();
@@ -2389,9 +2400,11 @@ class GameDetailImportServiceTest {
         private String responseBody;
         private String requestedProviderGameId;
         private int requestedSeason;
+        private int requestedSeriesId;
 
         @Override
-        public LiveTextResponse fetchLiveText(String providerGameId, int season) {
+        public LiveTextResponse fetchLiveText(String providerGameId, int season, int leagueId, int seriesId) {
+            this.requestedSeriesId = seriesId;
             this.requestedProviderGameId = providerGameId;
             this.requestedSeason = season;
             return new LiveTextResponse(

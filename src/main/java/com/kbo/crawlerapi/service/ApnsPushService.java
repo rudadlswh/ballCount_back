@@ -82,7 +82,7 @@ public class ApnsPushService {
         this(
                 properties,
                 applicationClock,
-                KboHttpClientFactory.apnsHttpClient(httpProperties),
+                KboHttpClientFactory.pushHttpClient(httpProperties),
                 KboHttpClientFactory.requestTimeout(httpProperties)
         );
     }

@@ -73,6 +73,9 @@ public class KboScheduleParser {
     public MonthlyScheduleParseResult parseMonthlyScheduleResult(String responseBody, YearMonth yearMonth) {
         try {
             JsonNode root = normalizeRoot(objectMapper.readTree(responseBody));
+            if (root.path("rows").isArray() && root.path("rows").isEmpty()) {
+                return new MonthlyScheduleParseResult(List.of(), List.of(), 0);
+            }
             List<JsonNode> rowNodes = findScheduleRowArray(root);
             if (rowNodes.isEmpty()) {
                 throw new IllegalStateException("No schedule row array found in KBO schedule response");
@@ -701,8 +704,28 @@ public class KboScheduleParser {
             String awayStartingPitcherName,
             String homeStartingPitcherName,
             String statusReason,
-            OffsetDateTime sourceUpdatedAt
+            OffsetDateTime sourceUpdatedAt,
+            Integer seriesId
     ) {
+        public ParsedScheduleGame(
+                String provider, String providerGameId, LocalDate gameDate, OffsetDateTime scheduledAt,
+                String stadium, GameStatus status, boolean isCancelled, boolean isPostponed,
+                String awayProviderTeamName, String homeProviderTeamName, Integer awayScore, Integer homeScore,
+                GameCancelReason cancelReason, String rawCancelText, String awayStartingPitcherName,
+                String homeStartingPitcherName, String statusReason, OffsetDateTime sourceUpdatedAt
+        ) {
+            this(provider, providerGameId, gameDate, scheduledAt, stadium, status, isCancelled, isPostponed,
+                    awayProviderTeamName, homeProviderTeamName, awayScore, homeScore, cancelReason,
+                    rawCancelText, awayStartingPitcherName, homeStartingPitcherName, statusReason, sourceUpdatedAt, null);
+        }
+
+        public ParsedScheduleGame withSeriesId(Integer seriesId) {
+            return new ParsedScheduleGame(provider, providerGameId, gameDate, scheduledAt, stadium, status,
+                    isCancelled, isPostponed, awayProviderTeamName, homeProviderTeamName, awayScore, homeScore,
+                    cancelReason, rawCancelText, awayStartingPitcherName, homeStartingPitcherName, statusReason,
+                    sourceUpdatedAt, seriesId);
+        }
+
         public ParsedScheduleGame(
                 String provider,
                 String providerGameId,
@@ -821,7 +844,8 @@ public class KboScheduleParser {
                             || enrichedStatus == GameStatus.CANCELLED
                             || enrichedStatus == GameStatus.POSTPONED
                             ? enrichedStatusReason : null,
-                    sourceUpdatedAt
+                    sourceUpdatedAt,
+                    seriesId
             );
         }
 
@@ -844,7 +868,8 @@ public class KboScheduleParser {
                     awayStartingPitcherName,
                     homeStartingPitcherName,
                     status == GameStatus.DELAYED || status == GameStatus.SUSPENDED ? statusReason : null,
-                    sourceUpdatedAt
+                    sourceUpdatedAt,
+                    seriesId
             );
         }
 

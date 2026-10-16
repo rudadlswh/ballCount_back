@@ -4,10 +4,15 @@ import com.kbo.crawlerapi.service.ApnsTestPushService;
 import com.kbo.crawlerapi.service.ApnsTestPushService.ApnsTestPushCommand;
 import jakarta.servlet.http.HttpServletResponse;
 import com.kbo.crawlerapi.service.GameReadService;
+import com.kbo.crawlerapi.api.dto.GameSummaryDto;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Controller;
@@ -84,7 +89,8 @@ public class AdminPageController {
             @RequestParam(required = false) Integer month,
             Model model
     ) {
-        YearMonth currentMonth = YearMonth.now(ZoneId.of("Asia/Seoul"));
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        YearMonth currentMonth = YearMonth.from(today);
         try {
             YearMonth requestedMonth = YearMonth.of(
                     year == null ? currentMonth.getYear() : year,
@@ -92,11 +98,30 @@ public class AdminPageController {
             );
             model.addAttribute("activePage", "games");
             model.addAttribute("requestedMonth", requestedMonth);
-            model.addAttribute("monthResult", gameReadService.getGamesByMonth(requestedMonth));
+            var result = gameReadService.getGamesByMonth(requestedMonth);
+            var gamesByDate = result.games().stream()
+                    .sorted(Comparator.comparing(GameSummaryDto::scheduledAt,
+                            Comparator.nullsLast(Comparator.naturalOrder())))
+                    .collect(Collectors.groupingBy(GameSummaryDto::gameDate));
+            LocalDate firstDay = requestedMonth.atDay(1);
+            LocalDate start = firstDay.minusDays(firstDay.getDayOfWeek().getValue() % 7);
+            int dayCount = ((firstDay.getDayOfWeek().getValue() % 7 + requestedMonth.lengthOfMonth() + 6) / 7) * 7;
+            var days = IntStream.range(0, dayCount).mapToObj(start::plusDays)
+                    .map(date -> new CalendarDay(date, YearMonth.from(date).equals(requestedMonth),
+                            date.equals(today), gamesByDate.getOrDefault(date, List.of())))
+                    .toList();
+            model.addAttribute("monthResult", result);
+            model.addAttribute("calendarDays", days);
+            model.addAttribute("previousMonth", requestedMonth.minusMonths(1));
+            model.addAttribute("nextMonth", requestedMonth.plusMonths(1));
+            model.addAttribute("currentMonth", currentMonth);
             return "admin/games";
         } catch (java.time.DateTimeException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "month must be in the range 1-12");
         }
+    }
+
+    public record CalendarDay(LocalDate date, boolean inMonth, boolean today, List<GameSummaryDto> games) {
     }
 
     @GetMapping("/admin/issues")

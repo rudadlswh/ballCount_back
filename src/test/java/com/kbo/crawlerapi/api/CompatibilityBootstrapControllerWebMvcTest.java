@@ -98,8 +98,7 @@ class CompatibilityBootstrapControllerWebMvcTest {
                             1,
                             null,
                             List.of(),
-                            null
-                    )),
+                            null, 0)),
                     List.<CompatibilityBootstrapNotificationDto>of(),
                     null
             );

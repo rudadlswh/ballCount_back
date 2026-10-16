@@ -214,7 +214,9 @@ public class GameReadService {
                 savePitcher,
                 latest(latestUpdatedAt(game, latestSnapshot), latestBoxscoreUpdatedAt(List.of(), pitcherRows)),
                 toKst(latestSourceUpdatedAt(game, latestSnapshot)),
-                false
+                false,
+                game.getSeasonType(),
+                game.getSeriesId()
         );
     }
 
@@ -381,7 +383,9 @@ public class GameReadService {
                 game.getHomeStartingPitcherName(),
                 toKst(game.getUpdatedAt()),
                 toKst(game.getSourceUpdatedAt()),
-                false
+                false,
+                game.getSeasonType(),
+                game.getSeriesId()
         );
     }
 

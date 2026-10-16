@@ -26,6 +26,8 @@ public record GameDetailResponse(
         String savePitcher,
         OffsetDateTime updatedAt,
         OffsetDateTime sourceUpdatedAt,
-        boolean isStale
+        boolean isStale,
+        String seasonClassification,
+        Integer seriesId
 ) {
 }

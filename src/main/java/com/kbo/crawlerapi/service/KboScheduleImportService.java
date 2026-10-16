@@ -103,22 +103,24 @@ public class KboScheduleImportService {
     public ScheduleIngestionResult importMonthlySchedule(YearMonth yearMonth) {
         String targetKey = yearMonth.toString();
         var crawlJob = crawlJobTrackingService.createRunningScheduleImportJob(targetKey);
-        ScheduleResponse response;
+        List<ScheduleResponse> responses;
         MonthlyScheduleParseResult parseResult;
 
         try {
-            response = kboScheduleClient.fetchMonthlyScheduleResponse(yearMonth);
-            KboScheduleClient.validateScheduleResponse(response);
-            logScheduleResponseDiagnostics("monthly", null, yearMonth, response);
+            responses = kboScheduleClient.fetchMonthlyScheduleResponses(yearMonth);
+            for (var response : responses) {
+                KboScheduleClient.validateScheduleResponse(response);
+                logScheduleResponseDiagnostics("monthly", null, yearMonth, response);
+            }
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "request", exception.getMessage(), exception, 0);
             throw exception;
         }
 
         try {
-            parseResult = kboScheduleParser.parseMonthlyScheduleResult(response.body(), yearMonth);
+            parseResult = parseSeriesSchedules(responses, yearMonth);
         } catch (Exception exception) {
-            logScheduleParseFailure("monthly", null, yearMonth, response, exception);
+            responses.forEach(response -> logScheduleParseFailure("monthly", null, yearMonth, response, exception));
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
             throw exception;
         }
@@ -156,29 +158,53 @@ public class KboScheduleImportService {
         }
     }
 
+    private MonthlyScheduleParseResult parseSeriesSchedules(List<ScheduleResponse> responses, YearMonth month) {
+        List<ParsedScheduleGame> games = new ArrayList<>();
+        List<KboScheduleParser.SkippedScheduleRow> skipped = new ArrayList<>();
+        Map<String, Integer> seriesByGameId = new HashMap<>();
+        int fetchedRowCount = 0;
+        for (var response : responses) {
+            var parsed = kboScheduleParser.parseMonthlyScheduleResult(response.body(), month);
+            for (var game : parsed.games()) {
+                if (game.providerGameId() != null && response.seriesId() != null) {
+                    Integer previous = seriesByGameId.putIfAbsent(game.providerGameId(), response.seriesId());
+                    if (previous != null && !previous.equals(response.seriesId())) {
+                        throw new IllegalStateException("Conflicting KBO series for " + game.providerGameId());
+                    }
+                }
+                games.add(response.seriesId() == null ? game : game.withSeriesId(response.seriesId()));
+            }
+            skipped.addAll(parsed.skippedRows());
+            fetchedRowCount += parsed.fetchedRowCount();
+        }
+        return new MonthlyScheduleParseResult(games, skipped, fetchedRowCount);
+    }
+
     public DayScheduleIngestionResult crawlDay(LocalDate date) {
         Objects.requireNonNull(date, "date must not be null");
 
         YearMonth yearMonth = YearMonth.from(date);
         var crawlJob = crawlJobTrackingService.createRunningDailyScheduleImportJob(date.toString());
-        ScheduleResponse response;
+        List<ScheduleResponse> responses;
         MonthlyScheduleParseResult parseResult;
 
         log.info("Starting daily KBO schedule crawl. requestedDate={}, derivedMonth={}", date, yearMonth);
 
         try {
-            response = kboScheduleClient.fetchMonthlyScheduleResponse(yearMonth);
-            KboScheduleClient.validateScheduleResponse(response);
-            logScheduleResponseDiagnostics("daily", date, yearMonth, response);
+            responses = kboScheduleClient.fetchMonthlyScheduleResponses(yearMonth);
+            for (var response : responses) {
+                KboScheduleClient.validateScheduleResponse(response);
+                logScheduleResponseDiagnostics("daily", date, yearMonth, response);
+            }
         } catch (Exception exception) {
             crawlJobTrackingService.markFailed(crawlJob.getId(), "request", exception.getMessage(), exception, 0);
             throw exception;
         }
 
         try {
-            parseResult = kboScheduleParser.parseMonthlyScheduleResult(response.body(), yearMonth);
+            parseResult = parseSeriesSchedules(responses, yearMonth);
         } catch (Exception exception) {
-            logScheduleParseFailure("daily", date, yearMonth, response, exception);
+            responses.forEach(response -> logScheduleParseFailure("daily", date, yearMonth, response, exception));
             crawlJobTrackingService.markFailed(crawlJob.getId(), "parse", exception.getMessage(), exception, 0);
             throw exception;
         }
@@ -606,15 +632,15 @@ public class KboScheduleImportService {
                 continue;
             }
 
-            Optional<Game> existingGame = gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+            List<Game> existingGames = gameRepository.findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                     "kbo",
                     skippedRow.gameDate(),
                     homeTeam.get().getId(),
                     awayTeam.get().getId()
             );
-            if (existingGame.isEmpty()) {
+            if (existingGames.size() != 1) {
                 log.warn(
-                        "Could not match cancellation fallback game. date={}, playText={}, note={}, normalizedAway={}, normalizedHome={}",
+                        "Could not uniquely match cancellation fallback game. date={}, playText={}, note={}, normalizedAway={}, normalizedHome={}",
                         skippedRow.gameDate(),
                         skippedRow.playText(),
                         skippedRow.note(),
@@ -624,7 +650,7 @@ public class KboScheduleImportService {
                 continue;
             }
 
-            Game game = existingGame.get();
+            Game game = existingGames.get(0);
             boolean changed = game.syncDetail(
                     status,
                     null,
@@ -751,11 +777,16 @@ public class KboScheduleImportService {
     }
 
     private String buildPublicGameId(ParsedScheduleGame parsedGame, Team homeTeam, Team awayTeam) {
-        return "%s-%s-%s".formatted(
+        String baseId = "%s-%s-%s".formatted(
                 parsedGame.gameDate().format(PUBLIC_GAME_ID_DATE_FORMAT),
                 TeamCatalog.publicCodeForTeamCode(homeTeam.getTeamCode()),
                 TeamCatalog.publicCodeForTeamCode(awayTeam.getTeamCode())
         );
+        String officialId = parsedGame.providerGameId();
+        if (officialId != null && officialId.matches("[0-9]{8}[A-Z]{4}[1-9]")) {
+            return baseId + "-" + officialId.charAt(officialId.length() - 1);
+        }
+        return baseId;
     }
 
     private record TeamUpsertResult(Team team, boolean created, boolean updated) {

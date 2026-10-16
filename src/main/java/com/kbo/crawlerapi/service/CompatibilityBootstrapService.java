@@ -27,7 +27,6 @@ import com.kbo.crawlerapi.repository.TeamRepository;
 public class CompatibilityBootstrapService {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
-    private static final String REGULAR_SEASON = "regular_season";
 
     private final GameRepository gameRepository;
     private final GameSnapshotRepository gameSnapshotRepository;
@@ -101,13 +100,14 @@ public class CompatibilityBootstrapService {
                 resolvedHomeScore(game, latestSnapshot),
                 toStatusCode(game),
                 toStatusText(game),
-                REGULAR_SEASON,
+                game.getSeasonType(),
                 toInningText(game, latestSnapshot),
                 toRunnerState(latestSnapshot),
                 latestSnapshot != null ? latestSnapshot.getOuts() : null,
                 null,
                 List.<CompatibilityBootstrapGameEventDto>of(),
-                null
+                null,
+                game.getSeriesId()
         );
     }
 

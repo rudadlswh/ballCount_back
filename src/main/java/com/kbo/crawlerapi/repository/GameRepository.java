@@ -39,7 +39,7 @@ public interface GameRepository extends JpaRepository<Game, UUID> {
 
     Optional<Game> findByProviderAndProviderGameId(String provider, String providerGameId);
 
-    Optional<Game> findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+    List<Game> findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
             String provider,
             LocalDate gameDate,
             UUID homeTeamId,

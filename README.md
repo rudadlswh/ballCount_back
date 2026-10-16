@@ -80,6 +80,14 @@ flowchart LR
 
    실행 중 예외가 발생해도 다음 tick을 예약합니다. 실패 시 기본 재시도 간격은 10초이며 작업과 실패 기록은 별도 트랜잭션으로 남깁니다.
 
+### FCM 전달 실패 처리
+
+APNs와 FCM 전송, FCM OAuth 토큰 발급은 공통 HTTP 설정을 사용합니다. 연결 시간 제한은 기본 3초(`KBO_HTTP_CONNECT_TIMEOUT`), 요청 시간 제한은 기본 10초(`KBO_HTTP_REQUEST_TIMEOUT`)입니다. OAuth 서버 응답이 지연되어도 인증 토큰 발급이 무기한 대기하지 않습니다.
+
+기기 토큰 무효 처리는 응답의 `error.details`에 FCM 오류 타입과 `UNREGISTERED`가 함께 있을 때 적용합니다. 일반 404, 잘못된 프로젝트 설정, HTML 오류 응답이나 JSON 파싱 실패만으로 기기를 비활성화하지 않습니다. 오류 형식은 [Firebase 공식 오류 코드 문서](https://firebase.google.com/docs/cloud-messaging/error-codes)를 따릅니다.
+
+관련 회귀 테스트는 `FcmAccessTokenProviderTest`와 `FcmPushServiceTest`에서 요청 시간 제한, 실패 후 복구, 토큰 캐시, 중단 상태 유지, 오류 분류와 401 재시도 횟수를 확인합니다.
+
 ## 동기화 주기
 
 ~~~mermaid
@@ -374,3 +382,25 @@ GitHub Actions는 테스트 성공 후 linux/amd64, linux/arm64 이미지를 GHC
 - [Supabase public read 정책](docs/supabase-public-read-policies.sql)
 - [Supabase 보안 점검 SQL](docs/supabase-security-check.sql)
 - [iOS 앱 저장소](https://github.com/rudadlswh/ballCount)
+
+## 시즌·라운드 분류
+
+V37은 `games.season_type`, `games.series_id`와 공개 뷰의 동일 필드를 추가합니다. 공식 시리즈별 일정 조회 결과를 저장하며, 월간·날짜별·경기 상세 API에는 `seasonClassification`, `seriesId`, 호환 bootstrap에는 `season_classification`, `series_id`를 제공합니다.
+
+기존 행은 날짜로 추정하지 않고 `unknown`으로 유지합니다. 마이그레이션 배포 후 필요한 과거 월을 인증된 `POST /internal/schedule/import?year=2026&month=10`으로 재수집하면 기존 경기 UUID를 유지한 채 분류가 채워집니다. 정규시즌 순위 재계산 전에는 해당 시즌 전체 월의 분류를 채워야 합니다. 미분류 종료 경기가 있으면 기존 순위를 보존하고 재계산을 실패시킵니다. 포스트시즌·시범경기·올스타전은 정규시즌 순위에 포함하지 않습니다.
+
+분류 없는 응답으로 재수집해도 이미 저장한 시리즈는 지우지 않습니다. 공식 일정이 없는 시리즈의 빈 `rows`는 정상 응답이며, 잘못된 형식이나 상충하는 시리즈는 저장 전에 실패합니다. 현재 월 수집은 시리즈 7개를 각각 요청합니다.
+
+실제 PostgreSQL 저장 검증은 운영 DB와 분리된 로컬 DB에서 실행합니다. `KBO_SEASON_TEST_DATABASE_URL=jdbc:postgresql://127.0.0.1:55438/postgres ./gradlew test --tests '*GameSeasonPersistenceTest'`는 `codex` 로컬 사용자로 임시 스키마를 생성·삭제합니다.
+
+## 일정 발견과 알림 복구
+
+자동 동기화가 켜진 writer는 DB에 오늘 경기가 없어도 현재 월과 다음 월의 공식 일정을 시작 후 5초에 조회하고, 이후 성공 시각 기준 30분마다 갱신합니다. 실패하거나 날짜 잠금을 얻지 못하면 1분 뒤 재시도합니다. 기존 실시간 스케줄러는 빈 일정과 전체 종료 상태에서 1분마다 DB를 확인하므로, 새로 추가한 경기를 감지할 수 있습니다.
+
+공식 경기 ID가 다른 더블헤더는 서로 다른 행으로 저장합니다. 새 공개 ID는 `날짜-홈팀-원정팀-차수` 형식이며, 이미 저장한 공개 ID와 UUID는 유지합니다. 공식 ID가 없는 취소 행의 대상이 여러 경기라면 임의로 갱신하지 않습니다. 과거에 합쳐진 경기의 스냅샷·이벤트는 원천 대조 없이 자동 분리하지 않습니다.
+
+V38은 비공개 `notification_outbox`, `notification_deliveries` 테이블을 추가합니다. 이벤트와 발송 대상 기기를 같은 트랜잭션으로 저장하고, 커밋 후 전송합니다. 메모리 큐가 가득 차거나 서버가 재시작해도 writer가 5초마다 DB 작업을 다시 찾습니다. 이벤트는 한 worker가 60초의 갱신 가능한 임대로 점유하며, 저장된 기기별 성공 결과는 재전송하지 않습니다. 실패 작업은 30초 간격으로 최대 5회 시도하고 생성 후 5분이 지나면 만료합니다. 재시도 시 현재 알림 설정도 다시 적용합니다.
+
+전송 서버가 성공했지만 응답 확인·DB 기록 전에 프로세스가 종료되면, 수신 여부를 확정할 수 없어 중복 전달될 가능성은 남습니다. V38 이전 이벤트에는 기기별 기록이 없으므로 과거 실패·부분 성공 이벤트를 자동 재발송하지 않습니다.
+
+여러 writer를 운영하기 전에는 `KBO_LIVE_SYNC_LOCK_MODE=postgres-session`과 세션을 유지하는 PostgreSQL 연결을 사용해야 합니다. 이 모드에서 DB 잠금 획득에 실패하면 실행을 건너뜁니다. 메모리 잠금으로 대체하지 않습니다.

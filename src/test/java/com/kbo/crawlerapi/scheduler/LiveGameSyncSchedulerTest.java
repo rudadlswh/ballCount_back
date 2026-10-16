@@ -82,7 +82,7 @@ class LiveGameSyncSchedulerTest {
         Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
-        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(1));
     }
 
     @Test
@@ -103,7 +103,7 @@ class LiveGameSyncSchedulerTest {
         Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
-        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(1));
     }
 
     @Test

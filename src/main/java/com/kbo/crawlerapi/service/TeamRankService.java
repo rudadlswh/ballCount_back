@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.GameSeasonType;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.TeamRankWriteRepository;
@@ -129,7 +130,7 @@ public class TeamRankService {
     private List<Game> completedRegularSeasonGames(int season) {
         LocalDate start = LocalDate.of(season, 1, 1);
         LocalDate end = LocalDate.of(season, 12, 31);
-        return gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+        List<Game> games = gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
                         start,
                         end,
                         GameStatus.FINAL
@@ -138,6 +139,12 @@ public class TeamRankService {
                 .filter(game -> !game.isCancelled())
                 .filter(game -> !game.isPostponed())
                 .filter(this::hasUsableFinalScore)
+                .toList();
+        if (games.stream().anyMatch(game -> GameSeasonType.UNKNOWN.getApiValue().equals(game.getSeasonType()))) {
+            throw new IllegalStateException("Season classification is incomplete; import schedules before refreshing rankings");
+        }
+        return games.stream()
+                .filter(game -> GameSeasonType.REGULAR_SEASON.getApiValue().equals(game.getSeasonType()))
                 .toList();
     }
 

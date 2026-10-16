@@ -114,11 +114,15 @@ class GameReadServiceTest {
                 OffsetDateTime.of(2026, 4, 9, 18, 0, 0, 0, ZoneOffset.ofHours(9))
         );
 
+        game.syncSeries(4);
+
         when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(eq(LocalDate.of(2026, 4, 9))))
                 .thenReturn(List.of(game));
 
         GamesByDateResponse response = gameReadService.getGamesByDate(LocalDate.of(2026, 4, 9));
 
+        assertThat(response.games().get(0).seasonClassification()).isEqualTo("postseason");
+        assertThat(response.games().get(0).seriesId()).isEqualTo(4);
         assertThat(response.date()).isEqualTo(LocalDate.of(2026, 4, 9));
         assertThat(response.games()).hasSize(1);
         assertThat(response.games().get(0).id()).isEqualTo("20260409-LG-SSG");

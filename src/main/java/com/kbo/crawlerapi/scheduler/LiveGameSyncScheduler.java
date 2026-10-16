@@ -102,7 +102,7 @@ public class LiveGameSyncScheduler implements SmartLifecycle {
             LocalDate todayKst = LocalDate.now(applicationClock.withZone(KST));
             List<Game> todaysGames = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(todayKst);
             if (todaysGames.isEmpty()) {
-                return logAndReturn(TickOutcome.skip("idle:no-games", normalized(properties.getIdleInterval()), "no games today date=" + todayKst));
+                return logAndReturn(TickOutcome.skip("idle:no-games", minPositive(normalized(properties.getIdleInterval()), Duration.ofMinutes(1)), "no games today date=" + todayKst));
             }
             if (todaysGames.stream().anyMatch(this::isLiveGame)) {
                 liveGameSyncService.syncToday();
@@ -117,7 +117,7 @@ public class LiveGameSyncScheduler implements SmartLifecycle {
                 ));
             }
             if (todaysGames.stream().allMatch(this::isTerminalGame)) {
-                return logAndReturn(TickOutcome.skip("idle:all-terminal", normalized(properties.getIdleInterval()), "all games terminal date=" + todayKst));
+                return logAndReturn(TickOutcome.skip("idle:all-terminal", minPositive(normalized(properties.getIdleInterval()), Duration.ofMinutes(1)), "all games terminal date=" + todayKst));
             }
 
             Optional<Instant> earliestNonTerminalStart = earliestNonTerminalScheduledStart(todaysGames);

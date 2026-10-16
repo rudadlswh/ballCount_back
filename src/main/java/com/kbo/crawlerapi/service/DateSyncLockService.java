@@ -55,8 +55,12 @@ public class DateSyncLockService {
     private SyncLock tryLock(String namespace, String key) {
         String lockKey = lockKey(namespace, key);
         String lockMode = lockMode();
-        if (!LOCK_MODE_POSTGRES_SESSION.equals(lockMode) || dataSource == null) {
+        if (!LOCK_MODE_POSTGRES_SESSION.equals(lockMode)) {
             return tryInMemoryLock(namespace, key, lockKey, lockMode);
+        }
+        if (dataSource == null) {
+            log.error("[DateSyncLock] database lock unavailable namespace={} key={} reason=missing_datasource", namespace, key);
+            return SyncLock.notAcquired(-1L);
         }
         Connection connection = null;
         try {
@@ -106,7 +110,8 @@ public class DateSyncLockService {
                     log.warn("Failed to close date sync lock connection.", closeException);
                 }
             }
-            return tryInMemoryLock(namespace, key, lockKey, lockMode);
+            log.error("[DateSyncLock] database lock failed namespace={} key={} executionSkipped=true", namespace, key, exception);
+            return SyncLock.notAcquired(-1L);
         }
     }
 

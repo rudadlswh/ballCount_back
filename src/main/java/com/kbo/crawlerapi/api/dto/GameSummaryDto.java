@@ -22,6 +22,8 @@ public record GameSummaryDto(
         String homeStartingPitcherName,
         OffsetDateTime updatedAt,
         OffsetDateTime sourceUpdatedAt,
-        boolean isStale
+        boolean isStale,
+        String seasonClassification,
+        Integer seriesId
 ) {
 }

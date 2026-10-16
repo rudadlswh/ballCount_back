@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.config.FcmProperties;
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.domain.NotificationEvent;
 import java.net.URI;
@@ -31,14 +33,23 @@ public class FcmPushService {
     private final FcmAccessTokenProvider accessTokenProvider;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final Duration requestTimeout;
 
-    @Autowired
     public FcmPushService(
             FcmProperties properties,
             FcmAccessTokenProvider accessTokenProvider,
             ObjectMapper objectMapper
     ) {
-        this(properties, accessTokenProvider, objectMapper, HttpClient.newHttpClient());
+        this(properties, accessTokenProvider, objectMapper, new KboHttpProperties());
+    }
+
+    @Autowired
+    public FcmPushService(
+            FcmProperties properties, FcmAccessTokenProvider accessTokenProvider,
+            ObjectMapper objectMapper, KboHttpProperties httpProperties
+    ) {
+        this(properties, accessTokenProvider, objectMapper, KboHttpClientFactory.pushHttpClient(httpProperties),
+                KboHttpClientFactory.requestTimeout(httpProperties));
     }
 
     FcmPushService(
@@ -47,10 +58,18 @@ public class FcmPushService {
             ObjectMapper objectMapper,
             HttpClient httpClient
     ) {
+        this(properties, accessTokenProvider, objectMapper, httpClient, KboHttpClientFactory.requestTimeout(null));
+    }
+
+    FcmPushService(
+            FcmProperties properties, FcmAccessTokenProvider accessTokenProvider,
+            ObjectMapper objectMapper, HttpClient httpClient, Duration requestTimeout
+    ) {
         this.properties = properties;
         this.accessTokenProvider = accessTokenProvider;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
+        this.requestTimeout = requestTimeout;
     }
 
     public String readinessSkipReason() {
@@ -89,7 +108,7 @@ public class FcmPushService {
         HttpRequest request = HttpRequest.newBuilder(URI.create(
                         endpoint + "/v1/projects/" + projectId + "/messages:send"
                 ))
-                .timeout(Duration.ofSeconds(10))
+                .timeout(requestTimeout)
                 .header("Authorization", "Bearer " + accessTokenProvider.accessToken())
                 .header("Content-Type", "application/json; charset=UTF-8")
                 .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(messageBody(event, device))))
@@ -103,10 +122,23 @@ public class FcmPushService {
             JsonNode json = objectMapper.readTree(response.body());
             return FcmSendResult.sent(json.path("name").asText(null));
         }
-        boolean invalid = response.statusCode() == 404
-                || response.body().contains("UNREGISTERED")
-                || response.body().contains("registration-token-not-registered");
-        return FcmSendResult.failed("fcm_http_" + response.statusCode(), invalid);
+        return FcmSendResult.failed("fcm_http_" + response.statusCode(), isUnregisteredToken(response.body()));
+    }
+
+    private boolean isUnregisteredToken(String responseBody) {
+        try {
+            JsonNode response = objectMapper.readTree(responseBody);
+            if (response == null) return false;
+            for (JsonNode detail : response.path("error").path("details")) {
+                if ("type.googleapis.com/google.firebase.fcm.v1.FcmError".equals(detail.path("@type").asText())
+                        && "UNREGISTERED".equals(detail.path("errorCode").asText())) {
+                    return true;
+                }
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            log.debug("[FCM] non-JSON error response");
+        }
+        return false;
     }
 
     Map<String, Object> messageBody(NotificationEvent event, NotificationDevice device) throws Exception {
