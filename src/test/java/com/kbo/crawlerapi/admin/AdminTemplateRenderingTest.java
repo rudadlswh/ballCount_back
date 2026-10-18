@@ -19,6 +19,7 @@ import com.kbo.crawlerapi.api.dto.GameSummaryDto;
 import com.kbo.crawlerapi.api.dto.GamesByMonthResponse;
 import com.kbo.crawlerapi.api.dto.TeamSummaryDto;
 import com.kbo.crawlerapi.config.AppSecurityProperties;
+import com.kbo.crawlerapi.config.AdminCsrfFilter;
 import com.kbo.crawlerapi.config.ApnsProperties;
 import com.kbo.crawlerapi.config.RegistrationRequestSizeLimitFilter;
 import com.kbo.crawlerapi.service.ApnsTestPushService;
@@ -64,6 +65,25 @@ class AdminTemplateRenderingTest {
                 .addFilters(new RegistrationRequestSizeLimitFilter(securityProperties))
                 .setViewResolvers(viewResolver())
                 .build();
+    }
+
+    @Test
+    void allRenderedMutationFormsIncludeTheSessionCsrfToken() throws Exception {
+        ((StubAdminDataService) dataService).dashboard = new DashboardView(
+                "정상", "1시간", "정상", "3 ms", "실행 중", "success", "PT1S",
+                null, 0, 0, List.of(), 0, "a****", "••••••••", "d****"
+        );
+        for (String path : new String[]{"/admin/dashboard", "/admin/notifications"}) {
+            String html = mockMvc.perform(get(path)
+                            .sessionAttr(AdminCsrfFilter.TOKEN_SESSION_ATTRIBUTE, "rendered-session-token"))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            var forms = Jsoup.parse(html).select("form[method=post]");
+            org.assertj.core.api.Assertions.assertThat(forms).hasSize(2);
+            for (var form : forms) {
+                org.assertj.core.api.Assertions.assertThat(form.select("input[type=hidden][name=_csrf]").eachAttr("value"))
+                        .containsExactly("rendered-session-token");
+            }
+        }
     }
 
     @Test

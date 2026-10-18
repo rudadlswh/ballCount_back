@@ -539,8 +539,7 @@ public class NotificationEventService {
     }
 
     private PreparedDelivery prepareDelivery(Game game, NotificationEventDraft draft, boolean optimizedTargetLookup) {
-        if (notificationEventRepository.findByEventKey(draft.eventKey()).isPresent()
-                || legacyEventKeys(draft).stream().anyMatch(notificationEventRepository::existsByEventKey)) {
+        if (eventExists(draft)) {
             return PreparedDelivery.duplicateResult();
         }
         NotificationEvent event = notificationEventRepository.save(new NotificationEvent(

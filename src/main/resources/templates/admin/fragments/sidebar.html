@@ -40,6 +40,7 @@
             </select>
         </div>
         <form method="post" action="/admin/logout" th:action="@{/admin/logout}">
+            <input type="hidden" name="_csrf" th:value="${session.KBO_ADMIN_CSRF_TOKEN}">
             <button class="button button--ghost button--full" type="submit">로그아웃</button>
         </form>
     </div>

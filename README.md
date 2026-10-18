@@ -289,7 +289,7 @@ ADMIN_STALE_GAME_THRESHOLD=2m
 ADMIN_LOG_CAPACITY=2000
 ~~~
 
-- 브라우저 session은 read-only 콘솔 경로에만 사용됩니다.
+- 브라우저 session은 콘솔 조회와 일정 수집·수동 알림·로그아웃 폼에 사용됩니다. 로그인부터 모든 session 기반 변경 요청은 해당 session의 `_csrf` 토큰이 필요하며, 누락되거나 일치하지 않으면 `403`을 반환합니다. 로그인 성공 시 토큰을 갱신하므로 이전에 열어 둔 폼은 새로고침해야 합니다.
 - 변경 가능한 /admin/crawl, /admin/ranks, /admin/test API는 별도의 X-Admin-Key 또는 X-Admin-Api-Key가 필요합니다.
 - 사용자명과 비밀번호, DB URL과 secret은 화면에 노출하지 않습니다.
 - 애플리케이션 로그는 메모리에 보관하며 검색 결과는 최대 500행입니다.
@@ -404,3 +404,23 @@ V38은 비공개 `notification_outbox`, `notification_deliveries` 테이블을 �
 전송 서버가 성공했지만 응답 확인·DB 기록 전에 프로세스가 종료되면, 수신 여부를 확정할 수 없어 중복 전달될 가능성은 남습니다. V38 이전 이벤트에는 기기별 기록이 없으므로 과거 실패·부분 성공 이벤트를 자동 재발송하지 않습니다.
 
 여러 writer를 운영하기 전에는 `KBO_LIVE_SYNC_LOCK_MODE=postgres-session`과 세션을 유지하는 PostgreSQL 연결을 사용해야 합니다. 이 모드에서 DB 잠금 획득에 실패하면 실행을 건너뜁니다. 메모리 잠금으로 대체하지 않습니다.
+
+## 데이터 자동 정리
+
+V39 배포 후 `APP_SYNC_ENABLED=true`인 writer는 매분 보관 기간이 지난 데이터를 정리합니다. `DATA_RETENTION_ENABLED=false`로 중지할 수 있습니다. 첫 실행부터 기존 데이터에도 적용됩니다.
+
+| 대상 | 삭제 기준 |
+| --- | --- |
+| `game_events` | 경기 종료 확정과 이벤트 마지막 갱신 후 각각 3주가 지난 경우 |
+| `live_activity_tokens` | 한국 시간 경기 다음날 08시 이후, 종료가 확정된 경기의 비활성 토큰 |
+| `notification_outbox`, `notification_deliveries` | 발송 작업 만료 시각으로부터 1주가 지난 완료·만료 작업과 그 기기별 기록 |
+| `notification_events` | 경기 종료 확정 및 이벤트 생성·마지막 전송 후 각각 1주가 지난 처리 완료 기록 |
+| `crawl_jobs`, `crawl_failures` | 완료 작업의 종료·갱신 및 실패 발생 후 각각 달력 기준 2개월이 지난 기록 |
+
+발송 대기·처리 중이거나 임대가 유효한 알림 작업, 활성 Live Activity 토큰, 연결 경기를 확인할 수 없거나 식별자가 상충하는 토큰은 보존합니다. 최근 실패 기록이 연결된 수집 작업도 보존합니다. 이 조건 때문에 실제 삭제 시점은 위 기간보다 늦어질 수 있습니다. 취소·연기 경기와 종료 미확정 경기의 이벤트·토큰·알림 기록은 자동 삭제하지 않습니다.
+
+알림 본문을 지워도 과거 경기 재수집으로 같은 알림이 재발송되지 않도록, 비공개 `notification_event_keys`에는 중복 확인용 `event_key`만 계속 보존합니다. 알림 기기 등록, push-to-start 토큰, 경기 결과, 스냅샷, 이닝별 점수, 선수 기록은 이 정리 대상에 포함되지 않습니다. 3주가 지난 경기의 문자 중계와 1주가 지난 알림 상세 내역은 조회할 수 없게 됩니다.
+
+한 트랜잭션에서 대상별 최대 1,000건을 삭제하고 다음 분에 이어서 처리합니다. DB 잠금으로 중복 실행을 막고 다른 작업이 잠근 행은 건너뜁니다. 실패 시 해당 실행 전체를 롤백하며 다음 분에 다시 시도합니다. 삭제 건수는 서버 로그의 `[DataRetention]`으로 확인합니다(연쇄 삭제된 기기별 전송 기록 수는 별도 집계하지 않음).
+
+실제 PostgreSQL 검증은 별도 로컬 DB에서 `KBO_RETENTION_TEST_DATABASE_URL=jdbc:postgresql://127.0.0.1:55479/postgres ./gradlew test --tests '*DataRetention*'`로 실행합니다. `codex` 로컬 사용자로 테스트용 스키마를 생성·삭제하며 운영 DB를 사용하지 않습니다.

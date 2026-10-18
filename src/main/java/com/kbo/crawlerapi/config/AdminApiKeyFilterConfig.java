@@ -26,4 +26,13 @@ public class AdminApiKeyFilterConfig {
         registration.setOrder(0);
         return registration;
     }
+
+    @Bean
+    public FilterRegistrationBean<AdminCsrfFilter> adminCsrfFilter() {
+        var registration = new FilterRegistrationBean<>(new AdminCsrfFilter());
+        registration.addUrlPatterns("/admin", "/admin/*");
+        // Parse form tokens only after the request-size and login-rate filters.
+        registration.setOrder(3);
+        return registration;
+    }
 }

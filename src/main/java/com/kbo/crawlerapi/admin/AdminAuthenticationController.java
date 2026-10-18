@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.admin;
 
 import com.kbo.crawlerapi.config.AdminApiKeyFilter;
+import com.kbo.crawlerapi.config.AdminCsrfFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -47,6 +48,7 @@ public class AdminAuthenticationController {
 
         HttpSession session = request.getSession(true);
         request.changeSessionId();
+        session.removeAttribute(AdminCsrfFilter.TOKEN_SESSION_ATTRIBUTE);
         session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, Boolean.TRUE);
         session.setMaxInactiveInterval(authenticationService.sessionTimeoutSeconds());
         return "redirect:/admin/dashboard";

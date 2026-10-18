@@ -28,6 +28,7 @@
             <code>ADMIN_PASSWORD</code> 환경변수가 설정되지 않아 로그인할 수 없습니다.
         </div>
         <form class="login-form" method="post" action="/admin/login" th:action="@{/admin/login}" autocomplete="on">
+            <input type="hidden" name="_csrf" th:value="${session.KBO_ADMIN_CSRF_TOKEN}">
             <label>
                 <span>아이디</span>
                 <input name="username" type="text" autocomplete="username" required autofocus autocapitalize="none" spellcheck="false"
