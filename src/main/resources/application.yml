@@ -51,6 +51,8 @@ server:
         secure: ${ADMIN_SESSION_COOKIE_SECURE:false}
 
 app:
+  retention:
+    enabled: ${DATA_RETENTION_ENABLED:true}
   admin-ui:
     username: ${ADMIN_USERNAME:admin}
     password: ${ADMIN_PASSWORD:}

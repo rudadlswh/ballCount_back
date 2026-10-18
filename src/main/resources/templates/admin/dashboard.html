@@ -40,6 +40,7 @@
             <div class="alert alert--danger" role="alert" th:if="${scheduleImportError != null}" th:text="${scheduleImportError}">수집 실패</div>
 
             <form class="filter-bar schedule-import-form" method="post" action="/admin/schedule/import" th:action="@{/admin/schedule/import}">
+                <input type="hidden" name="_csrf" th:value="${session.KBO_ADMIN_CSRF_TOKEN}">
                 <label><span>시작 월</span><input type="month" name="fromMonth" required th:value="${scheduleImportFromMonth}"></label>
                 <label><span>종료 월</span><input type="month" name="toMonth" required th:value="${scheduleImportToMonth}"></label>
                 <button class="button button--primary" type="submit">일정 수집 실행</button>

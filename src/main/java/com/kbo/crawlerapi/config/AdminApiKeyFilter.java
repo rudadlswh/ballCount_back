@@ -15,6 +15,7 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
     public static final String ADMIN_API_KEY_HEADER = "X-Admin-Api-Key";
     public static final String ADMIN_KEY_HEADER = "X-Admin-Key";
     public static final String ADMIN_SESSION_ATTRIBUTE = "KBO_ADMIN_AUTHENTICATED";
+    static final String API_KEY_AUTHENTICATED_ATTRIBUTE = AdminApiKeyFilter.class.getName() + ".apiKeyAuthenticated";
 
     private final AppSecurityProperties properties;
     private final KboAdminProperties adminProperties;
@@ -36,21 +37,22 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
             return;
         }
         applyAdminSecurityHeaders(response);
+        if (apiKeyMatches(request.getHeader(ADMIN_KEY_HEADER))
+                || apiKeyMatches(request.getHeader(ADMIN_API_KEY_HEADER))) {
+            request.setAttribute(API_KEY_AUTHENTICATED_ATTRIBUTE, Boolean.TRUE);
+            filterChain.doFilter(request, response);
+            return;
+        }
         if (isPublicAdminPath(request)
                 || (isSessionAdminUiPath(request) && hasAuthenticatedAdminSession(request))) {
             filterChain.doFilter(request, response);
             return;
         }
-        if (!apiKeyMatches(request.getHeader(ADMIN_KEY_HEADER))
-                && !apiKeyMatches(request.getHeader(ADMIN_API_KEY_HEADER))) {
-            if (wantsHtml(request)) {
-                response.sendRedirect(request.getContextPath() + "/admin/login");
-                return;
-            }
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        if (wantsHtml(request)) {
+            response.sendRedirect(request.getContextPath() + "/admin/login");
             return;
         }
-        filterChain.doFilter(request, response);
+        response.setStatus(HttpStatus.UNAUTHORIZED.value());
     }
 
     private boolean isPublicAdminPath(HttpServletRequest request) {
