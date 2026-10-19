@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.domain.LiveActivityToken;
@@ -12,7 +13,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,14 +45,8 @@ class LiveActivityTokenRegistrationServiceTest {
                 "provider:20260605HHLT0",
                 OffsetDateTime.parse("2026-06-05T18:00:00+09:00")
         );
-        when(repository.findRegistrationMatches(
-                eq("sandbox"),
-                eq("activity-token"),
-                eq("20260605-LOT-HAN"),
-                eq("20260605HHLT0"),
-                eq("22222222-2222-2222-2222-222222222222"),
-                eq("provider:20260605HHLT0")
-        )).thenReturn(List.of(existing));
+        when(repository.findByPlatformAndEnvironmentAndActivityToken("ios", "sandbox", "activity-token"))
+                .thenReturn(Optional.of(existing));
         LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
 
         var result = service.register(command("activity-token"));
@@ -66,7 +61,8 @@ class LiveActivityTokenRegistrationServiceTest {
 
     @Test
     void newTokenRegistrationCreatesActiveRow() {
-        when(repository.findRegistrationMatches(any(), any(), any(), any(), any(), any())).thenReturn(List.of());
+        when(repository.findByPlatformAndEnvironmentAndActivityToken("ios", "sandbox", "new-activity-token"))
+                .thenReturn(Optional.empty());
         LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
 
         var result = service.register(command("new-activity-token"));
@@ -79,7 +75,7 @@ class LiveActivityTokenRegistrationServiceTest {
     }
 
     @Test
-    void replacementTokenMarksOldActiveTokenForSameGameInactive() {
+    void anotherTokenCannotDeactivateAnActivityWithTheSameInstallationAndGame() {
         LiveActivityToken oldActivity = new LiveActivityToken(
                 UUID.fromString("33333333-3333-3333-3333-333333333333"),
                 "old-activity",
@@ -94,15 +90,16 @@ class LiveActivityTokenRegistrationServiceTest {
                 "provider:20260605HHLT0",
                 OffsetDateTime.parse("2026-06-05T18:00:00+09:00")
         );
-        when(repository.findRegistrationMatches(any(), any(), any(), any(), any(), any())).thenReturn(List.of());
-        when(repository.findByActiveTrueAndEnvironmentAndInstallationId(eq("sandbox"), eq("install-1")))
-                .thenReturn(List.of(oldActivity));
+        when(repository.findByPlatformAndEnvironmentAndActivityToken("ios", "sandbox", "new-activity-token"))
+                .thenReturn(Optional.empty());
         LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
 
         service.register(command("new-activity-token"));
 
-        assertThat(oldActivity.isActive()).isFalse();
-        verify(repository).saveAll(any());
+        assertThat(oldActivity.isActive()).isTrue();
+        verify(repository).findByPlatformAndEnvironmentAndActivityToken("ios", "sandbox", "new-activity-token");
+        verify(repository).save(any());
+        verifyNoMoreInteractions(repository);
     }
 
     private LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command(String activityToken) {

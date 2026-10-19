@@ -1,4 +1,7 @@
 spring:
+  http:
+    converters:
+      preferred-json-mapper: jackson2
   config:
     import: optional:file:./.env[.properties]
   profiles:

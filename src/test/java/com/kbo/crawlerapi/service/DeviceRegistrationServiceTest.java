@@ -33,8 +33,6 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("token-123")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
-                .thenReturn(Optional.empty());
 
         var result = service.register("iOS", "production", " token-123 ", "install-1", "lg", true);
 
@@ -54,8 +52,6 @@ class DeviceRegistrationServiceTest {
     void registersDetailedNotificationSettingsWhenProvided() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
-                .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
                 .thenReturn(Optional.empty());
 
         service.register(
@@ -85,8 +81,6 @@ class DeviceRegistrationServiceTest {
     void missingDetailedNotificationSettingsUseServerDefaults() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
-                .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
                 .thenReturn(Optional.empty());
 
         service.register("ios", "sandbox", "token-123", "install-1", "lg", true);
@@ -150,7 +144,7 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
-    void duplicateInstallationRegistrationUpdatesExistingTokenRow() {
+    void anotherTokenCannotOverwriteAnExistingInstallation() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         NotificationDevice existing = new NotificationDevice(
                 UUID.randomUUID(),
@@ -164,14 +158,15 @@ class DeviceRegistrationServiceTest {
         );
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("new-token")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
-                .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "new-token", "install-1", "kia", false);
 
         ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
         verify(notificationDeviceRepository).save(deviceCaptor.capture());
         NotificationDevice device = deviceCaptor.getValue();
+        assertThat(device.getId()).isNotEqualTo(existing.getId());
+        assertThat(existing.getDeviceToken()).isEqualTo("old-token");
+        assertThat(existing.isNotificationsEnabled()).isTrue();
         assertThat(device.getDeviceToken()).isEqualTo("new-token");
         assertThat(device.getInstallationId()).isEqualTo("install-1");
         assertThat(device.getFavoriteTeamId()).isEqualTo("kia");
@@ -180,18 +175,18 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
-    void registeringSameInstallationWithNewTokenUpdatesDeviceToken() {
+    void rotatedTokenCreatesIndependentRegistration() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         NotificationDevice existing = device("ios", "production", "800facf43e22-old", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("80e2a3c36237-new")))
                 .thenReturn(Optional.empty());
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
-                .thenReturn(Optional.of(existing));
 
         service.register("ios", "production", "80e2a3c36237-new", "install-1", "ssg", true);
 
         ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
         verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getId()).isNotEqualTo(existing.getId());
+        assertThat(existing.getDeviceToken()).isEqualTo("800facf43e22-old");
         assertThat(deviceCaptor.getValue().getDeviceToken()).isEqualTo("80e2a3c36237-new");
     }
 
@@ -200,8 +195,6 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
-                .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "token-123", "install-1", "kia", true);
@@ -217,8 +210,6 @@ class DeviceRegistrationServiceTest {
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
-                .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "token-123", "install-1", "ssg", true);
 
@@ -233,8 +224,6 @@ class DeviceRegistrationServiceTest {
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
                 .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
-                .thenReturn(Optional.of(existing));
 
         service.register("ios", "sandbox", "token-123", "install-1", "ssg", false);
 
@@ -248,8 +237,6 @@ class DeviceRegistrationServiceTest {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
         NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "ssg", true);
         when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
-                .thenReturn(Optional.of(existing));
-        when(notificationDeviceRepository.findByInstallationId(eq("install-1")))
                 .thenReturn(Optional.of(existing));
 
         service.register(
@@ -273,6 +260,30 @@ class DeviceRegistrationServiceTest {
         assertThat(device.isInningChangeEnabled()).isFalse();
         assertThat(device.isFavoriteTeamOnlyEnabled()).isTrue();
         assertThat(device.isMuteWhenLosingEnabled()).isFalse();
+    }
+
+    @Test
+    void wrongTokenCannotUnregisterByInstallationId() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken("ios", "sandbox", "wrong-token"))
+                .thenReturn(Optional.empty());
+
+        service.unregister("ios", "sandbox", "wrong-token", "victim-installation");
+
+        verify(notificationDeviceRepository).findByPlatformAndEnvironmentAndDeviceToken("ios", "sandbox", "wrong-token");
+        org.mockito.Mockito.verifyNoMoreInteractions(notificationDeviceRepository);
+    }
+
+    @Test
+    void correctTokenCanUnregisterWithoutTrustingInstallationId() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        NotificationDevice existing = device("ios", "sandbox", "token-123", "install-1", "lg", true);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken("ios", "sandbox", "token-123"))
+                .thenReturn(Optional.of(existing));
+
+        service.unregister("ios", "sandbox", "token-123", "unrelated-installation");
+
+        assertThat(existing.isNotificationsEnabled()).isFalse();
     }
 
     private NotificationDevice device(String platform, String environment, String token, String installationId, String favoriteTeamId, boolean notificationsEnabled) {

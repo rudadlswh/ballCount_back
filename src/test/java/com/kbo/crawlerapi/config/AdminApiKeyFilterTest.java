@@ -29,7 +29,7 @@ class AdminApiKeyFilterTest {
                         new PublicPageController(),
                         new AdminRankController(teamRankService)
                 )
-                .addFilters(new AdminApiKeyFilter(properties))
+                .addFilter(new AdminApiKeyFilter(properties), "/admin", "/admin/*", "/internal", "/internal/*")
                 .build();
     }
 

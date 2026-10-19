@@ -32,10 +32,36 @@ Use `SPRING_PROFILES_ACTIVE=production` for App Store production runtime. Start 
 - `KBO_PUSH_ENABLED=true`
 
 The production profile disables Swagger/OpenAPI UI, keeps scheduler phases opt-in,
-and defaults APNs to the production gateway. Startup fails under the production
-profile unless `KBO_PUSH_ENABLED=true`, `APNS_ENV=production`,
+and defaults APNs to the production gateway. Push defaults to disabled. When
+`KBO_PUSH_ENABLED=true`, startup requires `APNS_ENV=production`,
 `APNS_BUNDLE_ID=com.chogm.kboScore`, `APNS_TEAM_ID`, `APNS_KEY_ID`, and
-`APNS_PRIVATE_KEY_PATH` are all configured.
+`APNS_PRIVATE_KEY_PATH`. The Docker runtime uses UID/GID `10001`; mounted APNs
+key files must be readable by that user.
+
+## Security and compatibility
+
+- Set `ADMIN_API_KEY` outside Git. Every `/admin` and `/internal` operation requires
+  `X-Admin-Api-Key`; an unset key denies all such requests. Configure trusted
+  ingestion jobs to send the same header before deploying this change.
+- Both public `reconcile-stale` routes accept at most three non-null dates, from
+  today back through 366 days in the application clock's timezone. One request
+  is admitted every 30 seconds per application instance, with at most one running
+  at a time. A busy/cooldown response is HTTP 429 with `Retry-After: 30`. Public
+  calls respect detail-refresh TTL; administrators can still force refresh.
+- Full APNs tokens authorize changes to their own registration. `installationId`
+  and `activityId` are metadata and cannot replace or disable a different token.
+  Same-token updates remain idempotent. Token rotation creates a new row; the
+  existing invalid-token response handling retires old rows when APNs rejects them.
+  The app ends replaced Live Activities itself. During that transition, old tokens
+  are not disabled solely by an unproven installation ID.
+- Apply Flyway V21/V22 with the application rollout. V21 permits separate rows for
+  a Live Activity's rotated tokens while keeping full-token uniqueness; V22 supplies
+  the snapshot and notification-setting columns required by Hibernate's default
+  schema validation, preserving existing columns and their values.
+- Spring Boot 4.0 uses patched Spring MVC 7.0. Existing API naming/date formats are
+  preserved with Boot's Jackson 2 compatibility module and tested over HTTP.
+  Keep `spring.http.converters.preferred-json-mapper=jackson2` until a separately
+  tested Jackson 3 wire-format migration.
 
 ## OpenAPI and Swagger UI
 
@@ -60,7 +86,7 @@ Policy:
 Use the internal verification endpoint to fetch and upsert a month of official KBO schedule data:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/schedule/import?year=2026&month=4'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/schedule/import?year=2026&month=4'
 ```
 
 ## Trigger game detail ingestion
@@ -68,13 +94,13 @@ curl -X POST 'http://localhost:8080/internal/schedule/import?year=2026&month=4'
 Use the internal verification endpoint to fetch and persist the latest snapshot and line score data for one imported game:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/games/20260401-LG-KIA/detail/import'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/import'
 ```
 
 To validate repeated same-game refresh behavior without a scheduler, use:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
 ```
 
 When the source is unchanged, later runs should report `snapshotCreated=false` and `lineScoresUpdated=false`.
@@ -84,8 +110,8 @@ When the source is unchanged, later runs should report `snapshotCreated=false` a
 Use the internal orchestration endpoint to evaluate a date's games and optionally execute one controlled detail-refresh pass:
 
 ```bash
-curl -X POST 'http://localhost:8080/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
-curl -X POST 'http://localhost:8080/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
 ```
 
 ## Scheduler shell

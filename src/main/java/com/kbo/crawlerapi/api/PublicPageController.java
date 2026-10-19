@@ -1,6 +1,9 @@
 package com.kbo.crawlerapi.api;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,6 +14,7 @@ public class PublicPageController {
 
     private static final String SUPPORT_EMAIL = "chogyeongmin.dev@gmail.com";
     private static final MediaType HTML_UTF8 = new MediaType("text", "html", StandardCharsets.UTF_8);
+    private static final String STYLE_HASH = styleHash(page(""));
 
     @GetMapping("/support")
     public ResponseEntity<String> support() {
@@ -76,8 +80,20 @@ public class PublicPageController {
 
     private ResponseEntity<String> html(String body) {
         return ResponseEntity.ok()
+                .header("Content-Security-Policy", "default-src 'none'; style-src 'sha256-" + STYLE_HASH
+                        + "'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
                 .contentType(HTML_UTF8)
                 .body(page(body));
+    }
+
+    private static String styleHash(String document) {
+        String css = document.substring(document.indexOf("<style>") + "<style>".length(), document.indexOf("</style>"));
+        try {
+            return Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256")
+                    .digest(css.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required for the page CSP", exception);
+        }
     }
 
     private static String emailLink() {

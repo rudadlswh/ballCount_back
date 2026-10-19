@@ -63,13 +63,9 @@ public class DeviceRegistrationService {
                 normalizedEnvironment,
                 normalizedToken
         );
-        Optional<NotificationDevice> installationMatchedDevice = normalizedInstallationId == null
-                ? Optional.empty()
-                : notificationDeviceRepository.findByInstallationId(normalizedInstallationId);
-
-        boolean created = installationMatchedDevice.isEmpty() && tokenMatchedDevice.isEmpty();
-        NotificationDevice device = installationMatchedDevice
-                .or(() -> tokenMatchedDevice)
+        // Installation IDs are metadata, never proof of control over another token.
+        boolean created = tokenMatchedDevice.isEmpty();
+        NotificationDevice device = tokenMatchedDevice
                 .orElseGet(() -> new NotificationDevice(
                         UUID.randomUUID(),
                         normalizedPlatform,
@@ -88,13 +84,6 @@ public class DeviceRegistrationService {
                         normalizedSettings.muteWhenLosingEnabled(),
                         now
                 ));
-        tokenMatchedDevice
-                .filter(tokenDevice -> !tokenDevice.getId().equals(device.getId()))
-                .ifPresent(tokenDevice -> {
-                    notificationDeviceRepository.delete(tokenDevice);
-                    notificationDeviceRepository.flush();
-                });
-
         String previousTokenPrefix = tokenPrefix(device.getDeviceToken());
         boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
         device.update(
@@ -130,9 +119,6 @@ public class DeviceRegistrationService {
         String normalizedEnvironment = normalizeEnvironment(environment);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
         notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, requireDeviceToken(deviceToken))
-                .or(() -> installationId == null || installationId.isBlank()
-                        ? java.util.Optional.empty()
-                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, installationId))
                 .ifPresent(device -> device.disable(now));
     }
 

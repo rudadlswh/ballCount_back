@@ -23,24 +23,11 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        if (!isAdminPath(request)) {
-            filterChain.doFilter(request, response);
-            return;
-        }
         if (!apiKeyMatches(request.getHeader(ADMIN_API_KEY_HEADER))) {
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
             return;
         }
         filterChain.doFilter(request, response);
-    }
-
-    private boolean isAdminPath(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        String contextPath = request.getContextPath();
-        if (contextPath != null && !contextPath.isBlank() && path.startsWith(contextPath)) {
-            path = path.substring(contextPath.length());
-        }
-        return path.equals("/admin") || path.startsWith("/admin/");
     }
 
     private boolean apiKeyMatches(String candidate) {

@@ -29,7 +29,7 @@ class KboLiveTextClientTest {
                 .andExpect(header(HttpHeaders.ORIGIN, "https://www.koreabaseball.com"))
                 .andExpect(header(HttpHeaders.REFERER, "https://www.koreabaseball.com/Game/LiveText.aspx?leagueId=1&seriesId=0&gameId=20260529LTNC0&gyear=2026"))
                 .andExpect(header("X-Requested-With", "XMLHttpRequest"))
-                .andExpect(request -> assertThat(request.getHeaders()).doesNotContainKey(HttpHeaders.COOKIE))
+                .andExpect(request -> assertThat(request.getHeaders().containsHeader(HttpHeaders.COOKIE)).isFalse())
                 .andExpect(content().contentType(MediaType.parseMediaType("application/x-www-form-urlencoded;charset=UTF-8")))
                 .andExpect(content().string(containsString("leagueId=1")))
                 .andExpect(content().string(containsString("seriesId=0")))

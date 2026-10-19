@@ -93,7 +93,8 @@ class StaleGameReconciliationControllerWebMvcTest {
     @Test
     void concurrentReconcileRequestsForSameDateSkipSecondRequestWhileFirstIsRunning() throws Exception {
         BlockingLiveGameSyncService liveSyncService = new BlockingLiveGameSyncService();
-        StaleGameReconciliationService reconciliationService = new StaleGameReconciliationService(liveSyncService);
+        StaleGameReconciliationService reconciliationService = new StaleGameReconciliationService(liveSyncService,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-05-09T00:00:00Z"), java.time.ZoneId.of("Asia/Seoul")));
         LocalDate date = LocalDate.of(2026, 5, 8);
         var executor = Executors.newFixedThreadPool(1);
 
@@ -124,7 +125,7 @@ class StaleGameReconciliationControllerWebMvcTest {
         private List<LocalDate> requestedDates = List.of();
 
         private RecordingStaleGameReconciliationService() {
-            super(null);
+            super(null, java.time.Clock.systemUTC());
         }
 
         @Override
