@@ -1,4 +1,6 @@
+# Local environment files
 .env
+.env.*
 
 # Gradle
 .gradle/
@@ -11,11 +13,22 @@ build/
 # OS
 .DS_Store
 
+# Private keys and certificates
+secrets/
 *.p8
+*.pem
+*.key
+*.p12
+*.cer
+*.crt
 
 # Operational database backups
 backups/
-.env
+*.log
+V*_current_modified_backup.sql
+game-list-*.json
 *.log
 app.log
 app.old.log
+kbo_schema.sql
+kbo_dev_schema.sql

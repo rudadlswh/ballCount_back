@@ -9,6 +9,7 @@ public record TeamRankRow(
         int season,
         UUID teamId,
         int rank,
+        Integer previousRank,
         String teamName,
         int gamesPlayed,
         int wins,

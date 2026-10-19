@@ -8,12 +8,31 @@ import org.springframework.context.annotation.Configuration;
 public class AdminApiKeyFilterConfig {
 
     @Bean
-    public FilterRegistrationBean<AdminApiKeyFilter> adminApiKeyFilter(AppSecurityProperties properties) {
+    public FilterRegistrationBean<AdminApiKeyFilter> adminApiKeyFilter(
+            AppSecurityProperties properties,
+            KboAdminProperties adminProperties
+    ) {
         FilterRegistrationBean<AdminApiKeyFilter> registration = new FilterRegistrationBean<>(
-                new AdminApiKeyFilter(properties)
+                new AdminApiKeyFilter(properties, adminProperties)
         );
-        registration.addUrlPatterns("/admin", "/admin/*", "/internal", "/internal/*");
+        registration.addUrlPatterns(
+                "/admin",
+                "/admin/*",
+                "/internal",
+                "/internal/*",
+                "/api/v1/games/reconcile-stale",
+                "/games/reconcile-stale"
+        );
         registration.setOrder(0);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<AdminCsrfFilter> adminCsrfFilter() {
+        var registration = new FilterRegistrationBean<>(new AdminCsrfFilter());
+        registration.addUrlPatterns("/admin", "/admin/*");
+        // Parse form tokens only after the request-size and login-rate filters.
+        registration.setOrder(3);
         return registration;
     }
 }

@@ -18,12 +18,16 @@ public record GameDetailResponse(
         TeamSummaryDto homeTeam,
         Integer awayScore,
         Integer homeScore,
+        String awayStartingPitcherName,
+        String homeStartingPitcherName,
         GameStateDto state,
         String winningPitcher,
         String losingPitcher,
         String savePitcher,
         OffsetDateTime updatedAt,
         OffsetDateTime sourceUpdatedAt,
-        boolean isStale
+        boolean isStale,
+        String seasonClassification,
+        Integer seriesId
 ) {
 }

@@ -42,6 +42,20 @@ class KboLiveTextClientTest {
         server.verify();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {3, 4, 5, 7, 9})
+    void sendsStoredSeriesInBothFormAndReferer(int seriesId) {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KboLiveTextClient client = new TestableKboLiveTextClient(builder, "https://www.koreabaseball.com");
+        server.expect(requestTo("https://www.koreabaseball.com/Game/LiveTextView2.aspx"))
+                .andExpect(header(HttpHeaders.REFERER, containsString("seriesId=" + seriesId + "&")))
+                .andExpect(content().string(containsString("seriesId=" + seriesId + "&")))
+                .andRespond(withSuccess("<html></html>", MediaType.TEXT_HTML));
+        client.fetchLiveText("20261014OBLG0", 2026, 1, seriesId);
+        server.verify();
+    }
+
     private static final class TestableKboLiveTextClient extends KboLiveTextClient {
         private TestableKboLiveTextClient(RestClient.Builder restClientBuilder, String baseUrl) {
             super(restClientBuilder, baseUrl);

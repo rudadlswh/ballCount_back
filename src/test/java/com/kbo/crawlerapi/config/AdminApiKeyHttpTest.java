@@ -76,7 +76,7 @@ class AdminApiKeyHttpTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration(exclude = DataSourceAutoConfiguration.class)
     @Import({AdminApiKeyFilterConfig.class, AppSecurityProperties.class, SecurityHeadersConfig.class,
-            PublicPageController.class, ProbeController.class})
+            KboAdminProperties.class, PublicPageController.class, ProbeController.class})
     static class TestApp { }
 
     @RestController

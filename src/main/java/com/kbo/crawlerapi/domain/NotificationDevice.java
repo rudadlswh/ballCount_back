@@ -3,7 +3,9 @@ package com.kbo.crawlerapi.domain;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -31,6 +33,9 @@ public class NotificationDevice {
     @Column(name = "favorite_team_id", length = 30)
     private String favoriteTeamId;
 
+    @Column(name = "monitored_game_id", length = 200)
+    private String monitoredGameId;
+
     @Column(name = "notifications_enabled", nullable = false)
     private boolean notificationsEnabled;
 
@@ -57,6 +62,23 @@ public class NotificationDevice {
 
     @Column(name = "mute_when_losing_enabled", nullable = false)
     private boolean muteWhenLosingEnabled = false;
+
+    @Column(name = "rain_delay_enabled", nullable = false)
+    private boolean rainDelayEnabled = true;
+
+    @Column(name = "quiet_hours_enabled", nullable = false)
+    private boolean quietHoursEnabled = false;
+
+    @JdbcTypeCode(SqlTypes.SMALLINT)
+    @Column(name = "quiet_hours_start_hour", nullable = false)
+    private int quietHoursStartHour = 23;
+
+    @JdbcTypeCode(SqlTypes.SMALLINT)
+    @Column(name = "quiet_hours_end_hour", nullable = false)
+    private int quietHoursEndHour = 7;
+
+    @Column(name = "notification_authorization_status", nullable = false, length = 30)
+    private String notificationAuthorizationStatus = "not_determined";
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -93,6 +115,11 @@ public class NotificationDevice {
                 false,
                 false,
                 false,
+                true,
+                false,
+                23,
+                7,
+                notificationsEnabled ? "authorized" : "denied",
                 lastSeenAt
         );
     }
@@ -115,6 +142,37 @@ public class NotificationDevice {
             boolean muteWhenLosingEnabled,
             OffsetDateTime lastSeenAt
     ) {
+        this(
+                id, platform, environment, deviceToken, installationId, favoriteTeamId, notificationsEnabled,
+                gameStartEnabled, scoreChangeEnabled, leadChangeEnabled, gameEndEnabled, onBaseEnabled,
+                inningChangeEnabled, favoriteTeamOnlyEnabled, muteWhenLosingEnabled, true, false, 23, 7,
+                notificationsEnabled ? "authorized" : "denied", lastSeenAt
+        );
+    }
+
+    public NotificationDevice(
+            UUID id,
+            String platform,
+            String environment,
+            String deviceToken,
+            String installationId,
+            String favoriteTeamId,
+            boolean notificationsEnabled,
+            boolean gameStartEnabled,
+            boolean scoreChangeEnabled,
+            boolean leadChangeEnabled,
+            boolean gameEndEnabled,
+            boolean onBaseEnabled,
+            boolean inningChangeEnabled,
+            boolean favoriteTeamOnlyEnabled,
+            boolean muteWhenLosingEnabled,
+            boolean rainDelayEnabled,
+            boolean quietHoursEnabled,
+            int quietHoursStartHour,
+            int quietHoursEndHour,
+            String notificationAuthorizationStatus,
+            OffsetDateTime lastSeenAt
+    ) {
         this.id = id;
         this.platform = platform;
         this.environment = environment;
@@ -130,6 +188,11 @@ public class NotificationDevice {
         this.inningChangeEnabled = inningChangeEnabled;
         this.favoriteTeamOnlyEnabled = favoriteTeamOnlyEnabled;
         this.muteWhenLosingEnabled = muteWhenLosingEnabled;
+        this.rainDelayEnabled = rainDelayEnabled;
+        this.quietHoursEnabled = quietHoursEnabled;
+        this.quietHoursStartHour = quietHoursStartHour;
+        this.quietHoursEndHour = quietHoursEndHour;
+        this.notificationAuthorizationStatus = notificationAuthorizationStatus;
         this.lastSeenAt = lastSeenAt;
     }
 
@@ -155,6 +218,14 @@ public class NotificationDevice {
 
     public String getFavoriteTeamId() {
         return favoriteTeamId;
+    }
+
+    public String getMonitoredGameId() {
+        return monitoredGameId;
+    }
+
+    public void updateMonitoredGameId(String monitoredGameId) {
+        this.monitoredGameId = monitoredGameId;
     }
 
     public boolean isNotificationsEnabled() {
@@ -193,6 +264,26 @@ public class NotificationDevice {
         return muteWhenLosingEnabled;
     }
 
+    public boolean isRainDelayEnabled() {
+        return rainDelayEnabled;
+    }
+
+    public boolean isQuietHoursEnabled() {
+        return quietHoursEnabled;
+    }
+
+    public int getQuietHoursStartHour() {
+        return quietHoursStartHour;
+    }
+
+    public int getQuietHoursEndHour() {
+        return quietHoursEndHour;
+    }
+
+    public String getNotificationAuthorizationStatus() {
+        return notificationAuthorizationStatus;
+    }
+
     public OffsetDateTime getLastSeenAt() {
         return lastSeenAt;
     }
@@ -221,6 +312,11 @@ public class NotificationDevice {
                 false,
                 false,
                 false,
+                true,
+                false,
+                23,
+                7,
+                notificationsEnabled ? "authorized" : "denied",
                 seenAt
         );
     }
@@ -242,6 +338,36 @@ public class NotificationDevice {
             boolean muteWhenLosingEnabled,
             OffsetDateTime seenAt
     ) {
+        update(
+                platform, environment, deviceToken, installationId, favoriteTeamId, notificationsEnabled,
+                gameStartEnabled, scoreChangeEnabled, leadChangeEnabled, gameEndEnabled, onBaseEnabled,
+                inningChangeEnabled, favoriteTeamOnlyEnabled, muteWhenLosingEnabled, true, false, 23, 7,
+                notificationsEnabled ? "authorized" : "denied", seenAt
+        );
+    }
+
+    public void update(
+            String platform,
+            String environment,
+            String deviceToken,
+            String installationId,
+            String favoriteTeamId,
+            boolean notificationsEnabled,
+            boolean gameStartEnabled,
+            boolean scoreChangeEnabled,
+            boolean leadChangeEnabled,
+            boolean gameEndEnabled,
+            boolean onBaseEnabled,
+            boolean inningChangeEnabled,
+            boolean favoriteTeamOnlyEnabled,
+            boolean muteWhenLosingEnabled,
+            boolean rainDelayEnabled,
+            boolean quietHoursEnabled,
+            int quietHoursStartHour,
+            int quietHoursEndHour,
+            String notificationAuthorizationStatus,
+            OffsetDateTime seenAt
+    ) {
         this.platform = platform;
         this.environment = environment;
         this.deviceToken = deviceToken;
@@ -256,6 +382,11 @@ public class NotificationDevice {
         this.inningChangeEnabled = inningChangeEnabled;
         this.favoriteTeamOnlyEnabled = favoriteTeamOnlyEnabled;
         this.muteWhenLosingEnabled = muteWhenLosingEnabled;
+        this.rainDelayEnabled = rainDelayEnabled;
+        this.quietHoursEnabled = quietHoursEnabled;
+        this.quietHoursStartHour = quietHoursStartHour;
+        this.quietHoursEndHour = quietHoursEndHour;
+        this.notificationAuthorizationStatus = notificationAuthorizationStatus;
         this.lastSeenAt = seenAt;
     }
 

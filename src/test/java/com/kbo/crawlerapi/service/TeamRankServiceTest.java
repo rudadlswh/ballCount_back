@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
@@ -119,6 +120,20 @@ class TeamRankServiceTest {
     }
 
     @Test
+    void calculatesPreviousRankBeforeLatestCompletedGameDay() {
+        List<Game> games = List.of(
+                game("g1", date(4, 1), teams.get(0), teams.get(1), 5, 3),
+                game("g2", date(4, 2), teams.get(1), teams.get(2), 6, 2)
+        );
+
+        List<TeamRankRow> rows = service.calculateRows(2026, games);
+
+        TeamRankRow risingTeam = rowFor(rows, teams.get(1));
+        assertThat(risingTeam.previousRank()).isNotNull();
+        assertThat(risingTeam.rank()).isLessThan(risingTeam.previousRank());
+    }
+
+    @Test
     void fullSeasonRecalculationUpsertsAllTenTeams() {
         List<Game> games = List.of(game("g1", date(4, 1), teams.get(0), teams.get(1), 5, 3));
         when(gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
@@ -133,6 +148,34 @@ class TeamRankServiceTest {
         assertThat(result.rowCount()).isEqualTo(10);
         assertThat(teamRankWriteRepository.rows).hasSize(10);
         assertThat(teamRankWriteRepository.rows).extracting(TeamRankRow::season).containsOnly(2026);
+    }
+
+    @Test
+    void postseasonAndPreseasonResultsDoNotChangeRegularSeasonRankings() {
+        Game regular = game("regular", date(10, 12), teams.get(0), teams.get(1), 1, 4);
+        Game postseason = game("post", date(10, 14), teams.get(0), teams.get(1), 10, 0);
+        Game preseason = game("pre", date(3, 14), teams.get(0), teams.get(1), 10, 0);
+        postseason.syncSeries(4);
+        preseason.syncSeries(9);
+        when(gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+                date(1, 1), date(12, 31), GameStatus.FINAL)).thenReturn(List.of(regular, postseason, preseason));
+        var result = service.refreshSeasonRankings(2026);
+        assertThat(result.completedGameCount()).isEqualTo(1);
+        assertThat(rowFor(teamRankWriteRepository.rows, teams.get(0)).losses()).isEqualTo(1);
+        assertThat(rowFor(teamRankWriteRepository.rows, teams.get(0)).wins()).isZero();
+    }
+
+    @Test
+    void unknownClassificationDoesNotOverwritePublishedRankings() throws Exception {
+        org.mockito.Mockito.reset(teamRepository);
+        Game unknown = game("unknown", date(10, 14), teams.get(0), teams.get(1), 10, 0);
+        var field = Game.class.getDeclaredField("seasonType");
+        field.setAccessible(true);
+        field.set(unknown, "unknown");
+        when(gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+                date(1, 1), date(12, 31), GameStatus.FINAL)).thenReturn(List.of(unknown));
+        assertThatThrownBy(() -> service.refreshSeasonRankings(2026)).isInstanceOf(IllegalStateException.class);
+        assertThat(teamRankWriteRepository.rows).isEmpty();
     }
 
     private TeamRankRow rowFor(List<TeamRankRow> rows, Team team) {
@@ -162,7 +205,7 @@ class TeamRankServiceTest {
     }
 
     private Game game(String id, LocalDate date, Team awayTeam, Team homeTeam, int awayScore, int homeScore) {
-        return new Game(
+        Game game = new Game(
                 UUID.nameUUIDFromBytes(id.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 id,
                 "kbo",
@@ -182,6 +225,8 @@ class TeamRankServiceTest {
                 null,
                 null
         );
+        game.syncSeries(0);
+        return game;
     }
 
     private static final class RecordingTeamRankWriteRepository implements TeamRankWriteRepository {

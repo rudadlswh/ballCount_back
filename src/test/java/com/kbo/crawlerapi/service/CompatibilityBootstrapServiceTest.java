@@ -118,6 +118,8 @@ class CompatibilityBootstrapServiceTest {
                 null
         );
 
+        aprilGame.syncSeries(4);
+
         GameSnapshot liveSnapshot = new GameSnapshot(
                 UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
                 aprilGame,
@@ -154,6 +156,10 @@ class CompatibilityBootstrapServiceTest {
         CompatibilityBootstrapResponse response = compatibilityBootstrapService.getBootstrap();
 
         assertThat(response.games()).hasSize(2);
+        assertThat(response.games().get(0).seasonClassification()).isEqualTo("postseason");
+        assertThat(response.games().get(0).seriesId()).isEqualTo(4);
+        assertThat(response.games().get(1).seasonClassification()).isEqualTo("unknown");
+        assertThat(response.games().get(1).seriesId()).isNull();
         assertThat(response.games().get(0).scheduledStart().toLocalDate()).isEqualTo(LocalDate.of(2026, 4, 10));
         assertThat(response.games().get(1).scheduledStart().toLocalDate()).isEqualTo(LocalDate.of(2026, 5, 1));
         assertThat(response.games().get(0).bases()).isNotNull();

@@ -2,11 +2,16 @@ spring:
   http:
     converters:
       preferred-json-mapper: jackson2
+  task:
+    scheduling:
+      pool:
+        size: 2
   config:
     import: optional:file:./.env[.properties]
   profiles:
     group:
       prod: production
+      dev: development
   application:
     name: kbo-crawler-api
   datasource:
@@ -15,45 +20,76 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: org.postgresql.Driver
     hikari:
-      schema: kbo_crawler_api
+      schema: ${app.db.schema}
+      max-lifetime: ${DB_POOL_MAX_LIFETIME:600000}
+      keepalive-time: ${DB_POOL_KEEPALIVE_TIME:120000}
+      data-source-properties:
+        tcpKeepAlive: ${DB_TCP_KEEP_ALIVE:true}
   jpa:
     open-in-view: false
     hibernate:
       ddl-auto: validate
     properties:
       hibernate:
-        default_schema: kbo_crawler_api
+        default_schema: ${app.db.schema}
         jdbc:
           time_zone: Asia/Seoul
   flyway:
     enabled: true
     locations: classpath:db/migration
-    default-schema: kbo_crawler_api
-    schemas: kbo_crawler_api
+    default-schema: ${app.db.schema}
+    schemas: ${app.db.schema}
     create-schemas: true
+    placeholders:
+      appSchema: ${app.db.schema}
 
 server:
   shutdown: graceful
-  port: 8088
+  port: ${SERVER_PORT:8088}
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${ADMIN_SESSION_COOKIE_SECURE:false}
 
 app:
+  retention:
+    enabled: ${DATA_RETENTION_ENABLED:true}
+  admin-ui:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:}
+    session-timeout: ${ADMIN_SESSION_TIMEOUT:30m}
+    stale-game-threshold: ${ADMIN_STALE_GAME_THRESHOLD:2m}
+    log-capacity: ${ADMIN_LOG_CAPACITY:2000}
+  db:
+    schema: ${APP_DB_SCHEMA:kbo_crawler_api_dev}
   security:
     admin-api-key: ${ADMIN_API_KEY:}
-  scheduler:
-    enabled: false
-    pregame-enabled: true
-    live-enabled: false
-    post-final-enabled: true
-    pregame-interval: PT30M
-    live-interval: PT15S
-    post-final-interval: PT10S
+    registration-request-max-bytes: ${REGISTRATION_REQUEST_MAX_BYTES:32768}
+    registration-rate-limit-enabled: ${REGISTRATION_RATE_LIMIT_ENABLED:true}
+    registration-rate-limit-max-requests: ${REGISTRATION_RATE_LIMIT_MAX_REQUESTS:12}
+    registration-rate-limit-window: ${REGISTRATION_RATE_LIMIT_WINDOW:1m}
+    admin-login-max-attempts: ${ADMIN_LOGIN_MAX_ATTEMPTS:5}
+    admin-login-global-max-attempts: ${ADMIN_LOGIN_GLOBAL_MAX_ATTEMPTS:60}
+    admin-login-rate-limit-window: ${ADMIN_LOGIN_RATE_LIMIT_WINDOW:1m}
+    live-stream-max-connections: ${LIVE_STREAM_MAX_CONNECTIONS:1000}
+    live-stream-max-connections-per-client: ${LIVE_STREAM_MAX_CONNECTIONS_PER_CLIENT:10}
+  sync:
+    enabled: ${APP_SYNC_ENABLED:false}
   live-sync:
-    enabled: ${KBO_LIVE_SYNC_ENABLED:false}
-    scheduler-interval: PT5S
-    detail-extraction-timeout: PT0.1S
+    lock-mode: ${KBO_LIVE_SYNC_LOCK_MODE:memory}
+    scheduler-interval: ${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}
+    retry-interval: ${KBO_LIVE_SYNC_RETRY_INTERVAL:PT10S}
+    idle-interval: ${KBO_LIVE_SYNC_IDLE_INTERVAL:PT30M}
+    pregame-check-interval: ${KBO_LIVE_SYNC_PREGAME_CHECK_INTERVAL:PT5M}
+    pregame-fast-polling-window: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_WINDOW:PT30M}
+    pregame-fast-polling-interval: ${KBO_LIVE_SYNC_PREGAME_FAST_POLLING_INTERVAL:PT1M}
+    live-polling-interval: ${KBO_LIVE_SYNC_LIVE_POLLING_INTERVAL:${KBO_LIVE_SYNC_SCHEDULER_INTERVAL:PT1S}}
+    final-confirmation-polling-interval: ${KBO_LIVE_SYNC_FINAL_CONFIRMATION_POLLING_INTERVAL:PT30S}
     pregame-ttl: PT3M
-    live-ttl: PT15S
-    final-confirmation-ttl: PT2M
+    live-ttl: PT3S
+    final-confirmation-ttl: PT30S
   apns:
     push-enabled: ${KBO_PUSH_ENABLED:true}
     team-id: ${APNS_TEAM_ID:}
@@ -63,3 +99,23 @@ app:
 #    private-key: ${APNS_PRIVATE_KEY:}
     env: ${APNS_ENV:sandbox}
     test-enabled: ${KBO_APNS_TEST_ENABLED:false}
+  fcm:
+    push-enabled: ${KBO_FCM_PUSH_ENABLED:false}
+    project-id: ${FIREBASE_PROJECT_ID:}
+    environment: ${FCM_ENV:${APNS_ENV:sandbox}}
+    credentials-path: ${GOOGLE_APPLICATION_CREDENTIALS:}
+#    credentials-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+    endpoint: ${FCM_ENDPOINT:https://fcm.googleapis.com}
+
+kbo:
+  admin:
+    api-key: ${KBO_ADMIN_API_KEY:}
+  reconcile:
+    public-max-dates: ${KBO_RECONCILE_PUBLIC_MAX_DATES:3}
+    public-allowed-past-days: ${KBO_RECONCILE_PUBLIC_ALLOWED_PAST_DAYS:7}
+    public-cooldown: ${KBO_RECONCILE_PUBLIC_COOLDOWN:3m}
+    admin-max-dates: ${KBO_RECONCILE_ADMIN_MAX_DATES:31}
+  http:
+    connect-timeout: ${KBO_HTTP_CONNECT_TIMEOUT:3s}
+    read-timeout: ${KBO_HTTP_READ_TIMEOUT:8s}
+    request-timeout: ${KBO_HTTP_REQUEST_TIMEOUT:10s}

@@ -1,6 +1,9 @@
 package com.kbo.crawlerapi.crawler;
 
+import com.kbo.crawlerapi.config.KboHttpClientFactory;
+import com.kbo.crawlerapi.config.KboHttpProperties;
 import java.time.YearMonth;
+import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
@@ -11,6 +14,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public class KboScheduleClient {
@@ -29,13 +33,33 @@ public class KboScheduleClient {
     private final String scheduleEndpointUri;
 
     public KboScheduleClient() {
-        this(RestClient.builder(), BASE_URL);
+        this(new KboHttpProperties());
+    }
+
+    @Autowired
+    public KboScheduleClient(KboHttpProperties httpProperties) {
+        this(RestClient.builder(), BASE_URL, httpProperties);
     }
 
     protected KboScheduleClient(RestClient.Builder restClientBuilder, String baseUrl) {
-        this.restClient = restClientBuilder
-                .baseUrl(baseUrl)
-                .build();
+        this(restClientBuilder, baseUrl, new KboHttpProperties(), false);
+    }
+
+    protected KboScheduleClient(RestClient.Builder restClientBuilder, String baseUrl, KboHttpProperties httpProperties) {
+        this(restClientBuilder, baseUrl, httpProperties, true);
+    }
+
+    private KboScheduleClient(
+            RestClient.Builder restClientBuilder,
+            String baseUrl,
+            KboHttpProperties httpProperties,
+            boolean configureRequestFactory
+    ) {
+        RestClient.Builder builder = restClientBuilder.baseUrl(baseUrl);
+        if (configureRequestFactory) {
+            builder.requestFactory(KboHttpClientFactory.restClientRequestFactory(httpProperties));
+        }
+        this.restClient = builder.build();
         this.scheduleEndpointUri = baseUrl + SCHEDULE_ENDPOINT_PATH;
     }
 
@@ -44,9 +68,19 @@ public class KboScheduleClient {
     }
 
     public ScheduleResponse fetchMonthlyScheduleResponse(YearMonth yearMonth) {
+        return fetchMonthlyScheduleResponse(yearMonth, "0,9,6,3,4,5,7", null);
+    }
+
+    public List<ScheduleResponse> fetchMonthlyScheduleResponses(YearMonth yearMonth) {
+        return List.of(0, 9, 6, 3, 4, 5, 7).stream()
+                .map(seriesId -> fetchMonthlyScheduleResponse(yearMonth, String.valueOf(seriesId), seriesId))
+                .toList();
+    }
+
+    private ScheduleResponse fetchMonthlyScheduleResponse(YearMonth yearMonth, String seriesIdList, Integer seriesId) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("leId", "1");
-        form.add("srIdList", "0,9,6");
+        form.add("srIdList", seriesIdList);
         form.add("seasonId", String.valueOf(yearMonth.getYear()));
         form.add("gameMonth", String.format("%02d", yearMonth.getMonthValue()));
         form.add("teamId", "");
@@ -69,7 +103,8 @@ public class KboScheduleClient {
                     response.getHeaders().getContentType() == null ? null : response.getHeaders().getContentType().toString(),
                     scheduleEndpointUri,
                     METHOD,
-                    response.getHeaders().getLocation() == null ? null : response.getHeaders().getLocation().toString()
+                    response.getHeaders().getLocation() == null ? null : response.getHeaders().getLocation().toString(),
+                    seriesId
             );
             log.debug(
                     "[KboScheduleClient] response method={} uri={} status={} contentType={} bodyLength={} redirectLocation={}",
@@ -115,8 +150,12 @@ public class KboScheduleClient {
             String contentType,
             String requestUri,
             String method,
-            String redirectLocation
+            String redirectLocation,
+            Integer seriesId
     ) {
+        public ScheduleResponse(String body, Integer statusCode, String contentType, String requestUri, String method, String redirectLocation) {
+            this(body, statusCode, contentType, requestUri, method, redirectLocation, null);
+        }
         public int bodyLength() {
             return body == null ? 0 : body.length();
         }

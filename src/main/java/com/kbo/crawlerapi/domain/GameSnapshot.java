@@ -381,6 +381,10 @@ public class GameSnapshot {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    public UUID getId() {
+        return id;
+    }
+
     public Integer getInning() {
         return inning;
     }
@@ -495,5 +499,9 @@ public class GameSnapshot {
 
     public OffsetDateTime getFetchedAt() {
         return fetchedAt;
+    }
+
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
     }
 }

@@ -14,26 +14,37 @@ class BaseRunnerNameResolverTest {
     private final BaseRunnerNameResolver resolver = new BaseRunnerNameResolver();
 
     @Test
-    void infersNewFirstBaseRunnerFromPreviousBatterOnOnBaseState() {
+    void doesNotInferNewFirstBaseRunnerFromPreviousBatterOnOnBaseState() {
         GameSnapshot previous = snapshot("손성빈", 0, false, false, false, null, null, null);
         ParsedGameDetail current = parsed(0, true, false, false, null, null, null);
 
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
-        assertThat(result.firstBaseRunnerName()).isEqualTo("손성빈");
+        assertThat(result.firstBaseRunnerName()).isNull();
         assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
+        assertThat(result.source()).isEqualTo("occupancyOnly");
     }
 
     @Test
-    void carriesForwardRunnerNameWhenBaseRemainsOccupiedAndOfficialNameMissing() {
+    void carriesForwardRunnerNameWhenSameBaseRemainsOccupiedAndStateDidNotAdvance() {
         GameSnapshot previous = snapshot("다음타자", 0, true, false, false, "전민재", null, null);
         ParsedGameDetail current = parsed(0, true, false, false, null, null, null);
 
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
         assertThat(result.firstBaseRunnerName()).isEqualTo("전민재");
-        assertThat(result.source()).contains("cache");
+    }
+
+    @Test
+    void doesNotCarryForwardRunnerNameWhenBatterChangedAndBaseStaysOccupied() {
+        GameSnapshot previous = snapshot("박찬형", 0, true, false, false, "정대선", null, null);
+        ParsedGameDetail current = parsed(1, true, false, false, "박찬형", null, null, 1, "top", "전민재");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("박찬형");
+        assertThat(result.source()).contains("payload");
     }
 
     @Test
@@ -52,28 +63,29 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
-    void advancesFirstBaseRunnerToSecondOnSimpleReliableMovement() {
+    void doesNotAdvanceFirstBaseRunnerToSecondWithoutOfficialRunnerFields() {
         GameSnapshot previous = snapshot("다음타자", 0, true, false, false, "전민재", null, null);
         ParsedGameDetail current = parsed(0, false, true, false, null, null, null);
 
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
         assertThat(result.firstBaseRunnerName()).isNull();
-        assertThat(result.secondBaseRunnerName()).isEqualTo("전민재");
+        assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
+        assertThat(result.source()).isEqualTo("occupancyOnly");
     }
 
     @Test
-    void advancesFirstBaseRunnerToSecondAndAssignsBatterToFirstOnClearOnBaseTransition() {
+    void doesNotPushPreviousRunnerOrBatterOnBaseTransitionWithoutOfficialRunnerFields() {
         GameSnapshot previous = snapshot("손성빈", 0, true, false, false, "전민재", null, null);
         ParsedGameDetail current = parsed(0, true, true, false, null, null, null);
 
         BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
 
-        assertThat(result.firstBaseRunnerName()).isEqualTo("손성빈");
-        assertThat(result.secondBaseRunnerName()).isEqualTo("전민재");
+        assertThat(result.firstBaseRunnerName()).isNull();
+        assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
-        assertThat(result.source()).contains("event", "onBaseBatterToFirst", "advanceFirstToSecond");
+        assertThat(result.source()).isEqualTo("occupancyOnly");
     }
 
     @Test
@@ -85,7 +97,8 @@ class BaseRunnerNameResolverTest {
 
         assertThat(result.firstBaseRunnerName()).isNull();
         assertThat(result.secondBaseRunnerName()).isNull();
-        assertThat(result.thirdBaseRunnerName()).isEqualTo("3루주자");
+        assertThat(result.thirdBaseRunnerName()).isNull();
+        assertThat(result.source()).isEqualTo("occupancyOnly");
     }
 
     @Test
@@ -123,6 +136,59 @@ class BaseRunnerNameResolverTest {
     }
 
     @Test
+    void pinchRunnerOverrideWinsOverCarryForwardAndPayloadRunnerName() {
+        GameSnapshot previous = snapshot("다음타자", 0, true, false, false, "김동현", null, null);
+        ParsedGameDetail current = parsed(0, true, false, false, "김동현", null, null);
+        BaseRunnerNameResolver.PinchRunnerOverrides overrides = new BaseRunnerNameResolver.PinchRunnerOverrides(
+                new BaseRunnerNameResolver.RunnerOverride("김동현", "김동혁"),
+                null,
+                null
+        );
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current, overrides);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("김동혁");
+        assertThat(result.source()).isEqualTo("liveTextSubstitution");
+    }
+
+    @Test
+    void pinchHitterOfficialRunnerNameRemainsWhenNoPinchRunnerOverrideExists() {
+        GameSnapshot previous = snapshot("손성빈", 0, false, false, false, null, null, null);
+        ParsedGameDetail current = parsed(0, true, false, false, "김동현", null, null);
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("김동현");
+        assertThat(result.source()).contains("payload");
+    }
+
+    @Test
+    void explicitPinchRunnerDoesNotFallbackToOriginalRunnerName() {
+        ParsedGameDetail current = parsed(0, true, false, false, "나성범", null, null);
+        BaseRunnerNameResolver.PinchRunnerOverrides overrides = new BaseRunnerNameResolver.PinchRunnerOverrides(
+                new BaseRunnerNameResolver.RunnerOverride("나성범", "박정우"),
+                null,
+                null
+        );
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(null, current, overrides);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("박정우");
+    }
+
+    @Test
+    void officialRunnerNameWinsOverPreviousBatterReachedFirstInference() {
+        GameSnapshot previous = snapshotWithCount("노진혁", 0, 3, 1, false, false, false, null, null, null);
+        ParsedGameDetail current = parsed(0, true, false, false, "손호영", null, null, 1, "top", "황성빈");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("손호영");
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
     void occupiedFirstAndThirdWithOnlyFirstKnownDoesNotCopyNameToThird() {
         ParsedGameDetail current = parsed(0, true, false, true, "송찬의", null, null);
 
@@ -155,7 +221,7 @@ class BaseRunnerNameResolverTest {
         assertThat(result.firstBaseRunnerName()).isNull();
         assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
-        assertThat(result.source()).isEqualTo("none");
+        assertThat(result.source()).isEqualTo("occupancyOnly");
     }
 
     @Test
@@ -168,6 +234,32 @@ class BaseRunnerNameResolverTest {
         assertThat(result.firstBaseRunnerName()).isNull();
         assertThat(result.secondBaseRunnerName()).isNull();
         assertThat(result.thirdBaseRunnerName()).isNull();
+        assertThat(result.source()).isEqualTo("none");
+    }
+
+    @Test
+    void resolvesAllBasesFromSameCurrentSnapshotWithoutUsingPreviousNames() {
+        GameSnapshot previous = snapshot("강승호", 0, false, true, true, null, "박찬호", null);
+        ParsedGameDetail current = parsed(
+                0,
+                true,
+                true,
+                true,
+                "강승호",
+                "류승민",
+                "박찬호",
+                6,
+                "bottom",
+                "김민석"
+        );
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("강승호");
+        assertThat(result.secondBaseRunnerName()).isEqualTo("류승민");
+        assertThat(result.thirdBaseRunnerName()).isEqualTo("박찬호");
+        assertThat(current.currentBatterName()).isEqualTo("김민석");
+        assertThat(result.source()).contains("payload");
     }
 
     @Test
@@ -182,9 +274,47 @@ class BaseRunnerNameResolverTest {
         assertThat(result.thirdBaseRunnerName()).isNull();
     }
 
+    @Test
+    void infersRunnerAdvanceFromLastCompletedPlayResult() {
+        GameSnapshot previous = snapshot("타자", 0, true, false, false, "1루주자", null, null);
+        ParsedGameDetail current = parsedWithCompletedPlay(0, false, true, false, null, null, null, null, "도루");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(previous, current);
+
+        assertThat(result.firstBaseRunnerName()).isNull();
+        assertThat(result.secondBaseRunnerName()).isEqualTo("1루주자");
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
+    @Test
+    void infersBatterBaseFromLastCompletedPlayResult() {
+        ParsedGameDetail current = parsedWithCompletedPlay(0, true, false, false, null, null, null, "안재석", "좌전 안타");
+
+        BaseRunnerNameResolver.ResolvedBaseRunners result = resolver.resolve(null, current);
+
+        assertThat(result.firstBaseRunnerName()).isEqualTo("안재석");
+        assertThat(result.secondBaseRunnerName()).isNull();
+        assertThat(result.thirdBaseRunnerName()).isNull();
+    }
+
     private GameSnapshot snapshot(
             String currentBatterName,
             Integer outs,
+            boolean first,
+            boolean second,
+            boolean third,
+            String firstName,
+            String secondName,
+            String thirdName
+    ) {
+        return snapshotWithCount(currentBatterName, outs, 0, 0, first, second, third, firstName, secondName, thirdName);
+    }
+
+    private GameSnapshot snapshotWithCount(
+            String currentBatterName,
+            Integer outs,
+            Integer balls,
+            Integer strikes,
             boolean first,
             boolean second,
             boolean third,
@@ -198,8 +328,8 @@ class BaseRunnerNameResolverTest {
                 1,
                 "top",
                 "Top 1",
-                0,
-                0,
+                balls,
+                strikes,
                 outs,
                 first,
                 second,
@@ -220,7 +350,7 @@ class BaseRunnerNameResolverTest {
                 null,
                 null,
                 null,
-                UUID.randomUUID().toString(),
+                "same-raw-hash",
                 null,
                 null,
                 null,
@@ -254,6 +384,21 @@ class BaseRunnerNameResolverTest {
             Integer inning,
             String inningHalf
     ) {
+        return parsed(outs, first, second, third, firstName, secondName, thirdName, inning, inningHalf, "다음타자");
+    }
+
+    private ParsedGameDetail parsed(
+            Integer outs,
+            boolean first,
+            boolean second,
+            boolean third,
+            String firstName,
+            String secondName,
+            String thirdName,
+            Integer inning,
+            String inningHalf,
+            String currentBatterName
+    ) {
         return new ParsedGameDetail(
                 "20260506LTSS0",
                 GameStatus.LIVE,
@@ -279,7 +424,60 @@ class BaseRunnerNameResolverTest {
                 null,
                 null,
                 "투수",
+                currentBatterName,
+                null,
+                null,
+                true,
+                null,
+                null,
+                "same-raw-hash"
+        );
+    }
+
+    private ParsedGameDetail parsedWithCompletedPlay(
+            Integer outs,
+            boolean first,
+            boolean second,
+            boolean third,
+            String firstName,
+            String secondName,
+            String thirdName,
+            String lastCompletedBatterName,
+            String lastCompletedPlayResult
+    ) {
+        return new ParsedGameDetail(
+                "20260506LTSS0",
+                GameStatus.LIVE,
+                false,
+                false,
+                null,
+                null,
+                0,
+                0,
+                1,
+                "top",
+                "Top 1",
+                0,
+                0,
+                outs,
+                first,
+                second,
+                third,
+                null,
+                null,
+                null,
+                firstName,
+                secondName,
+                thirdName,
+                null,
+                null,
+                null,
+                "투수",
                 "다음타자",
+                lastCompletedBatterName,
+                "투수",
+                lastCompletedPlayResult,
+                lastCompletedPlayResult == null ? null : UUID.randomUUID().toString(),
                 null,
                 null,
                 true,

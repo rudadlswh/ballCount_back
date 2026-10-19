@@ -1,0 +1,306 @@
+package com.kbo.crawlerapi.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.kbo.crawlerapi.config.ApnsProperties;
+import com.kbo.crawlerapi.domain.Game;
+import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.LiveActivityPushToStartToken;
+import com.kbo.crawlerapi.domain.Team;
+import com.kbo.crawlerapi.repository.LiveActivityPushToStartTokenRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class LiveActivityPushToStartTokenServiceTest {
+
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-06-05T10:00:00Z"), ZoneId.of("Asia/Seoul"));
+
+    @Mock
+    private LiveActivityPushToStartTokenRepository repository;
+
+    @Test
+    void newTokenCannotOverwriteAnotherRegistrationWithTheSameInstallationId() {
+        LiveActivityPushToStartToken existing = token("old-token", "lg");
+        when(repository.findByPlatformAndEnvironmentAndPushToStartToken(eq("ios"), eq("sandbox"), eq("new-token")))
+                .thenReturn(Optional.empty());
+        LiveActivityPushToStartTokenService service = service();
+
+        var result = service.register(command("new-token", true, true));
+
+        ArgumentCaptor<LiveActivityPushToStartToken> captor = ArgumentCaptor.forClass(LiveActivityPushToStartToken.class);
+        verify(repository).save(captor.capture());
+        assertThat(result.id()).isNotEqualTo(existing.getId());
+        assertThat(existing.getPushToStartToken()).isEqualTo("old-token");
+        assertThat(captor.getValue().getPushToStartToken()).isEqualTo("new-token");
+        assertThat(captor.getValue().isLiveActivityAutoStartEnabled()).isTrue();
+        assertThat(captor.getValue().isActive()).isTrue();
+        verify(repository).findByPlatformAndEnvironmentAndPushToStartToken("ios", "sandbox", "new-token");
+        org.mockito.Mockito.verifyNoMoreInteractions(repository);
+    }
+
+    @Test
+    void sameTokenUpdatesSettingsAndPreservesDeliveryHistory() {
+        LiveActivityPushToStartToken existing = token("same-token", "lg");
+        existing.markStartDelivered("previous-game", OffsetDateTime.now(CLOCK));
+        when(repository.findByPlatformAndEnvironmentAndPushToStartToken("ios", "sandbox", "same-token"))
+                .thenReturn(Optional.of(existing));
+
+        var result = service().register(command("same-token", true, true));
+
+        assertThat(result.id()).isEqualTo(existing.getId());
+        assertThat(existing.getLastStartedGameKey()).isEqualTo("previous-game");
+        verify(repository).save(existing);
+    }
+
+    @Test
+    void duplicateStartIsSkippedAfterSuccessfulDelivery() {
+        LiveActivityPushToStartToken token = token("start-token", "lg");
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService();
+        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        LiveActivityPushToStartTokenService service = service(apnsPushService);
+
+        var first = service.deliverStart(game());
+        var second = service.deliverStart(game());
+
+        assertThat(first.sentCount()).isEqualTo(1);
+        assertThat(apnsPushService.sentCount).isEqualTo(1);
+        assertThat(second.sentCount()).isZero();
+        assertThat(second.skippedCount()).isEqualTo(1);
+        assertThat(token.getLastStartedGameKey()).isEqualTo("public:20260605-lg-doosan");
+    }
+
+    @Test
+    void failedStartCanBeRetriedAndOnlySuccessfulDeliveryIsDeduplicated() {
+        LiveActivityPushToStartToken token = token("start-token", "lg");
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService() {
+            private boolean first = true;
+
+            @Override
+            public ApnsSendResult sendLiveActivityStart(Game game, LiveActivityPushToStartToken startToken,
+                                                       Map<String, Object> attributes, Map<String, Object> contentState) {
+                if (first) {
+                    first = false;
+                    return new ApnsSendResult(false, false, false, APNS_SERVER_ERROR);
+                }
+                return super.sendLiveActivityStart(game, startToken, attributes, contentState);
+            }
+        };
+        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        LiveActivityPushToStartTokenService service = service(apnsPushService);
+
+        assertThat(service.deliverStart(game()).failedCount()).isEqualTo(1);
+        assertThat(token.getLastStartedGameKey()).isNull();
+        assertThat(token.isActive()).isTrue();
+        assertThat(service.deliverStart(game()).sentCount()).isEqualTo(1);
+        assertThat(service.deliverStart(game()).skippedCount()).isEqualTo(1);
+        assertThat(apnsPushService.sentCount).isEqualTo(1);
+    }
+
+    @Test
+    void tokenRegisteredAfterGameStartReceivesStartOnNextAttempt() {
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService();
+        when(repository.findByActiveTrue()).thenReturn(List.of(), List.of(token("late-token", "lg")));
+        LiveActivityPushToStartTokenService service = service(apnsPushService);
+
+        assertThat(service.deliverStart(game()).skippedCount()).isEqualTo(1);
+        assertThat(service.deliverStart(game()).sentCount()).isEqualTo(1);
+        assertThat(service.deliverStart(game()).skippedCount()).isEqualTo(1);
+        assertThat(apnsPushService.sentCount).isEqualTo(1);
+    }
+
+    @Test
+    void disabledAutoStartSkipsWithoutSendingApns() {
+        LiveActivityPushToStartToken token = token("start-token", "lg");
+        RecordingApnsPushService apnsPushService = new RecordingApnsPushService();
+        token.update("ios", "sandbox", "start-token", "install-1", "lg", true, true, false, true, false, OffsetDateTime.now(CLOCK));
+        when(repository.findByActiveTrue()).thenReturn(List.of(token));
+        LiveActivityPushToStartTokenService service = service(apnsPushService);
+
+        var result = service.deliverStart(game());
+
+        assertThat(result.sentCount()).isZero();
+        assertThat(result.skippedCount()).isEqualTo(1);
+        assertThat(apnsPushService.sentCount).isZero();
+    }
+
+    @Test
+    void pushDisabledSkipsWithoutScanningTokens() {
+        LiveActivityPushToStartTokenService service = service(new PushDisabledApnsPushService());
+
+        var result = service.deliverStart(game());
+
+        assertThat(result.skippedCount()).isEqualTo(1);
+        verify(repository, never()).findByActiveTrue();
+    }
+
+    @Test
+    void rejectsOverlongPushToStartToken() {
+        LiveActivityPushToStartTokenService service = service();
+
+        assertThatThrownBy(() -> service.register(command("a".repeat(513), true, true)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("pushToStartToken is too long");
+    }
+
+    @Test
+    void rejectsOverlongInstallationId() {
+        LiveActivityPushToStartTokenService service = service();
+        LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand command =
+                new LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand(
+                        "ios",
+                        "sandbox",
+                        "token",
+                        "i".repeat(101),
+                        "lg",
+                        true,
+                        true,
+                        true,
+                        true,
+                        false
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("installationId is too long");
+    }
+
+    @Test
+    void rejectsUnsupportedEnvironmentAlias() {
+        LiveActivityPushToStartTokenService service = service();
+        LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand command =
+                new LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand(
+                        "ios",
+                        "release",
+                        "token",
+                        "install-1",
+                        "lg",
+                        true,
+                        true,
+                        true,
+                        true,
+                        false
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("environment must be sandbox or production");
+    }
+
+    private LiveActivityPushToStartTokenService service() {
+        return service(new RecordingApnsPushService());
+    }
+
+    private LiveActivityPushToStartTokenService service(RecordingApnsPushService apnsPushService) {
+        return new LiveActivityPushToStartTokenService(repository, contentStateBuilder, apnsPushService, CLOCK);
+    }
+
+    private LiveActivityContentStateBuilder contentStateBuilder = new LiveActivityContentStateBuilder(null) {
+        @Override
+        public Map<String, Object> buildForFavoriteTeam(Game game, String favoriteTeamId, com.kbo.crawlerapi.domain.NotificationEvent event) {
+            return Map.of("isPreGame", false, "favoriteScoreText", "3");
+        }
+    };
+
+    private LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand command(
+            String token,
+            boolean notificationsAuthorized,
+            boolean autoStartEnabled
+    ) {
+        return new LiveActivityPushToStartTokenService.PushToStartTokenRegistrationCommand(
+                "ios",
+                "sandbox",
+                token,
+                "install-1",
+                "lg",
+                notificationsAuthorized,
+                true,
+                autoStartEnabled,
+                true,
+                false
+        );
+    }
+
+    private LiveActivityPushToStartToken token(String token, String favoriteTeamId) {
+        LiveActivityPushToStartToken value = new LiveActivityPushToStartToken(
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                OffsetDateTime.now(CLOCK)
+        );
+        value.update("ios", "sandbox", token, "install-1", favoriteTeamId, true, true, true, true, false, OffsetDateTime.now(CLOCK));
+        return value;
+    }
+
+    private Game game() {
+        Team home = new Team(UUID.randomUUID(), "lg", "LG", "LG", "LG Twins", null);
+        Team away = new Team(UUID.randomUUID(), "doosan", "두산", "두산", "Doosan Bears", null);
+        return new Game(
+                UUID.fromString("22222222-2222-2222-2222-222222222222"),
+                "20260605-LG-DOOSAN",
+                "kbo",
+                "20260605LGDO0",
+                LocalDate.of(2026, 6, 5),
+                OffsetDateTime.parse("2026-06-05T18:30:00+09:00"),
+                "잠실",
+                GameStatus.LIVE,
+                home,
+                away,
+                3,
+                2,
+                "5회초",
+                false,
+                false,
+                null,
+                null,
+                OffsetDateTime.now(CLOCK)
+        );
+    }
+
+    private static class RecordingApnsPushService extends ApnsPushService {
+        private int sentCount;
+
+        private RecordingApnsPushService() {
+            super(new ApnsProperties(), CLOCK);
+        }
+
+        @Override
+        public String readinessSkipReason() {
+            return null;
+        }
+
+        @Override
+        public ApnsSendResult sendLiveActivityStart(
+                Game game,
+                LiveActivityPushToStartToken pushToStartToken,
+                Map<String, Object> attributes,
+                Map<String, Object> contentState
+        ) {
+            sentCount++;
+            return ApnsSendResult.sentResult();
+        }
+    }
+
+    private static final class PushDisabledApnsPushService extends RecordingApnsPushService {
+
+        @Override
+        public String readinessSkipReason() {
+            return ApnsPushService.APNS_PUSH_DISABLED;
+        }
+    }
+}

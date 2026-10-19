@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.GameSeasonType;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboScheduleParser.ParsedScheduleGame;
 
@@ -40,10 +41,11 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
 
         Optional<PublicGameRow> existingGame = existingByProviderGameId.isPresent()
                 ? existingByProviderGameId
-                : findByProviderAndNaturalKey(parsedGame, awayTeam, homeTeam);
+                : findByProviderAndNaturalKey(parsedGame, awayTeam, homeTeam, publicGameId);
 
         if (existingGame.isPresent()) {
             PublicGameRow existing = existingGame.get();
+            publicGameId = existing.publicGameId();
             String providerGameId = parsedGame.providerGameId() == null
                     ? existing.providerGameId()
                     : parsedGame.providerGameId();
@@ -62,9 +64,9 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
         return jdbcTemplate.query(
                 """
                         SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
-                               home_team_id, away_team_id, home_score, away_score, is_cancelled,
+                               home_team_id, away_team_id, home_score, away_score, status_reason, is_cancelled,
                                is_postponed, cancel_reason, raw_cancel_text, away_starting_pitcher_name,
-                               home_starting_pitcher_name, source_updated_at
+                               home_starting_pitcher_name, source_updated_at, series_id
                         FROM games
                         WHERE provider = ? AND provider_game_id = ?
                         """,
@@ -77,28 +79,39 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     private Optional<PublicGameRow> findByProviderAndNaturalKey(
             ParsedScheduleGame parsedGame,
             Team awayTeam,
-            Team homeTeam
+            Team homeTeam,
+            String publicGameId
     ) {
-        return jdbcTemplate.query(
+        var matches = jdbcTemplate.query(
                 """
                         SELECT id, public_game_id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
-                               home_team_id, away_team_id, home_score, away_score, is_cancelled,
+                               home_team_id, away_team_id, home_score, away_score, status_reason, is_cancelled,
                                is_postponed, cancel_reason, raw_cancel_text, away_starting_pitcher_name,
-                               home_starting_pitcher_name, source_updated_at
+                               home_starting_pitcher_name, source_updated_at, series_id
                         FROM games
                         WHERE provider = ?
                           AND game_date = ?
                           AND home_team_id = ?
                           AND away_team_id = ?
+                          AND (CAST(? AS TEXT) IS NULL OR provider_game_id IS NULL OR provider_game_id LIKE 'sched-%')
+                          AND (CAST(? AS TIMESTAMPTZ) IS NULL OR scheduled_at IS NULL OR scheduled_at = ?
+                               OR (public_game_id = ? AND (provider_game_id IS NULL OR provider_game_id LIKE 'sched-%')))
                         ORDER BY updated_at DESC
-                        LIMIT 1
                         """,
                 rowMapper(),
                 parsedGame.provider(),
                 parsedGame.gameDate(),
                 homeTeam.getId(),
-                awayTeam.getId()
-        ).stream().findFirst();
+                awayTeam.getId(),
+                parsedGame.providerGameId(),
+                parsedGame.scheduledAt(),
+                parsedGame.scheduledAt(),
+                publicGameId
+        );
+        if (matches.size() > 1) {
+            throw new IllegalStateException("Ambiguous schedule identity for " + parsedGame.gameDate());
+        }
+        return matches.stream().findFirst();
     }
 
     private void insert(
@@ -114,10 +127,10 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                         INSERT INTO games (
                             id, provider, provider_game_id, game_date, scheduled_at, stadium, status,
                             home_team_id, away_team_id, home_score, away_score, inning_state,
-                            is_cancelled, is_postponed, cancel_reason, raw_cancel_text,
-                            away_starting_pitcher_name, home_starting_pitcher_name, source_updated_at, public_game_id
+                            status_reason, is_cancelled, is_postponed, cancel_reason, raw_cancel_text,
+                            away_starting_pitcher_name, home_starting_pitcher_name, source_updated_at, public_game_id, season_type, series_id
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 UUID.randomUUID(),
                 parsedGame.provider(),
@@ -130,6 +143,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 awayTeam.getId(),
                 normalizedScore(parsedGame.homeScore()),
                 normalizedScore(parsedGame.awayScore()),
+                parsedGame.statusReason(),
                 parsedGame.isCancelled(),
                 parsedGame.isPostponed(),
                 cancelReasonValue(parsedGame.cancelReason()),
@@ -137,7 +151,9 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 normalizedText(parsedGame.awayStartingPitcherName()),
                 normalizedText(parsedGame.homeStartingPitcherName()),
                 sourceUpdatedAt,
-                publicGameId
+                publicGameId,
+                GameSeasonType.fromSeriesId(parsedGame.seriesId()).getApiValue(),
+                parsedGame.seriesId()
         );
     }
 
@@ -150,6 +166,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             String providerGameId,
             OffsetDateTime sourceUpdatedAt
     ) {
+        EffectiveScheduleState effectiveState = effectiveState(existing, parsedGame);
         jdbcTemplate.update(
                 """
                         UPDATE games
@@ -163,6 +180,7 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                             away_team_id = ?,
                             home_score = ?,
                             away_score = ?,
+                            status_reason = ?,
                             is_cancelled = ?,
                             is_postponed = ?,
                             cancel_reason = ?,
@@ -170,6 +188,8 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                             away_starting_pitcher_name = COALESCE(?, away_starting_pitcher_name),
                             home_starting_pitcher_name = COALESCE(?, home_starting_pitcher_name),
                             source_updated_at = ?,
+                            season_type = CASE WHEN CAST(? AS INTEGER) IS NULL THEN season_type ELSE ? END,
+                            series_id = COALESCE(?, series_id),
                             updated_at = now()
                         WHERE id = ?
                         """,
@@ -178,18 +198,22 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 parsedGame.gameDate(),
                 parsedGame.scheduledAt(),
                 parsedGame.stadium(),
-                parsedGame.status().getApiValue(),
+                effectiveState.status().getApiValue(),
                 homeTeam.getId(),
                 awayTeam.getId(),
                 effectiveHomeScore(existing, parsedGame),
                 effectiveAwayScore(existing, parsedGame),
-                parsedGame.isCancelled(),
-                parsedGame.isPostponed(),
-                cancelReasonValue(parsedGame.cancelReason()),
-                parsedGame.rawCancelText(),
+                effectiveState.statusReason(),
+                effectiveState.cancelled(),
+                effectiveState.postponed(),
+                cancelReasonValue(effectiveState.cancelReason()),
+                effectiveState.rawCancelText(),
                 normalizedText(parsedGame.awayStartingPitcherName()),
                 normalizedText(parsedGame.homeStartingPitcherName()),
                 sourceUpdatedAt,
+                parsedGame.seriesId(),
+                GameSeasonType.fromSeriesId(parsedGame.seriesId()).getApiValue(),
+                parsedGame.seriesId(),
                 existing.id()
         );
     }
@@ -205,23 +229,55 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     ) {
         Integer effectiveHomeScore = effectiveHomeScore(existing, parsedGame);
         Integer effectiveAwayScore = effectiveAwayScore(existing, parsedGame);
-        return !Objects.equals(existing.publicGameId(), publicGameId)
+        EffectiveScheduleState effectiveState = effectiveState(existing, parsedGame);
+        return (parsedGame.seriesId() != null && !Objects.equals(existing.seriesId(), parsedGame.seriesId()))
+                || !Objects.equals(existing.publicGameId(), publicGameId)
                 || !Objects.equals(existing.providerGameId(), providerGameId)
                 || !Objects.equals(existing.gameDate(), parsedGame.gameDate())
                 || !sameInstant(existing.scheduledAt(), parsedGame.scheduledAt())
                 || !Objects.equals(existing.stadium(), parsedGame.stadium())
-                || !Objects.equals(existing.status(), parsedGame.status().getApiValue())
+                || !Objects.equals(existing.status(), effectiveState.status().getApiValue())
                 || !Objects.equals(existing.homeTeamId(), homeTeam.getId())
                 || !Objects.equals(existing.awayTeamId(), awayTeam.getId())
                 || !Objects.equals(existing.homeScore(), effectiveHomeScore)
                 || !Objects.equals(existing.awayScore(), effectiveAwayScore)
-                || existing.cancelled() != parsedGame.isCancelled()
-                || existing.postponed() != parsedGame.isPostponed()
-                || existing.cancelReason() != parsedGame.cancelReason()
-                || !Objects.equals(existing.rawCancelText(), parsedGame.rawCancelText())
+                || !Objects.equals(existing.statusReason(), effectiveState.statusReason())
+                || existing.cancelled() != effectiveState.cancelled()
+                || existing.postponed() != effectiveState.postponed()
+                || existing.cancelReason() != effectiveState.cancelReason()
+                || !Objects.equals(existing.rawCancelText(), effectiveState.rawCancelText())
                 || incomingTextDiffers(existing.awayStartingPitcherName(), parsedGame.awayStartingPitcherName())
                 || incomingTextDiffers(existing.homeStartingPitcherName(), parsedGame.homeStartingPitcherName())
                 || !sameInstant(existing.sourceUpdatedAt(), sourceUpdatedAt);
+    }
+
+    private EffectiveScheduleState effectiveState(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        if (shouldPreserveCancellation(existing, parsedGame)) {
+            return new EffectiveScheduleState(
+                    GameStatus.fromApiValue(existing.status()),
+                    existing.statusReason(),
+                    existing.cancelled(),
+                    existing.postponed(),
+                    existing.cancelReason(),
+                    existing.rawCancelText()
+            );
+        }
+        return new EffectiveScheduleState(
+                parsedGame.status(),
+                parsedGame.statusReason(),
+                parsedGame.isCancelled(),
+                parsedGame.isPostponed(),
+                parsedGame.cancelReason(),
+                parsedGame.rawCancelText()
+        );
+    }
+
+    private boolean shouldPreserveCancellation(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        boolean existingCancelledOrPostponed = existing.cancelled()
+                || existing.postponed()
+                || "cancelled".equals(existing.status())
+                || "postponed".equals(existing.status());
+        return existingCancelledOrPostponed && parsedGame.status() == GameStatus.SCHEDULED;
     }
 
     private String cancelReasonValue(GameCancelReason cancelReason) {
@@ -312,13 +368,15 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
                 rs.getObject("away_team_id", UUID.class),
                 rs.getObject("home_score", Integer.class),
                 rs.getObject("away_score", Integer.class),
+                rs.getString("status_reason"),
                 rs.getBoolean("is_cancelled"),
                 rs.getBoolean("is_postponed"),
                 cancelReason(rs.getString("cancel_reason")),
                 rs.getString("raw_cancel_text"),
                 rs.getString("away_starting_pitcher_name"),
                 rs.getString("home_starting_pitcher_name"),
-                rs.getObject("source_updated_at", OffsetDateTime.class)
+                rs.getObject("source_updated_at", OffsetDateTime.class),
+                rs.getObject("series_id", Integer.class)
         );
     }
 
@@ -339,13 +397,25 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
             UUID awayTeamId,
             Integer homeScore,
             Integer awayScore,
+            String statusReason,
             boolean cancelled,
             boolean postponed,
             GameCancelReason cancelReason,
             String rawCancelText,
             String awayStartingPitcherName,
             String homeStartingPitcherName,
-            OffsetDateTime sourceUpdatedAt
+            OffsetDateTime sourceUpdatedAt,
+            Integer seriesId
+    ) {
+    }
+
+    private record EffectiveScheduleState(
+            GameStatus status,
+            String statusReason,
+            boolean cancelled,
+            boolean postponed,
+            GameCancelReason cancelReason,
+            String rawCancelText
     ) {
     }
 }

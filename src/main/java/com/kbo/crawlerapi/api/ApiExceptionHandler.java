@@ -17,12 +17,14 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleStatus(org.springframework.web.server.ResponseStatusException exception,
             HttpServletRequest request) {
         var response = ResponseEntity.status(exception.getStatusCode());
+        var status = HttpStatus.valueOf(exception.getStatusCode().value());
         if (exception.getStatusCode().value() == 429) {
             response.header("Retry-After", "30");
         }
         return response.body(new ApiErrorResponse(OffsetDateTime.now(), exception.getStatusCode().value(),
-                HttpStatus.valueOf(exception.getStatusCode().value()).getReasonPhrase(),
-                "RATE_LIMITED", exception.getReason(), request.getRequestURI()));
+                status.getReasonPhrase(),
+                status == HttpStatus.TOO_MANY_REQUESTS ? "RATE_LIMITED" : status.name(),
+                exception.getReason(), request.getRequestURI()));
     }
 
     @ExceptionHandler({

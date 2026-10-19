@@ -8,11 +8,13 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,11 +36,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.crawler.KboGameDetailClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient.KboScheduleEndpointException;
@@ -107,7 +112,7 @@ class KboScheduleImportServiceTest {
     }
 
     @Test
-    void importMonthlyScheduleSkipsNonCancelledGameWithoutProviderGameId() {
+    void importMonthlySchedulePersistsGameWithoutProviderGameId() {
         ParsedScheduleGame parsedGame = new ParsedScheduleGame(
                 "kbo",
                 null,
@@ -127,16 +132,23 @@ class KboScheduleImportServiceTest {
         );
         kboScheduleParser.parseResult = new MonthlyScheduleParseResult(
                 List.of(parsedGame),
-                List.of(new SkippedScheduleRow(parsedGame.gameDate(), "MISSING_PROVIDER_GAME_ID", "KIA0vs0두산", "-"))
+                List.of()
         );
+
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        Team doosan = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(true, false);
 
         ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 4));
 
-        assertThat(result.gameCreatedCount()).isZero();
+        assertThat(result.gameCreatedCount()).isEqualTo(1);
         assertThat(result.gameUpdatedCount()).isZero();
-        assertThat(result.skippedRowCount()).isEqualTo(1);
-        assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
-        assertThat(scheduleGameWriteRepository.callCount).isZero();
+        assertThat(result.skippedRowCount()).isZero();
+        assertThat(result.skippedMissingProviderGameIdCount()).isZero();
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isNull();
         verify(gameRepository, never()).save(any());
     }
 
@@ -165,20 +177,19 @@ class KboScheduleImportServiceTest {
                 null,
                 appliedAt.minusDays(1)
         );
-        ParsedScheduleGame parsedGame = missingProviderScheduleGame(gameDate, GameStatus.CANCELLED, "NC", "두산", "우천취소");
         kboScheduleParser.parseResult = new MonthlyScheduleParseResult(
-                List.of(parsedGame),
+                List.of(),
                 List.of(new SkippedScheduleRow(gameDate, "MISSING_PROVIDER_GAME_ID", "NCvs두산", "우천취소"))
         );
 
         when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+        when(gameRepository.findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                 eq("kbo"),
                 eq(gameDate),
                 eq(doosan.getId()),
                 eq(nc.getId())
-        )).thenReturn(Optional.of(existingGame));
+        )).thenReturn(List.of(existingGame));
 
         ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 5));
 
@@ -197,20 +208,19 @@ class KboScheduleImportServiceTest {
         LocalDate gameDate = LocalDate.of(2026, 5, 20);
         Team nc = new Team(UUID.randomUUID(), "nc", "NC Dinos", "NC", "NC Dinos", null);
         Team doosan = new Team(UUID.randomUUID(), "doosan", "Doosan Bears", "Doosan", "Doosan Bears", null);
-        ParsedScheduleGame parsedGame = missingProviderScheduleGame(gameDate, GameStatus.CANCELLED, "NC", "두산", "우천취소");
         kboScheduleParser.parseResult = new MonthlyScheduleParseResult(
-                List.of(parsedGame),
+                List.of(),
                 List.of(new SkippedScheduleRow(gameDate, "MISSING_PROVIDER_GAME_ID", "NCvs두산", "우천취소"))
         );
 
         when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+        when(gameRepository.findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                 eq("kbo"),
                 eq(gameDate),
                 eq(doosan.getId()),
                 eq(nc.getId())
-        )).thenReturn(Optional.empty());
+        )).thenReturn(List.of());
 
         ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 5));
 
@@ -245,26 +255,25 @@ class KboScheduleImportServiceTest {
                 null,
                 appliedAt.minusDays(1)
         );
-        ParsedScheduleGame parsedGame = missingProviderScheduleGame(gameDate, GameStatus.CANCELLED, "NC", "두산", "취소");
         kboScheduleParser.parseResult = new MonthlyScheduleParseResult(
-                List.of(parsedGame),
+                List.of(),
                 List.of(new SkippedScheduleRow(gameDate, "MISSING_PROVIDER_GAME_ID", "NC0vs0두산", "취소"))
         );
 
         when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+        when(gameRepository.findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                 eq("kbo"),
                 eq(gameDate),
                 eq(doosan.getId()),
                 eq(nc.getId())
-        )).thenReturn(Optional.of(existingGame));
+        )).thenReturn(List.of(existingGame));
 
         ScheduleIngestionResult result = kboScheduleImportService.importMonthlySchedule(YearMonth.of(2026, 5));
 
         assertThat(result.gameUpdatedCount()).isEqualTo(1);
         assertThat(existingGame.getStatus()).isEqualTo(GameStatus.CANCELLED);
-        verify(gameRepository).findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+        verify(gameRepository).findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                 "kbo",
                 gameDate,
                 doosan.getId(),
@@ -495,7 +504,7 @@ class KboScheduleImportServiceTest {
         );
         kboScheduleParser.parseResult = new MonthlyScheduleParseResult(
                 List.of(parsedGame),
-                List.of(new SkippedScheduleRow(requestedDate, "MISSING_PROVIDER_GAME_ID", "롯데vsKIA", null))
+                List.of()
         );
         kboGameDetailClient.gameListResponseBody = """
                 {
@@ -519,11 +528,114 @@ class KboScheduleImportServiceTest {
 
         assertThat(result.gameProcessedCount()).isEqualTo(1);
         assertThat(result.gameUpdatedCount()).isEqualTo(1);
-        assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
+        assertThat(result.skippedMissingProviderGameIdCount()).isZero();
         assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
         assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isEqualTo("20260602LTHT0");
         assertThat(scheduleGameWriteRepository.parsedGame.awayStartingPitcherName()).isEqualTo("나균안");
         assertThat(scheduleGameWriteRepository.parsedGame.homeStartingPitcherName()).isEqualTo("네일");
+    }
+
+    @Test
+    void crawlDayPersistsRainCancellationDetectedFromGameList() {
+        LocalDate requestedDate = LocalDate.of(2026, 7, 5);
+        Team hanwha = new Team(UUID.randomUUID(), "hanwha", "Hanwha Eagles", "Hanwha", "Hanwha Eagles", null);
+        Team lg = new Team(UUID.randomUUID(), "lg", "LG Twins", "LG", "LG Twins", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                "20260705LGHH0",
+                requestedDate,
+                OffsetDateTime.of(2026, 7, 5, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "잠실",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "한화",
+                "LG",
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(parsedGame), List.of());
+        kboGameDetailClient.gameListResponseBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260705LGHH0",
+                      "AWAY_NM": "한화",
+                      "HOME_NM": "LG",
+                      "CANCEL_SC_NM": "우천취소"
+                    }
+                  ]
+                }
+                """;
+
+        when(teamRepository.findByTeamCode("hanwha")).thenReturn(Optional.of(hanwha));
+        when(teamRepository.findByTeamCode("lg")).thenReturn(Optional.of(lg));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
+
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.providerGameId()).isEqualTo("20260705LGHH0");
+        assertThat(scheduleGameWriteRepository.parsedGame.status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(scheduleGameWriteRepository.parsedGame.isCancelled()).isTrue();
+        assertThat(scheduleGameWriteRepository.parsedGame.isPostponed()).isFalse();
+        assertThat(scheduleGameWriteRepository.parsedGame.cancelReason()).isEqualTo(GameCancelReason.RAIN);
+        assertThat(scheduleGameWriteRepository.parsedGame.rawCancelText()).isEqualTo("우천취소");
+        assertThat(scheduleGameWriteRepository.parsedGame.statusReason()).isEqualTo("우천취소");
+    }
+
+    @Test
+    void crawlDayPersistsCancellationEvenWhenOnlyGameListHasCancellationState() {
+        LocalDate requestedDate = LocalDate.of(2026, 7, 5);
+        Team nc = new Team(UUID.randomUUID(), "nc", "NC Dinos", "NC", "NC Dinos", null);
+        Team kia = new Team(UUID.randomUUID(), "kia", "KIA Tigers", "KIA", "KIA Tigers", null);
+        ParsedScheduleGame parsedGame = new ParsedScheduleGame(
+                "kbo",
+                "20260705NCHT0",
+                requestedDate,
+                OffsetDateTime.of(2026, 7, 5, 18, 0, 0, 0, ZoneOffset.ofHours(9)),
+                "광주",
+                GameStatus.SCHEDULED,
+                false,
+                false,
+                "NC",
+                "KIA",
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(parsedGame), List.of());
+        kboGameDetailClient.gameListResponseBody = """
+                {
+                  "game": [
+                    {
+                      "G_ID": "20260705NCHT0",
+                      "AWAY_NM": "NC",
+                      "HOME_NM": "KIA",
+                      "GAME_STATE_SC_NM": "CANCELLED"
+                    }
+                  ]
+                }
+                """;
+
+        when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(kia));
+        scheduleGameWriteRepository.nextResult = new ScheduleGameWriteRepository.GameWriteResult(false, true);
+
+        DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
+
+        assertThat(result.gameUpdatedCount()).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.callCount).isEqualTo(1);
+        assertThat(scheduleGameWriteRepository.parsedGame.status()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(scheduleGameWriteRepository.parsedGame.isCancelled()).isTrue();
+        assertThat(scheduleGameWriteRepository.parsedGame.rawCancelText()).isEqualTo("CANCELLED");
+        assertThat(scheduleGameWriteRepository.parsedGame.statusReason()).isEqualTo("CANCELLED");
     }
 
     @Test
@@ -540,7 +652,7 @@ class KboScheduleImportServiceTest {
         assertThat(result.skippedMissingProviderGameIdCount()).isZero();
         assertThat(result.skippedRows()).isEmpty();
         assertThat(output.toString()).doesNotContain("Skipped malformed");
-        assertThat(output.toString()).doesNotContain("Could not match cancellation fallback game");
+        assertThat(output.toString()).doesNotContain("Could not uniquely match cancellation fallback game");
         assertThat(output.toString()).doesNotContain("NCvs두산");
     }
 
@@ -557,7 +669,7 @@ class KboScheduleImportServiceTest {
         assertThat(result.skippedRowCount()).isEqualTo(1);
         assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
         assertThat(scheduleGameWriteRepository.callCount).isZero();
-        assertThat(output.toString()).doesNotContain("Could not match cancellation fallback game");
+        assertThat(output.toString()).doesNotContain("Could not uniquely match cancellation fallback game");
         assertThat(output.toString()).doesNotContain("Skipped malformed");
     }
 
@@ -593,12 +705,12 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+        when(gameRepository.findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                 eq("kbo"),
                 eq(requestedDate),
                 eq(doosan.getId()),
                 eq(nc.getId())
-        )).thenReturn(Optional.of(existingGame));
+        )).thenReturn(List.of(existingGame));
 
         DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
 
@@ -620,12 +732,12 @@ class KboScheduleImportServiceTest {
 
         when(teamRepository.findByTeamCode("nc")).thenReturn(Optional.of(nc));
         when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(doosan));
-        when(gameRepository.findByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
+        when(gameRepository.findAllByProviderAndGameDateAndHomeTeam_IdAndAwayTeam_Id(
                 eq("kbo"),
                 eq(requestedDate),
                 eq(doosan.getId()),
                 eq(nc.getId())
-        )).thenReturn(Optional.empty());
+        )).thenReturn(List.of());
 
         DayScheduleIngestionResult result = kboScheduleImportService.crawlDay(requestedDate);
 
@@ -633,7 +745,7 @@ class KboScheduleImportServiceTest {
         assertThat(result.skippedMissingProviderGameIdCount()).isEqualTo(1);
         assertThat(result.gameUpdatedCount()).isZero();
         assertThat(output.toString()).contains("WARN");
-        assertThat(output.toString()).contains("Could not match cancellation fallback game");
+        assertThat(output.toString()).contains("Could not uniquely match cancellation fallback game");
     }
 
     @Test
@@ -712,6 +824,102 @@ class KboScheduleImportServiceTest {
         assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
         assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
         assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
+    }
+
+    @Test
+    void scheduleClientIncludesPostseasonGamesInMonthlySchedule() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KboScheduleClient client = new TestableKboScheduleClient(builder, "https://www.koreabaseball.com");
+        var form = new LinkedMultiValueMap<String, String>();
+        form.add("leId", "1");
+        form.add("srIdList", "0,9,6,3,4,5,7");
+        form.add("seasonId", "2026");
+        form.add("gameMonth", "10");
+        form.add("teamId", "");
+        String payload = new ClassPathResource("fixtures/kbo/schedule-postseason-202610.json")
+                .getContentAsString(StandardCharsets.UTF_8);
+        server.expect(requestTo("https://www.koreabaseball.com/ws/Schedule.asmx/GetScheduleList"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().formData(form))
+                .andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
+
+        YearMonth month = YearMonth.of(2026, 10);
+        var games = new KboScheduleParser(new ObjectMapper())
+                .parseMonthlySchedule(client.fetchMonthlySchedule(month), month);
+
+        assertThat(games).extracting(ParsedScheduleGame::providerGameId)
+                .containsExactly("20261014OBLG0", "20261015OBLG0");
+        assertThat(games).allSatisfy(game -> {
+            assertThat(game.awayProviderTeamName()).isEqualTo("두산");
+            assertThat(game.homeProviderTeamName()).isEqualTo("LG");
+            assertThat(game.status()).isEqualTo(GameStatus.SCHEDULED);
+            assertThat(game.scheduledAt().getHour()).isEqualTo(18);
+            assertThat(game.scheduledAt().getMinute()).isEqualTo(30);
+        });
+        server.verify();
+    }
+
+    @Test
+    void doubleheaderGetsDistinctPublicIdsAndRepeatImportsKeepBothGames() {
+        Team away = new Team(UUID.randomUUID(), "kia", "KIA 타이거즈", "KIA", "KIA Tigers", null);
+        Team home = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
+        when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(away));
+        when(teamRepository.findByTeamCode("lg")).thenReturn(Optional.of(home));
+        List<ParsedScheduleGame> games = new ArrayList<>();
+        for (int number : new int[]{1, 2}) {
+            games.add(new ParsedScheduleGame("kbo", "20261014HTLG" + number, LocalDate.of(2026, 10, 14),
+                    OffsetDateTime.parse("2026-10-14T18:30:00+09:00"), "잠실", GameStatus.SCHEDULED,
+                    false, false, "KIA", "LG", null, null, null, null, null).withSeriesId(0));
+        }
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(games, List.of());
+        InMemoryUpsertScheduleGameWriteRepository writer = new InMemoryUpsertScheduleGameWriteRepository();
+        var importer = new KboScheduleImportService(kboScheduleClient, kboScheduleParser, teamRepository,
+                writer, crawlJobTrackingService, Clock.systemUTC());
+        assertThat(importer.importMonthlySchedule(YearMonth.of(2026, 10)).gameCreatedCount()).isEqualTo(2);
+        assertThat(writer.storedGames.values()).extracting(stored -> stored.publicGameId())
+                .containsExactlyInAnyOrder("20261014-LG-KIA-1", "20261014-LG-KIA-2");
+        assertThat(importer.importMonthlySchedule(YearMonth.of(2026, 10)).gameCreatedCount()).isZero();
+    }
+
+    @Test
+    void importsAuthoritativeSeriesAndPreservesItOnRepeatAndDailyEnrichment() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KboScheduleClient client = new TestableKboScheduleClient(builder, "https://www.koreabaseball.com");
+        String postseason = new ClassPathResource("fixtures/kbo/schedule-postseason-202610.json")
+                .getContentAsString(StandardCharsets.UTF_8);
+        String regular = postseason.replace("10.14", "10.12").replace("10.15", "10.11")
+                .replace("20261014", "20261012").replace("20261015", "20261011");
+        for (int pass = 0; pass < 3; pass++) {
+            for (int seriesId : List.of(0, 9, 6, 3, 4, 5, 7)) {
+                var form = new LinkedMultiValueMap<String, String>();
+                form.add("leId", "1"); form.add("srIdList", String.valueOf(seriesId));
+                form.add("seasonId", "2026"); form.add("gameMonth", "10"); form.add("teamId", "");
+                server.expect(requestTo("https://www.koreabaseball.com/ws/Schedule.asmx/GetScheduleList"))
+                        .andExpect(content().formData(form))
+                        .andRespond(withSuccess(seriesId == 0 ? regular : seriesId == 4 ? postseason : "{\"rows\":[]}", MediaType.APPLICATION_JSON));
+            }
+        }
+        Team away = new Team(UUID.randomUUID(), "doosan", "두산 베어스", "두산", "Doosan Bears", null);
+        Team home = new Team(UUID.randomUUID(), "lg", "LG 트윈스", "LG", "LG Twins", null);
+        when(teamRepository.findByTeamCode("doosan")).thenReturn(Optional.of(away));
+        when(teamRepository.findByTeamCode("lg")).thenReturn(Optional.of(home));
+        Map<String, Integer> storedSeries = new HashMap<>();
+        ScheduleGameWriteRepository writer = (game, a, h, id, at) -> {
+            storedSeries.put(game.providerGameId(), game.seriesId());
+            return new ScheduleGameWriteRepository.GameWriteResult(false, true);
+        };
+        KboScheduleImportService importer = new KboScheduleImportService(client,
+                new KboScheduleParser(new ObjectMapper()), kboGameDetailClient, kboGameListParser,
+                teamRepository, gameRepository, writer, crawlJobTrackingService,
+                Clock.fixed(Instant.parse("2026-10-16T03:00:00Z"), ZoneId.of("Asia/Seoul")));
+        importer.importMonthlySchedule(YearMonth.of(2026, 10));
+        importer.importMonthlySchedule(YearMonth.of(2026, 10));
+        importer.crawlDay(LocalDate.of(2026, 10, 14));
+        assertThat(storedSeries).containsEntry("20261012OBLG0", 0)
+                .containsEntry("20261014OBLG0", 4).containsEntry("20261015OBLG0", 4);
+        server.verify();
     }
 
     @Test
@@ -1048,6 +1256,11 @@ class KboScheduleImportServiceTest {
         @Override
         public String fetchMonthlySchedule(YearMonth yearMonth) {
             return fetchMonthlyScheduleResponse(yearMonth).body();
+        }
+
+        @Override
+        public List<KboScheduleClient.ScheduleResponse> fetchMonthlyScheduleResponses(YearMonth yearMonth) {
+            return List.of(fetchMonthlyScheduleResponse(yearMonth));
         }
 
         @Override

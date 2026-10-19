@@ -7,12 +7,15 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class ScoringPlayDetailExtractor {
 
     private ScoringPlayDetailExtractor() {
     }
 
+    private static final Logger log = LoggerFactory.getLogger(ScoringPlayDetailExtractor.class);
     private static final Pattern RUNS_SCORED_PATTERN = Pattern.compile("(\\d+)\\s*득점");
     private static final Pattern SCORE_PATTERN = Pattern.compile("(?<!\\d)(\\d+)\\s*[-:]\\s*(\\d+)(?!\\d)");
     private static final int RUN_SEQUENCE_WINDOW = 8;
@@ -36,12 +39,20 @@ public final class ScoringPlayDetailExtractor {
 
         int runScoredEventCount = runScoredEventCount(events);
         ScoringCause cause = selectScoringCause(events, context).orElse(null);
-        if (cause == null || !isReliable(cause.parsed(), context)) {
+        if (cause == null || !isReliable(cause.event(), cause.parsed(), context)) {
             return Optional.empty();
         }
 
         GameEventRow source = cause.event();
         ParsedPlay parsed = cause.parsed();
+        log.info(
+                "[ScoringFormatter] selectedEvent validated eventType={} player={} team={} inning={} half={}",
+                source.eventType(),
+                parsed.batterName(),
+                context.battingTeamId(),
+                source.inning() == null ? context.inning() : source.inning(),
+                clean(source.inningHalf()) == null ? normalizeHalf(context.inningHalf()) : normalizeHalf(source.inningHalf())
+        );
         return Optional.of(new ScoringPlayDetail(
                 parsed.batterName(),
                 parsed.resultText(),
@@ -131,8 +142,22 @@ public final class ScoringPlayDetailExtractor {
         );
     }
 
-    private static boolean isReliable(ParsedPlay parsed, ScoringPlayContext context) {
+    private static boolean isReliable(GameEventRow event, ParsedPlay parsed, ScoringPlayContext context) {
         if (!context.battingTeamMatchesInningHalf()) {
+            return false;
+        }
+        if (!sameInningHalf(event, context.inning(), context.inningHalf())) {
+            return false;
+        }
+        if (playerLooksLikeDifferentTeam(parsed, context)) {
+            log.info(
+                    "[ScoringFormatter] rejected selectedEvent reason=team_mismatch eventPlayer={} eventTeam={} scoringTeam={} inning={} half={}",
+                    parsed.batterName(),
+                    "unknown",
+                    context.battingTeamId(),
+                    context.inning(),
+                    normalizeHalf(context.inningHalf())
+            );
             return false;
         }
         if (parsed.explicitRunsScored() != null && parsed.explicitRunsScored() != context.scoreDelta()) {
@@ -147,6 +172,23 @@ public final class ScoringPlayDetailExtractor {
             return false;
         }
         return true;
+    }
+
+    private static boolean playerLooksLikeDifferentTeam(ParsedPlay parsed, ScoringPlayContext context) {
+        String eventPlayer = clean(parsed.batterName());
+        String expectedBatter = clean(context.previousBatterName());
+        return eventPlayer != null && expectedBatter != null && !samePlayerName(eventPlayer, expectedBatter);
+    }
+
+    private static boolean samePlayerName(String left, String right) {
+        String normalizedLeft = normalizePlayerName(left);
+        String normalizedRight = normalizePlayerName(right);
+        return normalizedLeft != null && normalizedLeft.equals(normalizedRight);
+    }
+
+    private static String normalizePlayerName(String value) {
+        String cleaned = clean(value);
+        return cleaned == null ? null : cleaned.replaceAll("\\s+", "");
     }
 
     private static boolean baseOccupancyAllowsRuns(ParsedPlay parsed, ScoringPlayContext context) {
@@ -173,7 +215,7 @@ public final class ScoringPlayDetailExtractor {
                         .map(parsed -> new ScoringCause(event, parsed, causePriority(event, parsed), distanceFromRunEvents(event, runRange)))
                         .orElse(null))
                 .filter(cause -> cause != null && cause.priority() != null && cause.parsed().directScoringCandidate())
-                .filter(cause -> isReliable(cause.parsed(), context))
+                .filter(cause -> isReliable(cause.event(), cause.parsed(), context))
                 .min(Comparator
                         .comparingInt((ScoringCause cause) -> cause.priority())
                         .thenComparingInt(ScoringCause::runDistance)
@@ -266,12 +308,14 @@ public final class ScoringPlayDetailExtractor {
     }
 
     private static boolean sameInningHalf(GameEventRow event, Integer inning, String inningHalf) {
-        if (inning != null && event.inning() != null && !inning.equals(event.inning())) {
-            return false;
+        if (inning != null) {
+            if (event.inning() == null || !inning.equals(event.inning())) {
+                return false;
+            }
         }
         String expectedHalf = normalizeHalf(inningHalf);
         String eventHalf = normalizeHalf(event.inningHalf());
-        return expectedHalf == null || eventHalf == null || expectedHalf.equals(eventHalf);
+        return expectedHalf == null || eventHalf != null && expectedHalf.equals(eventHalf);
     }
 
     private static boolean containsRunCause(String normalized) {

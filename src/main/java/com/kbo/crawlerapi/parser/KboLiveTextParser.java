@@ -362,6 +362,9 @@ public class KboLiveTextParser {
         if (normalized.contains("투수") && normalized.contains("교체")) {
             return "PITCHING_CHANGE";
         }
+        if (normalized.contains("대주자")) {
+            return "PINCH_RUNNER";
+        }
         if (normalized.contains("대수비") || normalized.contains("수비") && normalized.contains("교체")) {
             return "DEFENSIVE_CHANGE";
         }

@@ -30,7 +30,7 @@ public class JdbcGameBoxscoreRecordReadRepository implements GameBoxscoreRecordR
                 errors,
                 batting_average,
                 updated_at
-            FROM kbo_crawler_api.game_batter_records
+            FROM game_batter_records
             WHERE game_id = ?
             ORDER BY source_order ASC
             """;
@@ -58,20 +58,20 @@ public class JdbcGameBoxscoreRecordReadRepository implements GameBoxscoreRecordR
                 earned_runs,
                 era,
                 updated_at
-            FROM kbo_crawler_api.game_pitcher_records
+            FROM game_pitcher_records
             WHERE game_id = ?
             ORDER BY source_order ASC
             """;
 
     private static final String BATTER_COUNT_SQL = """
             SELECT count(*)
-            FROM kbo_crawler_api.game_batter_records
+            FROM game_batter_records
             WHERE game_id = ?
             """;
 
     private static final String PITCHER_COUNT_SQL = """
             SELECT count(*)
-            FROM kbo_crawler_api.game_pitcher_records
+            FROM game_pitcher_records
             WHERE game_id = ?
             """;
 

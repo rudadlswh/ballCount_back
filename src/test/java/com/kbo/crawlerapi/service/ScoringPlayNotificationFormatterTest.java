@@ -15,7 +15,7 @@ class ScoringPlayNotificationFormatterTest {
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
         assertThat(text.title()).isEqualTo("롯데 득점");
-        assertThat(text.body()).isEqualTo("고승민 안타, 1득점");
+        assertThat(text.body()).isEqualTo("7회초 고승민 안타, 1득점 · 롯데 3-2 한화");
     }
 
     @Test
@@ -24,7 +24,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("레이예스 2루타, 2득점");
+        assertThat(text.body()).isEqualTo("7회초 레이예스 2루타, 2득점 · 롯데 4-2 한화");
     }
 
     @Test
@@ -33,7 +33,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("전준우 홈런, 1득점");
+        assertThat(text.body()).isEqualTo("7회초 전준우 홈런, 1득점 · 롯데 4-2 한화");
     }
 
     @Test
@@ -42,7 +42,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("전준우 쓰리런 홈런, 3득점");
+        assertThat(text.body()).isEqualTo("7회초 전준우 쓰리런 홈런, 3득점 · 롯데 6-4 한화");
     }
 
     @Test
@@ -51,7 +51,24 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("상대 실책으로 1득점");
+        assertThat(text.body()).isEqualTo("7회초 상대 실책으로 1득점 · 롯데 5-5 한화");
+    }
+
+    @Test
+    void selectedEventTextWithRunCountIsNotDuplicated() {
+        var detail = detail(
+                "오스틴",
+                "상대 실책",
+                null,
+                1,
+                3,
+                2,
+                "오스틴 : 유격수 땅볼 실책으로 출루, 1득점"
+        );
+
+        var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
+
+        assertThat(text.body()).isEqualTo("7회초 오스틴 유격수 땅볼 실책으로 출루, 1득점 · 롯데 3-2 한화");
     }
 
     @Test
@@ -70,7 +87,7 @@ class ScoringPlayNotificationFormatterTest {
 
         var text = ScoringPlayNotificationFormatter.scoreChangeText(detail).orElseThrow();
 
-        assertThat(text.body()).isEqualTo("안타로 1득점");
+        assertThat(text.body()).isEqualTo("7회초 안타로 1득점 · 롯데 3-2 한화");
     }
 
     @Test
@@ -116,6 +133,36 @@ class ScoringPlayNotificationFormatterTest {
         assertThat(detail.selectedEventText()).isEqualTo("레이예스 : 좌익수 왼쪽 2루타");
         assertThat(detail.runScoredEventCount()).isEqualTo(2);
         assertThat(detail.runsScored()).isEqualTo(2);
+    }
+
+    @Test
+    void rejectsSelectedEventWhenPlayerDoesNotMatchScoringPlateAppearance() {
+        var detail = ScoringPlayDetailExtractor.extract(
+                List.of(
+                        new GameEventRow(10, 4, "bottom", "HIT", "김도영 : 중견수 앞 1루타"),
+                        new GameEventRow(11, 4, "bottom", "RUN_SCORED", "3루주자 고승민 : 홈인")
+                ),
+                new ScoringPlayDetailExtractor.ScoringPlayContext(
+                        "고승민",
+                        4,
+                        "bottom",
+                        true,
+                        false,
+                        true,
+                        "lotte",
+                        "롯데",
+                        "kia",
+                        "lotte",
+                        3,
+                        10,
+                        3,
+                        11,
+                        "KIA",
+                        "롯데"
+                )
+        );
+
+        assertThat(detail).isEmpty();
     }
 
     private String extractResult(String eventText) {
@@ -165,6 +212,18 @@ class ScoringPlayNotificationFormatterTest {
             Integer awayScoreAfter,
             Integer homeScoreAfter
     ) {
+        return detail(batterName, resultText, hitBaseCount, runsScored, awayScoreAfter, homeScoreAfter, null);
+    }
+
+    private ScoringPlayDetail detail(
+            String batterName,
+            String resultText,
+            Integer hitBaseCount,
+            Integer runsScored,
+            Integer awayScoreAfter,
+            Integer homeScoreAfter,
+            String selectedEventText
+    ) {
         return new ScoringPlayDetail(
                 batterName,
                 resultText,
@@ -178,7 +237,10 @@ class ScoringPlayNotificationFormatterTest {
                 awayScoreAfter,
                 homeScoreAfter,
                 "롯데",
-                "한화"
+                "한화",
+                null,
+                selectedEventText,
+                null
         );
     }
 }

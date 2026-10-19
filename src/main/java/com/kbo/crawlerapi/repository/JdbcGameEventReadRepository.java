@@ -15,7 +15,7 @@ public class JdbcGameEventReadRepository implements GameEventReadRepository {
                 inning_half,
                 event_type,
                 event_text
-            FROM kbo_crawler_api.game_events
+            FROM game_events
             WHERE game_id = ?
             ORDER BY sequence_number DESC
             LIMIT ?

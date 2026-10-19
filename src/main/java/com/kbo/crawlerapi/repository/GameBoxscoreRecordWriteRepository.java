@@ -5,6 +5,10 @@ import java.util.UUID;
 
 public interface GameBoxscoreRecordWriteRepository {
 
+    int deleteBatterRecordsByGameId(UUID gameId);
+
+    int deletePitcherRecordsByGameId(UUID gameId);
+
     int upsertBatterRecords(List<BatterRecordWriteRow> rows);
 
     int upsertPitcherRecords(List<PitcherRecordWriteRow> rows);

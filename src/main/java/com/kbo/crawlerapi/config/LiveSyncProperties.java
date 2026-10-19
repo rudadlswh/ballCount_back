@@ -6,8 +6,27 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.live-sync")
 public class LiveSyncProperties {
 
+    private Duration schedulerInterval = Duration.ofSeconds(2);
+    private Duration retryInterval = Duration.ofSeconds(10);
+    private Duration idleInterval = Duration.ofMinutes(30);
+    private Duration pregameEligibilityWindow = Duration.ofHours(4);
+    private Duration pregameCheckInterval = Duration.ofMinutes(5);
+    private Duration pregameFastPollingWindow = Duration.ofMinutes(30);
+    private Duration pregameFastPollingInterval = Duration.ofMinutes(1);
+    private Duration livePollingInterval = Duration.ofSeconds(1);
+    private Duration finalConfirmationPollingInterval = Duration.ofSeconds(30);
+    private Duration pregameTtl = Duration.ofMinutes(3);
+    private Duration liveTtl = Duration.ofSeconds(3);
+    private Duration finalConfirmationTtl = Duration.ofSeconds(30);
+    private String lockMode = "memory";
 
-    private Duration pregameCheckInterval = Duration.ofMinutes(30);
+    public Duration getIdleInterval() {
+        return idleInterval;
+    }
+
+    public void setIdleInterval(Duration idleInterval) {
+        this.idleInterval = idleInterval;
+    }
 
     public Duration getPregameCheckInterval() {
         return pregameCheckInterval;
@@ -16,20 +35,37 @@ public class LiveSyncProperties {
     public void setPregameCheckInterval(Duration pregameCheckInterval) {
         this.pregameCheckInterval = pregameCheckInterval;
     }
-    private boolean enabled = false;
-    private Duration schedulerInterval = Duration.ofSeconds(10);
-    private Duration pregameEligibilityWindow = Duration.ofHours(4);
-    private Duration pregameTtl = Duration.ofMinutes(3);
-    private Duration liveTtl = Duration.ofSeconds(30);
-    private Duration finalConfirmationTtl = Duration.ofMinutes(2);
-    private Duration detailExtractionTimeout = Duration.ofMillis(100);
 
-    public boolean isEnabled() {
-        return enabled;
+    public Duration getPregameFastPollingWindow() {
+        return pregameFastPollingWindow;
     }
 
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
+    public void setPregameFastPollingWindow(Duration pregameFastPollingWindow) {
+        this.pregameFastPollingWindow = pregameFastPollingWindow;
+    }
+
+    public Duration getPregameFastPollingInterval() {
+        return pregameFastPollingInterval;
+    }
+
+    public void setPregameFastPollingInterval(Duration pregameFastPollingInterval) {
+        this.pregameFastPollingInterval = pregameFastPollingInterval;
+    }
+
+    public Duration getLivePollingInterval() {
+        return livePollingInterval;
+    }
+
+    public void setLivePollingInterval(Duration livePollingInterval) {
+        this.livePollingInterval = livePollingInterval;
+    }
+
+    public Duration getFinalConfirmationPollingInterval() {
+        return finalConfirmationPollingInterval;
+    }
+
+    public void setFinalConfirmationPollingInterval(Duration finalConfirmationPollingInterval) {
+        this.finalConfirmationPollingInterval = finalConfirmationPollingInterval;
     }
 
     public Duration getSchedulerInterval() {
@@ -38,6 +74,14 @@ public class LiveSyncProperties {
 
     public void setSchedulerInterval(Duration schedulerInterval) {
         this.schedulerInterval = schedulerInterval;
+    }
+
+    public Duration getRetryInterval() {
+        return retryInterval;
+    }
+
+    public void setRetryInterval(Duration retryInterval) {
+        this.retryInterval = retryInterval;
     }
 
     public Duration getPregameEligibilityWindow() {
@@ -72,11 +116,11 @@ public class LiveSyncProperties {
         this.finalConfirmationTtl = finalConfirmationTtl;
     }
 
-    public Duration getDetailExtractionTimeout() {
-        return detailExtractionTimeout;
+    public String getLockMode() {
+        return lockMode;
     }
 
-    public void setDetailExtractionTimeout(Duration detailExtractionTimeout) {
-        this.detailExtractionTimeout = detailExtractionTimeout;
+    public void setLockMode(String lockMode) {
+        this.lockMode = lockMode;
     }
 }

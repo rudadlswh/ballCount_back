@@ -11,10 +11,14 @@ import com.kbo.crawlerapi.repository.GameSnapshotRepository;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class LiveActivityContentStateBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(LiveActivityContentStateBuilder.class);
 
     private final GameSnapshotRepository gameSnapshotRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -28,9 +32,12 @@ public class LiveActivityContentStateBuilder {
     }
 
     public Map<String, Object> build(Game game, LiveActivityToken token, NotificationEvent event) {
+        return buildForFavoriteTeam(game, token.getFavoriteTeamId(), event);
+    }
+
+    public Map<String, Object> buildForFavoriteTeam(Game game, String favoriteTeamId, NotificationEvent event) {
         GameSnapshot snapshot = gameSnapshotRepository.findTopByGame_IdOrderByFetchedAtDescCreatedAtDesc(game.getId()).orElse(null);
         boolean preGame = game.getStatus() == GameStatus.SCHEDULED;
-        String favoriteTeamId = token.getFavoriteTeamId();
         boolean favoriteIsAway = favoriteTeamId != null && favoriteTeamId.equals(game.getAwayTeam().getTeamCode());
         Map<String, Object> eventPayload = eventPayload(event);
         Integer homeScore = firstNonNull(snapshot == null ? null : snapshot.getHomeScore(), integerValue(eventPayload.get("homeScore")), game.getHomeScore());
@@ -123,6 +130,7 @@ public class LiveActivityContentStateBuilder {
     private String statusText(GameStatus status) {
         return switch (status) {
             case SCHEDULED -> "예정";
+            case DELAYED -> "지연";
             case LIVE -> "LIVE";
             case FINAL -> "종료";
             case POSTPONED -> "연기";
@@ -152,7 +160,8 @@ public class LiveActivityContentStateBuilder {
         }
         try {
             return objectMapper.readValue(event.getPayload(), new TypeReference<>() {});
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            log.debug("Failed to parse live activity event payload. eventId={}", event.getId(), exception);
             return Map.of();
         }
     }

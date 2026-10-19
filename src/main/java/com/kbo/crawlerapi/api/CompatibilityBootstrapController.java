@@ -21,13 +21,13 @@ public class CompatibilityBootstrapController {
 
     @GetMapping("/v1/bootstrap")
     @Operation(
-            summary = "Get iOS compatibility bootstrap payload",
-            description = "Returns the compatibility bootstrap payload consumed by the current iOS app."
+            summary = "iOS 호환성 부트스트랩 데이터 조회",
+            description = "현재 iOS 앱에서 사용하는 호환성 부트스트랩 데이터를 반환합니다."
     )
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
-                    description = "Compatibility bootstrap payload",
+                    description = "호환성 부트스트랩 데이터",
                     content = @Content(schema = @Schema(implementation = CompatibilityBootstrapResponse.class))
             )
     })

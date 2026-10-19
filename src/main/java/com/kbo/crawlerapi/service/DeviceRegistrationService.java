@@ -2,10 +2,9 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.NotificationDevice;
 import com.kbo.crawlerapi.repository.NotificationDeviceRepository;
-import com.kbo.crawlerapi.support.TeamCatalog;
+import com.kbo.crawlerapi.support.RegistrationInputNormalizer;
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -17,10 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class DeviceRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceRegistrationService.class);
-    private static final int TOKEN_PREFIX_LENGTH = 8;
     private static final int MAX_DEVICE_TOKEN_LENGTH = 512;
     private static final int MAX_INSTALLATION_ID_LENGTH = 100;
     private static final int MAX_FAVORITE_TEAM_ID_LENGTH = 30;
+    private static final int MAX_MONITORED_GAME_ID_LENGTH = 200;
 
     private final NotificationDeviceRepository notificationDeviceRepository;
     private final Clock applicationClock;
@@ -50,12 +49,27 @@ public class DeviceRegistrationService {
             boolean notificationsEnabled,
             DeviceNotificationSettings settings
     ) {
-        String normalizedPlatform = normalizePlatform(platform);
-        String normalizedEnvironment = normalizeEnvironment(environment);
-        String normalizedToken = requireDeviceToken(deviceToken);
-        String normalizedInstallationId = requireInstallationId(installationId);
-        String normalizedFavoriteTeamId = normalizeFavoriteTeamId(favoriteTeamId);
-        DeviceNotificationSettings normalizedSettings = settings == null ? DeviceNotificationSettings.defaults() : settings;
+        return register(platform, environment, deviceToken, installationId, favoriteTeamId, notificationsEnabled, settings, null);
+    }
+
+    @Transactional
+    public DeviceRegistrationResult register(
+            String platform,
+            String environment,
+            String deviceToken,
+            String installationId,
+            String favoriteTeamId,
+            boolean notificationsEnabled,
+            DeviceNotificationSettings settings,
+            String monitoredGameId
+    ) {
+        String normalizedPlatform = RegistrationInputNormalizer.normalizePlatform(platform);
+        String normalizedEnvironment = RegistrationInputNormalizer.normalizeClientEnvironment(environment);
+        String normalizedToken = RegistrationInputNormalizer.requireText(deviceToken, "deviceToken", MAX_DEVICE_TOKEN_LENGTH);
+        String normalizedInstallationId = RegistrationInputNormalizer.requireText(installationId, "installationId", MAX_INSTALLATION_ID_LENGTH);
+        String normalizedFavoriteTeamId = RegistrationInputNormalizer.normalizeFavoriteTeamId(favoriteTeamId, MAX_FAVORITE_TEAM_ID_LENGTH);
+        String normalizedMonitoredGameId = RegistrationInputNormalizer.optionalText(monitoredGameId, "monitoredGameId", MAX_MONITORED_GAME_ID_LENGTH);
+        DeviceNotificationSettings normalizedSettings = normalizeSettings(settings, normalizedFavoriteTeamId, notificationsEnabled);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
 
         Optional<NotificationDevice> tokenMatchedDevice = notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(
@@ -82,10 +96,15 @@ public class DeviceRegistrationService {
                         normalizedSettings.inningChangeEnabled(),
                         normalizedSettings.favoriteTeamOnlyEnabled(),
                         normalizedSettings.muteWhenLosingEnabled(),
+                        normalizedSettings.rainDelayEnabled(),
+                        normalizedSettings.quietHoursEnabled(),
+                        normalizedSettings.quietHoursStartHour(),
+                        normalizedSettings.quietHoursEndHour(),
+                        normalizedSettings.authorizationStatus(),
                         now
                 ));
-        String previousTokenPrefix = tokenPrefix(device.getDeviceToken());
         boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
+        String previousTokenHash = tokenChanged ? RegistrationInputNormalizer.tokenFingerprint(device.getDeviceToken()) : null;
         device.update(
                 normalizedPlatform,
                 normalizedEnvironment,
@@ -101,10 +120,16 @@ public class DeviceRegistrationService {
                 normalizedSettings.inningChangeEnabled(),
                 normalizedSettings.favoriteTeamOnlyEnabled(),
                 normalizedSettings.muteWhenLosingEnabled(),
+                normalizedSettings.rainDelayEnabled(),
+                normalizedSettings.quietHoursEnabled(),
+                normalizedSettings.quietHoursStartHour(),
+                normalizedSettings.quietHoursEndHour(),
+                normalizedSettings.authorizationStatus(),
                 now
         );
+        device.updateMonitoredGameId(normalizedMonitoredGameId);
         notificationDeviceRepository.save(device);
-        logRegistration(normalizedInstallationId, normalizedToken, tokenChanged ? previousTokenPrefix : null, normalizedFavoriteTeamId, normalizedEnvironment, created);
+        logRegistration(normalizedToken, previousTokenHash, normalizedEnvironment, created);
         return new DeviceRegistrationResult(device.getId(), normalizedPlatform, normalizedEnvironment, maskToken(normalizedToken), device.isNotificationsEnabled());
     }
 
@@ -115,106 +140,74 @@ public class DeviceRegistrationService {
 
     @Transactional
     public void unregister(String platform, String environment, String deviceToken, String installationId) {
-        String normalizedPlatform = normalizePlatform(platform);
-        String normalizedEnvironment = normalizeEnvironment(environment);
+        String normalizedPlatform = RegistrationInputNormalizer.normalizePlatform(platform);
+        String normalizedEnvironment = RegistrationInputNormalizer.normalizeClientEnvironment(environment);
+        String normalizedInstallationId = RegistrationInputNormalizer.optionalText(installationId, "installationId", MAX_INSTALLATION_ID_LENGTH);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
-        notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, requireDeviceToken(deviceToken))
+        notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, RegistrationInputNormalizer.requireText(deviceToken, "deviceToken", MAX_DEVICE_TOKEN_LENGTH))
                 .ifPresent(device -> device.disable(now));
     }
 
-    private String normalizePlatform(String platform) {
-        if (platform == null || platform.isBlank()) {
-            return "ios";
-        }
-        String normalized = platform.trim().toLowerCase(Locale.ROOT);
-        if (!"ios".equals(normalized)) {
-            throw new IllegalArgumentException("platform must be ios");
-        }
-        return normalized;
+    private DeviceNotificationSettings normalizeSettings(DeviceNotificationSettings settings, String favoriteTeamId, boolean notificationsEnabled) {
+        DeviceNotificationSettings normalized = settings == null ? DeviceNotificationSettings.defaults() : settings;
+        int startHour = requireHour(normalized.quietHoursStartHour(), "quietHours.startHour");
+        int endHour = requireHour(normalized.quietHoursEndHour(), "quietHours.endHour");
+        String authorizationStatus = normalizeAuthorizationStatus(normalized.authorizationStatus(), notificationsEnabled);
+        boolean favoriteTeamOnlyEnabled = favoriteTeamId != null && normalized.favoriteTeamOnlyEnabled();
+        return new DeviceNotificationSettings(
+                normalized.gameStartEnabled(),
+                normalized.scoreChangeEnabled(),
+                normalized.leadChangeEnabled(),
+                normalized.gameEndEnabled(),
+                normalized.onBaseEnabled(),
+                normalized.inningChangeEnabled(),
+                favoriteTeamOnlyEnabled,
+                normalized.muteWhenLosingEnabled(),
+                normalized.rainDelayEnabled(),
+                normalized.quietHoursEnabled(),
+                startHour,
+                endHour,
+                authorizationStatus
+        );
     }
 
-    private String normalizeEnvironment(String environment) {
-        if (environment == null || environment.isBlank()) {
-            return "sandbox";
+    private int requireHour(int hour, String field) {
+        if (hour < 0 || hour > 23) {
+            throw new IllegalArgumentException(field + " must be between 0 and 23");
         }
-        String normalized = environment.trim().toLowerCase(Locale.ROOT);
-        if (!"sandbox".equals(normalized) && !"production".equals(normalized)) {
-            throw new IllegalArgumentException("environment must be sandbox or production");
-        }
-        return normalized;
+        return hour;
     }
 
-    private String requireDeviceToken(String deviceToken) {
-        if (deviceToken == null || deviceToken.isBlank()) {
-            throw new IllegalArgumentException("deviceToken is required");
+    private String normalizeAuthorizationStatus(String value, boolean notificationsEnabled) {
+        if (value == null || value.isBlank()) {
+            return notificationsEnabled ? "authorized" : "denied";
         }
-        String normalized = deviceToken.trim();
-        if (normalized.length() > MAX_DEVICE_TOKEN_LENGTH) {
-            throw new IllegalArgumentException("deviceToken is too long");
-        }
-        return normalized;
-    }
-
-    private String requireInstallationId(String installationId) {
-        if (installationId == null || installationId.isBlank()) {
-            throw new IllegalArgumentException("installationId is required");
-        }
-        String normalized = installationId.trim();
-        if (normalized.length() > MAX_INSTALLATION_ID_LENGTH) {
-            throw new IllegalArgumentException("installationId is too long");
-        }
-        return normalized;
-    }
-
-    private String normalizeFavoriteTeamId(String favoriteTeamId) {
-        String normalized = blankToNull(favoriteTeamId);
-        if (normalized == null) {
-            return null;
-        }
-        normalized = normalized.toLowerCase(Locale.ROOT);
-        if (normalized.length() > MAX_FAVORITE_TEAM_ID_LENGTH || !TeamCatalog.isSupportedTeamCode(normalized)) {
-            throw new IllegalArgumentException("favoriteTeamId is invalid");
-        }
-        return normalized;
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_');
+        return switch (normalized) {
+            case "not_determined", "denied", "authorized", "provisional", "ephemeral", "unsupported" -> normalized;
+            default -> throw new IllegalArgumentException("notificationAuthorizationStatus is invalid");
+        };
     }
 
     private String maskToken(String token) {
-        if (token.length() <= 12) {
-            return "****";
-        }
-        return token.substring(0, 6) + "..." + token.substring(token.length() - 6);
+        return "****";
     }
 
-    private String tokenPrefix(String token) {
-        if (token == null || token.isBlank()) {
-            return null;
-        }
-        return token.substring(0, Math.min(TOKEN_PREFIX_LENGTH, token.length()));
-    }
-
-    private void logRegistration(String installationId, String token, String previousTokenPrefix, String favoriteTeamId, String environment, boolean created) {
-        if (previousTokenPrefix == null) {
+    private void logRegistration(String token, String previousTokenHash, String environment, boolean created) {
+        if (previousTokenHash == null) {
             log.info(
-                    "device registration {} installation_id={} token_prefix={} favorite_team_id={} environment={}",
+                    "device registration {} token_hash={} environment={}",
                     created ? "created" : "updated",
-                    installationId,
-                    tokenPrefix(token),
-                    favoriteTeamId,
+                    RegistrationInputNormalizer.tokenFingerprint(token),
                     environment
             );
             return;
         }
         log.info(
-                "device registration {} installation_id={} token_prefix={} previous_token_prefix={} favorite_team_id={} environment={}",
+                "device registration {} token_hash={} previous_token_hash={} environment={}",
                 created ? "created" : "updated",
-                installationId,
-                tokenPrefix(token),
-                previousTokenPrefix,
-                favoriteTeamId,
+                RegistrationInputNormalizer.tokenFingerprint(token),
+                previousTokenHash,
                 environment
         );
     }
@@ -236,8 +229,27 @@ public class DeviceRegistrationService {
             boolean onBaseEnabled,
             boolean inningChangeEnabled,
             boolean favoriteTeamOnlyEnabled,
-            boolean muteWhenLosingEnabled
+            boolean muteWhenLosingEnabled,
+            boolean rainDelayEnabled,
+            boolean quietHoursEnabled,
+            int quietHoursStartHour,
+            int quietHoursEndHour,
+            String authorizationStatus
     ) {
+        public DeviceNotificationSettings(
+                boolean gameStartEnabled,
+                boolean scoreChangeEnabled,
+                boolean leadChangeEnabled,
+                boolean gameEndEnabled,
+                boolean onBaseEnabled,
+                boolean inningChangeEnabled,
+                boolean favoriteTeamOnlyEnabled,
+                boolean muteWhenLosingEnabled
+        ) {
+            this(gameStartEnabled, scoreChangeEnabled, leadChangeEnabled, gameEndEnabled, onBaseEnabled,
+                    inningChangeEnabled, favoriteTeamOnlyEnabled, muteWhenLosingEnabled, true, false, 23, 7, null);
+        }
+
         public static DeviceNotificationSettings defaults() {
             return new DeviceNotificationSettings(
                     true,
@@ -247,7 +259,12 @@ public class DeviceRegistrationService {
                     false,
                     false,
                     false,
-                    false
+                    false,
+                    true,
+                    false,
+                    23,
+                    7,
+                    null
             );
         }
     }

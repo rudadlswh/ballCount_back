@@ -11,7 +11,7 @@ class ApnsProductionConfigurationGuardTest {
     void productionConfigurationIsAcceptedWhenAllRequiredValuesArePresent() {
         ApnsProperties properties = configuredProperties();
 
-        new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration();
+        guard(properties).validateProductionConfiguration();
     }
 
     @Test
@@ -19,13 +19,13 @@ class ApnsProductionConfigurationGuardTest {
         ApnsProperties properties = configuredProperties();
         properties.setEnv("sandbox");
 
-        assertThatThrownBy(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+        assertThatThrownBy(() -> guard(properties).validateProductionConfiguration())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Production APNs requires APNS_ENV=production.");
     }
 
     @Test
-    void productionConfigurationAllowsPushDisabled() {
+    void productionConfigurationAllowsPushDisabledWhenSyncIsDisabled() {
         ApnsProperties properties = configuredProperties();
         properties.setPushEnabled(false);
         properties.setEnv("sandbox");
@@ -33,7 +33,25 @@ class ApnsProductionConfigurationGuardTest {
         properties.setKeyId("");
         properties.setPrivateKeyPath("");
 
-        assertThatCode(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+        assertThatCode(() -> guard(properties).validateProductionConfiguration())
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void productionConfigurationRejectsSyncEnabledWithPushDisabled() {
+        ApnsProperties properties = configuredProperties();
+        properties.setPushEnabled(false);
+
+        assertThatThrownBy(() -> guard(properties, syncProperties(true)).validateProductionConfiguration())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Production notification runtime requires KBO_PUSH_ENABLED=true when APP_SYNC_ENABLED=true.");
+    }
+
+    @Test
+    void productionConfigurationAllowsPushEnabledWithSyncEnabled() {
+        ApnsProperties properties = configuredProperties();
+
+        assertThatCode(() -> guard(properties, syncProperties(true)).validateProductionConfiguration())
                 .doesNotThrowAnyException();
     }
 
@@ -42,7 +60,7 @@ class ApnsProductionConfigurationGuardTest {
         ApnsProperties properties = configuredProperties();
         properties.setPrivateKeyPath("");
 
-        assertThatThrownBy(() -> new ApnsProductionConfigurationGuard(properties).validateProductionConfiguration())
+        assertThatThrownBy(() -> guard(properties).validateProductionConfiguration())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Production APNs requires APNS_PRIVATE_KEY_PATH.");
     }
@@ -55,6 +73,23 @@ class ApnsProductionConfigurationGuardTest {
         properties.setKeyId("KEYID1234");
         properties.setBundleId("com.chogm.kboScore");
         properties.setPrivateKeyPath("/secure/AuthKey_KEYID1234.p8");
+        return properties;
+    }
+
+    private ApnsProductionConfigurationGuard guard(ApnsProperties properties) {
+        return guard(properties, syncProperties(false));
+    }
+
+    private ApnsProductionConfigurationGuard guard(
+            ApnsProperties properties,
+            SyncProperties syncProperties
+    ) {
+        return new ApnsProductionConfigurationGuard(properties, syncProperties);
+    }
+
+    private SyncProperties syncProperties(boolean enabled) {
+        SyncProperties properties = new SyncProperties();
+        properties.setEnabled(enabled);
         return properties;
     }
 }

@@ -17,7 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 class StaleGameReconciliationServiceTest {
     private final MutableClock clock = new MutableClock();
     private final LiveGameSyncService sync = mock(LiveGameSyncService.class);
-    private final StaleGameReconciliationService service = new StaleGameReconciliationService(sync, clock);
+    private final StaleGameReconciliationService service = new StaleGameReconciliationService(sync, publicProperties(), clock);
     private final LocalDate today = LocalDate.now(clock);
 
     @Test
@@ -25,7 +25,7 @@ class StaleGameReconciliationServiceTest {
         for (List<LocalDate> dates : Arrays.asList(null, List.<LocalDate>of(),
                 List.of(today, today, today, today), Arrays.asList(today, null),
                 List.of(today.plusDays(1)), List.of(today.minusDays(367)))) {
-            assertThatThrownBy(() -> service.reconcile(dates)).isInstanceOf(InvalidParameterException.class);
+            assertThatThrownBy(() -> service.reconcilePublic(dates)).isInstanceOf(InvalidParameterException.class);
         }
         verifyNoInteractions(sync);
     }
@@ -33,13 +33,13 @@ class StaleGameReconciliationServiceTest {
     @Test
     void permitsThreeBoundedDatesAndRespectsGlobalCooldownAcrossDifferentDates() {
         when(sync.sync(any(), eq(false))).thenAnswer(invocation -> summary(invocation.getArgument(0)));
-        var result = service.reconcile(List.of(today, today.minusDays(1), today.minusDays(366)));
+        var result = service.reconcilePublic(List.of(today, today.minusDays(1), today.minusDays(366)));
         assertThat(result.processedDateCount()).isEqualTo(3);
-        assertThatThrownBy(() -> service.reconcile(List.of(today.minusDays(2))))
+        assertThatThrownBy(() -> service.reconcilePublic(List.of(today.minusDays(2))))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         exception -> assertThat(exception.getStatusCode().value()).isEqualTo(429));
         clock.now = clock.now.plusSeconds(30);
-        assertThat(service.reconcile(List.of(today.minusDays(2))).processedDateCount()).isEqualTo(1);
+        assertThat(service.reconcilePublic(List.of(today.minusDays(2))).processedDateCount()).isEqualTo(1);
         verify(sync, times(4)).sync(any(), eq(false));
         verify(sync, never()).sync(any(), eq(true));
     }
@@ -55,12 +55,12 @@ class StaleGameReconciliationServiceTest {
         });
         var executor = Executors.newSingleThreadExecutor();
         try {
-            var first = executor.submit(() -> service.reconcile(List.of(today)));
+            var first = executor.submit(() -> service.reconcilePublic(List.of(today)));
             assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
             clock.now = clock.now.plusSeconds(60);
-            assertThatThrownBy(() -> service.reconcile(List.of(today.minusDays(1))))
+            assertThatThrownBy(() -> service.reconcilePublic(List.of(today.minusDays(1))))
                     .isInstanceOf(ResponseStatusException.class);
-            assertThat(service.reconcile(List.of(today)).skippedAlreadyInProgressCount()).isEqualTo(1);
+            assertThat(service.reconcilePublic(List.of(today)).skippedAlreadyInProgressCount()).isEqualTo(1);
             release.countDown();
             assertThat(first.get(5, TimeUnit.SECONDS).processedDateCount()).isEqualTo(1);
         } finally {
@@ -72,11 +72,18 @@ class StaleGameReconciliationServiceTest {
     @Test
     void failuresKeepCooldownAndReleaseConcurrencySlot() {
         when(sync.sync(today, false)).thenThrow(new IllegalStateException("upstream unavailable"));
-        assertThat(service.reconcile(List.of(today)).failedCount()).isEqualTo(1);
-        assertThatThrownBy(() -> service.reconcile(List.of(today))).isInstanceOf(ResponseStatusException.class);
+        assertThat(service.reconcilePublic(List.of(today)).failedCount()).isEqualTo(1);
+        assertThatThrownBy(() -> service.reconcilePublic(List.of(today))).isInstanceOf(ResponseStatusException.class);
         clock.now = clock.now.plusSeconds(30);
         doReturn(summary(today)).when(sync).sync(today, false);
-        assertThat(service.reconcile(List.of(today)).processedDateCount()).isEqualTo(1);
+        assertThat(service.reconcilePublic(List.of(today)).processedDateCount()).isEqualTo(1);
+    }
+
+    private static com.kbo.crawlerapi.config.KboReconcileProperties publicProperties() {
+        var properties = new com.kbo.crawlerapi.config.KboReconcileProperties();
+        properties.setPublicAllowedPastDays(366);
+        properties.setPublicCooldown(Duration.ofSeconds(30));
+        return properties;
     }
 
     private static LiveGameSyncService.LiveSyncSummary summary(LocalDate date) {

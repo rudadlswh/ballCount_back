@@ -3,6 +3,8 @@ package com.kbo.crawlerapi.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -99,6 +101,72 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
+    void registersRainDelayQuietHoursAndAuthorizationStatus() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("android"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+
+        service.register(
+                "android", "sandbox", "token-123", "install-1", "lg", true,
+                new DeviceRegistrationService.DeviceNotificationSettings(
+                        true, true, true, true, false, false, false, false,
+                        false, true, 22, 8, "authorized"
+                )
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        NotificationDevice device = deviceCaptor.getValue();
+        assertThat(device.isRainDelayEnabled()).isFalse();
+        assertThat(device.isQuietHoursEnabled()).isTrue();
+        assertThat(device.getQuietHoursStartHour()).isEqualTo(22);
+        assertThat(device.getQuietHoursEndHour()).isEqualTo(8);
+        assertThat(device.getNotificationAuthorizationStatus()).isEqualTo("authorized");
+    }
+
+    @Test
+    void favoriteTeamRegistrationKeepsFavoriteTeamOnlyDisabledWhenClientSendsFalse() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+
+        service.register(
+                "ios",
+                "sandbox",
+                "token-123",
+                "install-1",
+                "lotte",
+                true,
+                new DeviceRegistrationService.DeviceNotificationSettings(true, true, true, true, true, true, false, false)
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().isFavoriteTeamOnlyEnabled()).isFalse();
+    }
+
+    @Test
+    void missingFavoriteTeamDisablesFavoriteTeamOnlyEvenWhenClientSendsTrue() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+
+        service.register(
+                "ios",
+                "sandbox",
+                "token-123",
+                "install-1",
+                null,
+                true,
+                new DeviceRegistrationService.DeviceNotificationSettings(true, true, true, true, true, true, true, false)
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().isFavoriteTeamOnlyEnabled()).isFalse();
+    }
+
+    @Test
     void rejectsUnsupportedEnvironmentAlias() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
 
@@ -108,12 +176,41 @@ class DeviceRegistrationServiceTest {
     }
 
     @Test
+    void registersAndroidPlatform() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("android"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+
+        var result = service.register("android", "sandbox", "token-123", "install-1", null, false);
+
+        assertThat(result.platform()).isEqualTo("android");
+        verify(notificationDeviceRepository).save(any(NotificationDevice.class));
+    }
+
+    @Test
+    void registersExplicitlyMonitoredAndroidGame() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("android"), eq("sandbox"), eq("token-123")))
+                .thenReturn(Optional.empty());
+
+        service.register(
+                "android", "sandbox", "token-123", "install-1", "lg", true,
+                DeviceRegistrationService.DeviceNotificationSettings.defaults(),
+                "20260721-LG-SSG"
+        );
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getMonitoredGameId()).isEqualTo("20260721-LG-SSG");
+    }
+
+    @Test
     void rejectsUnsupportedPlatform() {
         DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
 
-        assertThatThrownBy(() -> service.register("android", "sandbox", "token-123", "install-1", null, false))
+        assertThatThrownBy(() -> service.register("web", "sandbox", "token-123", "install-1", null, false))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("platform must be ios");
+                .hasMessage("platform must be ios or android");
     }
 
     @Test
@@ -188,6 +285,20 @@ class DeviceRegistrationServiceTest {
         assertThat(deviceCaptor.getValue().getId()).isNotEqualTo(existing.getId());
         assertThat(existing.getDeviceToken()).isEqualTo("800facf43e22-old");
         assertThat(deviceCaptor.getValue().getDeviceToken()).isEqualTo("80e2a3c36237-new");
+    }
+
+    @Test
+    void sameInstallationIdInDifferentEnvironmentCreatesSeparateRegistration() {
+        DeviceRegistrationService service = new DeviceRegistrationService(notificationDeviceRepository, CLOCK);
+        when(notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(eq("ios"), eq("production"), eq("prod-token")))
+                .thenReturn(Optional.empty());
+
+        service.register("ios", "production", "prod-token", "install-1", "ssg", true);
+
+        ArgumentCaptor<NotificationDevice> deviceCaptor = ArgumentCaptor.forClass(NotificationDevice.class);
+        verify(notificationDeviceRepository).save(deviceCaptor.capture());
+        assertThat(deviceCaptor.getValue().getEnvironment()).isEqualTo("production");
+        assertThat(deviceCaptor.getValue().getDeviceToken()).isEqualTo("prod-token");
     }
 
     @Test

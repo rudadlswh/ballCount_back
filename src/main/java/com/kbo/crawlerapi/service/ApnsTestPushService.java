@@ -52,7 +52,9 @@ public class ApnsTestPushService {
             return true;
         }
         for (String profile : environment.getActiveProfiles()) {
-            if ("local".equalsIgnoreCase(profile) || "dev".equalsIgnoreCase(profile)) {
+            if ("local".equalsIgnoreCase(profile)
+                    || "dev".equalsIgnoreCase(profile)
+                    || "development".equalsIgnoreCase(profile)) {
                 return true;
             }
         }
@@ -74,7 +76,6 @@ public class ApnsTestPushService {
                 .filter(device -> "ios".equalsIgnoreCase(device.getPlatform()))
                 .filter(NotificationDevice::isNotificationsEnabled)
                 .filter(device -> favoriteTeamId.equals(device.getFavoriteTeamId()))
-                .filter(device -> apnsPushService.environmentMatches(device.getEnvironment()))
                 .toList();
 
         NotificationEvent event = new NotificationEvent(

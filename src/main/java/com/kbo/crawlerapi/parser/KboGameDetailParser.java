@@ -1,9 +1,6 @@
 package com.kbo.crawlerapi.parser;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -17,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kbo.crawlerapi.domain.GameCancelReason;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.support.HashSupport;
 
 @Component
 public class KboGameDetailParser {
@@ -34,7 +32,7 @@ public class KboGameDetailParser {
             JsonNode root = objectMapper.readTree(responseBody);
             JsonNode groups = root.path("arrHitter");
             if (!groups.isArray() || groups.size() < 2) {
-                return ParsedLineupData.empty(hash(responseBody));
+                return ParsedLineupData.empty(HashSupport.sha256Hex(responseBody));
             }
 
             String awayTeamCode = officialTeamCode(root, "AWAY_ID", "T_ID", "AWAY_TEAM_ID");
@@ -42,9 +40,9 @@ public class KboGameDetailParser {
             List<ParsedLineupPlayer> away = parseLineupGroup(groups.get(0), awayTeamCode);
             List<ParsedLineupPlayer> home = parseLineupGroup(groups.get(1), homeTeamCode);
             if (away.isEmpty() && home.isEmpty()) {
-                return ParsedLineupData.empty(hash(responseBody));
+                return ParsedLineupData.empty(HashSupport.sha256Hex(responseBody));
             }
-            return new ParsedLineupData(away, home, hash(responseBody), awayTeamCode, homeTeamCode);
+            return new ParsedLineupData(away, home, HashSupport.sha256Hex(responseBody), awayTeamCode, homeTeamCode);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to parse KBO lineup response", exception);
         }
@@ -115,6 +113,10 @@ public class KboGameDetailParser {
                 String homeStartingPitcherName = text(row, "B_PIT_P_NM");
                 String currentPitcherName = currentPitcherName(row, inningHalf);
                 String currentBatterName = currentBatterName(row, inningHalf);
+                String lastCompletedBatterName = lastCompletedBatterName(row);
+                String lastCompletedPitcherName = lastCompletedPitcherName(row);
+                String lastCompletedPlayResult = lastCompletedPlayResult(row);
+                String lastCompletedPlayKey = lastCompletedPlayKey(row, providerGameId, inning, inningHalf, lastCompletedBatterName, lastCompletedPlayResult);
                 logCurrentPlayerSourceState(row, providerGameId, inningHalf, currentPitcherName, currentBatterName);
                 Integer firstBaseBattingOrder = baseBattingOrder(row, "B1");
                 Integer secondBaseBattingOrder = baseBattingOrder(row, "B2");
@@ -169,12 +171,16 @@ public class KboGameDetailParser {
                         thirdBaseRunnerId,
                         currentPitcherName,
                         currentBatterName,
+                        lastCompletedBatterName,
+                        lastCompletedPitcherName,
+                        lastCompletedPlayResult,
+                        lastCompletedPlayKey,
                         homeStartingPitcherName,
                         awayStartingPitcherName,
                         lineupAvailable,
                         statusReason,
                         null,
-                        hash(row.toString())
+                        HashSupport.sha256Hex(row.toString())
                 ));
             }
 
@@ -238,6 +244,18 @@ public class KboGameDetailParser {
     }
 
     private String currentPitcherName(JsonNode row, String inningHalf) {
+        String explicit = firstText(
+                row,
+                "PIT_P_NM",
+                "PIT_P_NAME",
+                "PITCHER_NM",
+                "PITCHER_NAME",
+                "CURRENT_PITCHER_NM",
+                "CURRENT_PITCHER_NAME"
+        );
+        if (explicit != null) {
+            return explicit;
+        }
         if ("top".equals(inningHalf)) {
             return text(row, "B_P_NM");
         }
@@ -248,6 +266,20 @@ public class KboGameDetailParser {
     }
 
     private String currentBatterName(JsonNode row, String inningHalf) {
+        String explicit = firstText(
+                row,
+                "BAT_P_NM",
+                "BAT_P_NAME",
+                "BATTER_NM",
+                "BATTER_NAME",
+                "CURRENT_BATTER_NM",
+                "CURRENT_BATTER_NAME",
+                "HITTER_NM",
+                "HITTER_NAME"
+        );
+        if (explicit != null) {
+            return explicit;
+        }
         if ("top".equals(inningHalf)) {
             return text(row, "T_P_NM");
         }
@@ -255,6 +287,88 @@ public class KboGameDetailParser {
             return text(row, "B_P_NM");
         }
         return null;
+    }
+
+    private String lastCompletedBatterName(JsonNode row) {
+        return firstText(
+                row,
+                "LAST_COMPLETED_BATTER_NM",
+                "LAST_COMPLETED_BATTER_NAME",
+                "LAST_BATTER_NM",
+                "LAST_BATTER_NAME",
+                "LAST_BAT_P_NM",
+                "LAST_BAT_P_NAME",
+                "PREV_BATTER_NM",
+                "PREV_BATTER_NAME",
+                "RESULT_BATTER_NM",
+                "RESULT_BATTER_NAME",
+                "BAT_RESULT_P_NM",
+                "BAT_RESULT_P_NAME"
+        );
+    }
+
+    private String lastCompletedPitcherName(JsonNode row) {
+        return firstText(
+                row,
+                "LAST_COMPLETED_PITCHER_NM",
+                "LAST_COMPLETED_PITCHER_NAME",
+                "LAST_PITCHER_NM",
+                "LAST_PITCHER_NAME",
+                "LAST_PIT_P_NM",
+                "LAST_PIT_P_NAME",
+                "PREV_PITCHER_NM",
+                "PREV_PITCHER_NAME",
+                "RESULT_PITCHER_NM",
+                "RESULT_PITCHER_NAME",
+                "PIT_RESULT_P_NM",
+                "PIT_RESULT_P_NAME"
+        );
+    }
+
+    private String lastCompletedPlayResult(JsonNode row) {
+        return firstText(
+                row,
+                "LAST_COMPLETED_PLAY_RESULT",
+                "LAST_COMPLETED_RESULT",
+                "LAST_PLAY_RESULT",
+                "LAST_RESULT",
+                "PLAY_RESULT",
+                "PLAY_RESULT_NM",
+                "BAT_RESULT",
+                "BAT_RESULT_NM",
+                "BATTER_RESULT",
+                "BATTER_RESULT_NM",
+                "HIT_RESULT",
+                "HIT_RESULT_NM",
+                "RESULT",
+                "RESULT_NM",
+                "LIVE_TEXT",
+                "GAME_TEXT"
+        );
+    }
+
+    private String lastCompletedPlayKey(
+            JsonNode row,
+            String providerGameId,
+            Integer inning,
+            String inningHalf,
+            String batterName,
+            String playResult
+    ) {
+        String explicit = firstText(
+                row,
+                "LAST_COMPLETED_PLAY_KEY",
+                "LAST_PLAY_KEY",
+                "PLAY_KEY",
+                "PLAY_ID",
+                "SEQ",
+                "SEQUENCE_NO"
+        );
+        if (explicit != null) {
+            return explicit;
+        }
+        String joined = joinClean(providerGameId, inning == null ? null : inning.toString(), inningHalf, batterName, playResult);
+        return joined.isBlank() ? null : HashSupport.sha256Hex(joined);
     }
 
     public ParsedGameDetail applyOfficialRunnerNamesFromLineup(ParsedGameDetail detail, ParsedLineupData lineupData) {
@@ -269,13 +383,13 @@ public class KboGameDetailParser {
 
         String first = clean(detail.firstBaseRunnerName()) != null
                 ? detail.firstBaseRunnerName()
-                : runnerNameByBattingOrder(detail.firstBaseBattingOrder(), battingLineup);
+                : currentRunnerNameByBattingOrder(detail, 1, detail.runnerOnFirst(), detail.firstBaseBattingOrder(), battingLineup, lineupData);
         String second = clean(detail.secondBaseRunnerName()) != null
                 ? detail.secondBaseRunnerName()
-                : runnerNameByBattingOrder(detail.secondBaseBattingOrder(), battingLineup);
+                : currentRunnerNameByBattingOrder(detail, 2, detail.runnerOnSecond(), detail.secondBaseBattingOrder(), battingLineup, lineupData);
         String third = clean(detail.thirdBaseRunnerName()) != null
                 ? detail.thirdBaseRunnerName()
-                : runnerNameByBattingOrder(detail.thirdBaseBattingOrder(), battingLineup);
+                : currentRunnerNameByBattingOrder(detail, 3, detail.runnerOnThird(), detail.thirdBaseBattingOrder(), battingLineup, lineupData);
 
         if (equalsClean(detail.firstBaseRunnerName(), first)
                 && equalsClean(detail.secondBaseRunnerName(), second)
@@ -293,31 +407,82 @@ public class KboGameDetailParser {
     }
 
     private List<ParsedLineupPlayer> battingLineupForHalf(String inningHalf, ParsedLineupData lineupData) {
-        if ("top".equals(inningHalf)) {
+        String normalizedHalf = clean(inningHalf);
+        if (normalizedHalf == null) {
+            return List.of();
+        }
+        String lower = normalizedHalf.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("top") || "초".equals(normalizedHalf)) {
             return lineupData.away();
         }
-        if ("bottom".equals(inningHalf)) {
+        if (lower.startsWith("bot") || lower.startsWith("bottom") || "말".equals(normalizedHalf)) {
             return lineupData.home();
         }
         return List.of();
     }
 
-    private String runnerNameByBattingOrder(Integer battingOrder, List<ParsedLineupPlayer> lineup) {
-        if (battingOrder == null || battingOrder <= 0) {
+    private String currentRunnerNameByBattingOrder(
+            ParsedGameDetail detail,
+            int base,
+            boolean occupied,
+            Integer battingOrder,
+            List<ParsedLineupPlayer> lineup,
+            ParsedLineupData lineupData
+    ) {
+        if (!occupied || battingOrder == null || battingOrder <= 0) {
             return null;
         }
         String orderText = Integer.toString(battingOrder);
-        List<String> matches = lineup.stream()
+        List<ParsedLineupPlayer> players = lineup.stream()
                 .filter(player -> orderText.equals(normalizeBattingOrder(player.battingOrder())))
+                .toList();
+        List<String> currentMatches = players.stream()
+                .filter(player -> isLiveTextLineup(lineupData) || isCurrentSubstitutionPlayer(player))
                 .map(ParsedLineupPlayer::name)
                 .map(this::clean)
                 .filter(java.util.Objects::nonNull)
                 .distinct()
                 .toList();
-        if (matches.size() != 1) {
-            return null;
+        if (currentMatches.size() == 1) {
+            return currentMatches.get(0);
         }
-        return matches.get(0);
+
+        List<String> allMatches = players.stream()
+                .map(ParsedLineupPlayer::name)
+                .map(this::clean)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (!isLiveTextLineup(lineupData) && allMatches.size() == 1) {
+            log.debug(
+                    "[BaseRunnerResolver] game={} base={} occupied=true source=lineupFallback blockedOriginalPlayer={} reason=originalLineupPlayer",
+                    detail.providerGameId(),
+                    base,
+                    allMatches.get(0)
+            );
+        } else if (!isLiveTextLineup(lineupData) && allMatches.size() > 1) {
+            allMatches.stream()
+                    .filter(name -> players.stream()
+                            .filter(player -> name.equals(clean(player.name())))
+                            .noneMatch(this::isCurrentSubstitutionPlayer))
+                    .findFirst()
+                    .ifPresent(name -> log.debug(
+                            "[BaseRunnerResolver] game={} base={} occupied=true source=lineupFallback blockedOriginalPlayer={} reason=pinchSubstitutionExists",
+                            detail.providerGameId(),
+                            base,
+                            name
+                    ));
+        }
+        return null;
+    }
+
+    private boolean isLiveTextLineup(ParsedLineupData lineupData) {
+        return lineupData != null && "live-text-lineup-fallback".equals(clean(lineupData.rawHash()));
+    }
+
+    private boolean isCurrentSubstitutionPlayer(ParsedLineupPlayer player) {
+        String position = clean(player.position());
+        return "PH".equals(position) || "PR".equals(position);
     }
 
     private String normalizeBattingOrder(String value) {
@@ -436,24 +601,48 @@ public class KboGameDetailParser {
         if (isCancelledText(statusText)) {
             return GameStatus.CANCELLED;
         }
-        if (isSuspendedText(statusText)) {
+        if (isSuspensionText(statusText)) {
             return GameStatus.SUSPENDED;
+        }
+        if (isDelayText(statusText)) {
+            return hasLiveProgress(row) ? GameStatus.SUSPENDED : GameStatus.DELAYED;
         }
 
         String gameState = text(row, "GAME_STATE_SC");
         if (hasReliableFinalMarker(row)) {
             return GameStatus.FINAL;
         }
-        if ("2".equals(gameState)) {
+        if ("2".equals(gameState) && hasLiveProgress(row)) {
             return GameStatus.LIVE;
         }
-        if (integer(row, "GAME_INN_NO") != null) {
+        if (hasLiveProgress(row)) {
             return GameStatus.LIVE;
         }
         if ("1".equals(gameState)) {
             return GameStatus.SCHEDULED;
         }
         return GameStatus.UNKNOWN;
+    }
+
+    private boolean hasLiveProgress(JsonNode row) {
+        Integer awayScore = integer(row, "T_SCORE_CN");
+        Integer homeScore = integer(row, "B_SCORE_CN");
+        Integer inning = integer(row, "GAME_INN_NO");
+        String inningHalf = resolveHalf(text(row, "GAME_TB_SC"));
+        return nullSafePositive(awayScore)
+                || nullSafePositive(homeScore)
+                || (inning != null && inning > 1)
+                || "bottom".equals(inningHalf)
+                || nullSafePositive(integer(row, "BALL_CN"))
+                || nullSafePositive(integer(row, "STRIKE_CN"))
+                || nullSafePositive(integer(row, "OUT_CN"))
+                || baseBattingOrder(row, "B1") != null && baseBattingOrder(row, "B1") > 0
+                || baseBattingOrder(row, "B2") != null && baseBattingOrder(row, "B2") > 0
+                || baseBattingOrder(row, "B3") != null && baseBattingOrder(row, "B3") > 0;
+    }
+
+    private boolean nullSafePositive(Integer value) {
+        return value != null && value > 0;
     }
 
     public Optional<ParsedScoreBoardStatus> parseScoreBoardStatus(String providerGameId, String responseBody) {
@@ -481,10 +670,10 @@ public class KboGameDetailParser {
                 "[ScoreBoardStatus] providerGameId={} rawStatusText={} normalizedStatus={} statusReason={}",
                 providerGameId,
                 abbreviate(clean(rawText), 500),
-                GameStatus.SUSPENDED.getApiValue(),
+                statusFromInterruptionReason(reason).getApiValue(),
                 reason
         );
-        return Optional.of(new ParsedScoreBoardStatus(GameStatus.SUSPENDED, reason));
+        return Optional.of(new ParsedScoreBoardStatus(statusFromInterruptionReason(reason), reason));
     }
 
     private String scoreBoardStatusText(String responseBody) {
@@ -496,7 +685,8 @@ public class KboGameDetailParser {
         if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
             try {
                 collectTextValues(objectMapper.readTree(trimmed), values);
-            } catch (IOException ignored) {
+            } catch (IOException exception) {
+                log.debug("[ScoreBoardStatus] failed to parse JSON status body; falling back to raw text.", exception);
                 values.add(trimmed);
             }
         } else {
@@ -552,8 +742,19 @@ public class KboGameDetailParser {
                 return phrase;
             }
         }
+        for (String phrase : List.of("우천 지연", "우천지연", "경기지연", "경기 지연", "개시지연", "개시 지연", "우천 중단", "강우 중단", "경기 중단", "일시 중단", "지연")) {
+            if (value.contains(phrase)) {
+                return phrase;
+            }
+        }
         if (lower.contains("rain delay")) {
             return "rain delay";
+        }
+        if (lower.contains("delayed")) {
+            return "delayed";
+        }
+        if (lower.contains("delay")) {
+            return "delay";
         }
         if (lower.contains("suspended")) {
             return "suspended";
@@ -562,6 +763,10 @@ public class KboGameDetailParser {
             return "interrupted";
         }
         return null;
+    }
+
+    private GameStatus statusFromInterruptionReason(String reason) {
+        return isSuspensionText(reason) ? GameStatus.SUSPENDED : GameStatus.DELAYED;
     }
 
     private void logStatusDiagnostics(
@@ -609,20 +814,41 @@ public class KboGameDetailParser {
         return value.contains("취소") || value.contains("노게임") || lower.contains("cancel") || lower.contains("no game") || lower.contains("nogame");
     }
 
-    private boolean isSuspendedText(String value) {
+    private boolean isDelayText(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        return value.contains("우천지연")
+                || value.contains("우천 지연")
+                || value.contains("경기지연")
+                || value.contains("경기 지연")
+                || value.contains("개시지연")
+                || value.contains("개시 지연")
+                || value.contains("지연")
+                || lower.contains("delay")
+                || lower.contains("delayed")
+                || lower.contains("rain delay");
+    }
+
+    private boolean isSuspensionText(String value) {
         if (value == null) {
             return false;
         }
         String lower = value.toLowerCase(java.util.Locale.ROOT);
         return value.contains("서스펜")
                 || value.contains("우천중단")
+                || value.contains("우천 중단")
                 || value.contains("강우중단")
+                || value.contains("강우 중단")
                 || value.contains("경기중단")
+                || value.contains("경기 중단")
                 || value.contains("일시중단")
+                || value.contains("일시 중단")
                 || value.contains("중단")
                 || lower.contains("suspend")
-                || lower.contains("interrupted")
-                || lower.contains("rain delay");
+                || lower.contains("suspended")
+                || lower.contains("interrupted");
     }
 
     private boolean hasReliableFinalMarker(JsonNode row) {
@@ -720,7 +946,7 @@ public class KboGameDetailParser {
         if (status == GameStatus.FINAL) {
             return finalStatusReason(row);
         }
-        if (status != GameStatus.CANCELLED && status != GameStatus.POSTPONED && status != GameStatus.SUSPENDED) {
+        if (status != GameStatus.CANCELLED && status != GameStatus.POSTPONED && status != GameStatus.SUSPENDED && status != GameStatus.DELAYED) {
             return null;
         }
         String rawStatusName = firstText(row, "GAME_STATE_SC_NM", "GAME_STATE_NM", "GAME_SC_NM", "STATUS_NM", "GAME_STATUS_NM");
@@ -827,20 +1053,6 @@ public class KboGameDetailParser {
                 .collect(java.util.stream.Collectors.joining(" "));
     }
 
-    private String hash(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder(hash.length * 2);
-            for (byte current : hash) {
-                builder.append(String.format("%02x", current));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is not available", exception);
-        }
-    }
-
     public record ParsedGameDetail(
             String providerGameId,
             GameStatus status,
@@ -870,6 +1082,10 @@ public class KboGameDetailParser {
             String thirdBaseRunnerId,
             String currentPitcherName,
             String currentBatterName,
+            String lastCompletedBatterName,
+            String lastCompletedPitcherName,
+            String lastCompletedPlayResult,
+            String lastCompletedPlayKey,
             String homeStartingPitcherName,
             String awayStartingPitcherName,
             boolean lineupAvailable,
@@ -939,6 +1155,83 @@ public class KboGameDetailParser {
                     thirdBaseRunnerId,
                     currentPitcherName,
                     currentBatterName,
+                    null,
+                    null,
+                    null,
+                    null,
+                    homeStartingPitcherName,
+                    awayStartingPitcherName,
+                    lineupAvailable,
+                    statusReason,
+                    sourceUpdatedAt,
+                    rawHash
+            );
+        }
+
+        public ParsedGameDetail(
+                String providerGameId,
+                GameStatus status,
+                boolean isCancelled,
+                boolean isPostponed,
+                GameCancelReason cancelReason,
+                String rawCancelText,
+                Integer awayScore,
+                Integer homeScore,
+                Integer inning,
+                String inningHalf,
+                String inningLabel,
+                Integer balls,
+                Integer strikes,
+                Integer outs,
+                boolean runnerOnFirst,
+                boolean runnerOnSecond,
+                boolean runnerOnThird,
+                String currentPitcherName,
+                String currentBatterName,
+                String lastCompletedBatterName,
+                String lastCompletedPitcherName,
+                String lastCompletedPlayResult,
+                String lastCompletedPlayKey,
+                String homeStartingPitcherName,
+                String awayStartingPitcherName,
+                boolean lineupAvailable,
+                String statusReason,
+                OffsetDateTime sourceUpdatedAt,
+                String rawHash
+        ) {
+            this(
+                    providerGameId,
+                    status,
+                    isCancelled,
+                    isPostponed,
+                    cancelReason,
+                    rawCancelText,
+                    awayScore,
+                    homeScore,
+                    inning,
+                    inningHalf,
+                    inningLabel,
+                    balls,
+                    strikes,
+                    outs,
+                    runnerOnFirst,
+                    runnerOnSecond,
+                    runnerOnThird,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    currentPitcherName,
+                    currentBatterName,
+                    lastCompletedBatterName,
+                    lastCompletedPitcherName,
+                    lastCompletedPlayResult,
+                    lastCompletedPlayKey,
                     homeStartingPitcherName,
                     awayStartingPitcherName,
                     lineupAvailable,
@@ -1004,6 +1297,88 @@ public class KboGameDetailParser {
                     null,
                     currentPitcherName,
                     currentBatterName,
+                    null,
+                    null,
+                    null,
+                    null,
+                    homeStartingPitcherName,
+                    awayStartingPitcherName,
+                    lineupAvailable,
+                    statusReason,
+                    sourceUpdatedAt,
+                    rawHash
+            );
+        }
+
+        public ParsedGameDetail(
+                String providerGameId,
+                GameStatus status,
+                boolean isCancelled,
+                boolean isPostponed,
+                GameCancelReason cancelReason,
+                String rawCancelText,
+                Integer awayScore,
+                Integer homeScore,
+                Integer inning,
+                String inningHalf,
+                String inningLabel,
+                Integer balls,
+                Integer strikes,
+                Integer outs,
+                boolean runnerOnFirst,
+                boolean runnerOnSecond,
+                boolean runnerOnThird,
+                Integer firstBaseBattingOrder,
+                Integer secondBaseBattingOrder,
+                Integer thirdBaseBattingOrder,
+                String firstBaseRunnerName,
+                String secondBaseRunnerName,
+                String thirdBaseRunnerName,
+                String firstBaseRunnerId,
+                String secondBaseRunnerId,
+                String thirdBaseRunnerId,
+                String currentPitcherName,
+                String currentBatterName,
+                String homeStartingPitcherName,
+                String awayStartingPitcherName,
+                boolean lineupAvailable,
+                String statusReason,
+                OffsetDateTime sourceUpdatedAt,
+                String rawHash
+        ) {
+            this(
+                    providerGameId,
+                    status,
+                    isCancelled,
+                    isPostponed,
+                    cancelReason,
+                    rawCancelText,
+                    awayScore,
+                    homeScore,
+                    inning,
+                    inningHalf,
+                    inningLabel,
+                    balls,
+                    strikes,
+                    outs,
+                    runnerOnFirst,
+                    runnerOnSecond,
+                    runnerOnThird,
+                    firstBaseBattingOrder,
+                    secondBaseBattingOrder,
+                    thirdBaseBattingOrder,
+                    firstBaseRunnerName,
+                    secondBaseRunnerName,
+                    thirdBaseRunnerName,
+                    firstBaseRunnerId,
+                    secondBaseRunnerId,
+                    thirdBaseRunnerId,
+                    currentPitcherName,
+                    currentBatterName,
+                    null,
+                    null,
+                    null,
+                    null,
                     homeStartingPitcherName,
                     awayStartingPitcherName,
                     lineupAvailable,
@@ -1047,6 +1422,10 @@ public class KboGameDetailParser {
                     thirdBaseRunnerId,
                     currentPitcherName,
                     currentBatterName,
+                    lastCompletedBatterName,
+                    lastCompletedPitcherName,
+                    lastCompletedPlayResult,
+                    lastCompletedPlayKey,
                     homeStartingPitcherName,
                     awayStartingPitcherName,
                     lineupAvailable,
@@ -1089,6 +1468,10 @@ public class KboGameDetailParser {
                     thirdBaseRunnerId,
                     currentPitcherName,
                     currentBatterName,
+                    lastCompletedBatterName,
+                    lastCompletedPitcherName,
+                    lastCompletedPlayResult,
+                    lastCompletedPlayKey,
                     homeStartingPitcherName,
                     awayStartingPitcherName,
                     lineupAvailable,

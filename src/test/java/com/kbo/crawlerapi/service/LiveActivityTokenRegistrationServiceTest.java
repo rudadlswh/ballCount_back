@@ -1,6 +1,7 @@
 package com.kbo.crawlerapi.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -100,6 +101,125 @@ class LiveActivityTokenRegistrationServiceTest {
         verify(repository).findByPlatformAndEnvironmentAndActivityToken("ios", "sandbox", "new-activity-token");
         verify(repository).save(any());
         verifyNoMoreInteractions(repository);
+    }
+
+    @Test
+    void rejectsOverlongActivityToken() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+
+        assertThatThrownBy(() -> service.register(command("a".repeat(513))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("activityToken is too long");
+    }
+
+    @Test
+    void rejectsUnsupportedPlatform() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "android",
+                        "sandbox",
+                        "activity-token",
+                        "install-1",
+                        "hanwha",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("platform must be ios");
+    }
+
+    @Test
+    void rejectsUnsupportedEnvironmentAlias() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "development",
+                        "activity-token",
+                        "install-1",
+                        "hanwha",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("environment must be sandbox or production");
+    }
+
+    @Test
+    void rejectsMissingInstallationId() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "sandbox",
+                        "activity-token",
+                        " ",
+                        "hanwha",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("installationId is required");
+    }
+
+    @Test
+    void rejectsInvalidFavoriteTeamId() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "sandbox",
+                        "activity-token",
+                        "install-1",
+                        "invalid-team",
+                        "20260605-LOT-HAN",
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("favoriteTeamId is invalid");
+    }
+
+    @Test
+    void rejectsOverlongGameIdentifiers() {
+        LiveActivityTokenRegistrationService service = new LiveActivityTokenRegistrationService(repository, CLOCK);
+        LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command =
+                new LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand(
+                        "new-activity",
+                        "ios",
+                        "sandbox",
+                        "activity-token",
+                        "install-1",
+                        "hanwha",
+                        "p".repeat(81),
+                        "20260605HHLT0",
+                        "22222222-2222-2222-2222-222222222222",
+                        "provider:20260605HHLT0"
+                );
+
+        assertThatThrownBy(() -> service.register(command))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("publicGameId is too long");
     }
 
     private LiveActivityTokenRegistrationService.LiveActivityTokenRegistrationCommand command(String activityToken) {

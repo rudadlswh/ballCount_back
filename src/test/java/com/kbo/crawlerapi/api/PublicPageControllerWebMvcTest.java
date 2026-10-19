@@ -13,7 +13,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class PublicPageControllerWebMvcTest {
 
-    private static final String SUPPORT_EMAIL = "chogyeongmin.dev@gmail.com";
+    private static final String SUPPORT_EMAIL = "whrudals56@gmail.com";
     private static final MediaType TEXT_HTML_UTF8 = MediaType.parseMediaType("text/html;charset=UTF-8");
 
     private MockMvc mockMvc;

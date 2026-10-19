@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.GameSeasonType;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.repository.TeamRankWriteRepository;
@@ -71,8 +72,35 @@ public class TeamRankService {
     }
 
     List<TeamRankRow> calculateRows(int season, List<Game> completedGames) {
+        List<Team> teams = teamRepository.findAll();
+        List<TeamRankRow> currentRows = calculateRowsForGames(season, completedGames, teams);
+        LocalDate latestCompletedDay = completedGames.stream()
+                .filter(this::hasUsableFinalScore)
+                .map(Game::getGameDate)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+        if (latestCompletedDay == null) {
+            return currentRows;
+        }
+
+        List<Game> gamesBeforeLatestDay = completedGames.stream()
+                .filter(this::hasUsableFinalScore)
+                .filter(game -> game.getGameDate().isBefore(latestCompletedDay))
+                .toList();
+        if (gamesBeforeLatestDay.isEmpty()) {
+            return currentRows;
+        }
+
+        Map<UUID, Integer> previousRanks = calculateRowsForGames(season, gamesBeforeLatestDay, teams).stream()
+                .collect(java.util.stream.Collectors.toMap(TeamRankRow::teamId, TeamRankRow::rank));
+        return currentRows.stream()
+                .map(row -> withPreviousRank(row, previousRanks.get(row.teamId())))
+                .toList();
+    }
+
+    private List<TeamRankRow> calculateRowsForGames(int season, List<Game> completedGames, List<Team> teams) {
         Map<UUID, TeamAccumulator> accumulators = new HashMap<>();
-        for (Team team : teamRepository.findAll()) {
+        for (Team team : teams) {
             accumulators.put(team.getId(), new TeamAccumulator(team));
         }
 
@@ -102,7 +130,7 @@ public class TeamRankService {
     private List<Game> completedRegularSeasonGames(int season) {
         LocalDate start = LocalDate.of(season, 1, 1);
         LocalDate end = LocalDate.of(season, 12, 31);
-        return gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+        List<Game> games = gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
                         start,
                         end,
                         GameStatus.FINAL
@@ -111,6 +139,12 @@ public class TeamRankService {
                 .filter(game -> !game.isCancelled())
                 .filter(game -> !game.isPostponed())
                 .filter(this::hasUsableFinalScore)
+                .toList();
+        if (games.stream().anyMatch(game -> GameSeasonType.UNKNOWN.getApiValue().equals(game.getSeasonType()))) {
+            throw new IllegalStateException("Season classification is incomplete; import schedules before refreshing rankings");
+        }
+        return games.stream()
+                .filter(game -> GameSeasonType.REGULAR_SEASON.getApiValue().equals(game.getSeasonType()))
                 .toList();
     }
 
@@ -164,6 +198,7 @@ public class TeamRankService {
                 season,
                 accumulator.team.getId(),
                 rank,
+                null,
                 accumulator.team.getName(),
                 accumulator.gamesPlayed(),
                 accumulator.wins,
@@ -177,6 +212,15 @@ public class TeamRankService {
                 accumulator.lastGameDate,
                 now,
                 now
+        );
+    }
+
+    private TeamRankRow withPreviousRank(TeamRankRow row, Integer previousRank) {
+        return new TeamRankRow(
+                row.season(), row.teamId(), row.rank(), previousRank, row.teamName(),
+                row.gamesPlayed(), row.wins(), row.losses(), row.draws(), row.winningPercentage(),
+                row.gamesBehind(), row.streakType(), row.streakCount(), row.streakText(),
+                row.lastGameDate(), row.calculatedAt(), row.updatedAt()
         );
     }
 

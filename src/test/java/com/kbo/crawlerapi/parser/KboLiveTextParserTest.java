@@ -107,6 +107,22 @@ class KboLiveTextParserTest {
     }
 
     @Test
+    void mapsPinchRunnerEvents() {
+        var result = parser.parse("""
+                <html><body>
+                  <div id="numCont8">
+                    <span class="normaiflTxt">8회초 KIA 공격<br /></span>
+                    <span class="red">1루주자 나성범 : 대주자 박정우 (으)로 교체<br /></span>
+                  </div>
+                </body></html>
+                """);
+
+        assertThat(result.events()).hasSize(1);
+        assertThat(result.events().get(0).eventType()).isEqualTo("PINCH_RUNNER");
+        assertThat(result.events().get(0).eventText()).isEqualTo("1루주자 나성범 : 대주자 박정우 (으)로 교체");
+    }
+
+    @Test
     void handlesEmptyOrMissingTablesGracefully() {
         var result = parser.parse("<html><body><div>no records</div></body></html>");
 

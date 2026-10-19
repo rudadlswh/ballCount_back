@@ -18,8 +18,12 @@ public record GameSummaryDto(
         TeamSummaryDto homeTeam,
         Integer awayScore,
         Integer homeScore,
+        String awayStartingPitcherName,
+        String homeStartingPitcherName,
         OffsetDateTime updatedAt,
         OffsetDateTime sourceUpdatedAt,
-        boolean isStale
+        boolean isStale,
+        String seasonClassification,
+        Integer seriesId
 ) {
 }
