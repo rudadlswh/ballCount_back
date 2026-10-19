@@ -13,6 +13,20 @@ import jakarta.servlet.http.HttpServletRequest;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ApiErrorResponse> handleStatus(org.springframework.web.server.ResponseStatusException exception,
+            HttpServletRequest request) {
+        var response = ResponseEntity.status(exception.getStatusCode());
+        var status = HttpStatus.valueOf(exception.getStatusCode().value());
+        if (exception.getStatusCode().value() == 429) {
+            response.header("Retry-After", "30");
+        }
+        return response.body(new ApiErrorResponse(OffsetDateTime.now(), exception.getStatusCode().value(),
+                status.getReasonPhrase(),
+                status == HttpStatus.TOO_MANY_REQUESTS ? "RATE_LIMITED" : status.name(),
+                exception.getReason(), request.getRequestURI()));
+    }
+
     @ExceptionHandler({
             InvalidParameterException.class,
             MissingServletRequestParameterException.class,

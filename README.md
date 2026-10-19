@@ -191,6 +191,32 @@ curl http://localhost:8088/healthz
 
 테스트 task는 test profile을 사용하며 production 스키마 접근과 자동 동기화를 차단합니다.
 
+## Security and compatibility
+
+- Set `ADMIN_API_KEY` outside Git. Internal and admin APIs require `X-Admin-Api-Key` (or `X-Admin-Key`);
+  the admin web UI retains session login and CSRF protection. Both reconcile-stale
+  aliases also require an admin key. An unset key denies API-key authentication. Configure trusted
+  ingestion jobs to send the same header before deploying this change.
+- The two `reconcile-stale` aliases accept at most three non-null dates, within
+  the configured past window (default 7 days, hard maximum 366). One request
+  is admitted per configured cooldown (default 3 minutes, minimum 30 seconds)
+  per application instance, with at most one reconciliation running at a time. A busy/cooldown response is HTTP 429 with `Retry-After: 30`. Public
+  calls respect detail-refresh TTL; administrators can still force refresh.
+- Full APNs tokens authorize changes to their own registration. `installationId`
+  and `activityId` are metadata and cannot replace or disable a different token.
+  Same-token updates remain idempotent. Token rotation creates a new row; the
+  existing invalid-token response handling retires old rows when APNs rejects them.
+  The app ends replaced Live Activities itself. During that transition, old tokens
+  are not disabled solely by an unproven installation ID.
+- Apply Flyway V40/V41 with the application rollout. V40 permits separate rows for
+  rotated device, Live Activity and push-to-start tokens while keeping full-token uniqueness; V41 supplies
+  the snapshot and notification-setting columns required by Hibernate's default
+  schema validation, preserving existing columns and their values.
+- Spring Boot 4.0 uses patched Spring MVC 7.0. Existing API naming/date formats are
+  preserved with Boot's Jackson 2 compatibility module and tested over HTTP.
+  Keep `spring.http.converters.preferred-json-mapper=jackson2` until a separately
+  tested Jackson 3 wire-format migration.
+
 ## API
 
 ### Public API
@@ -227,17 +253,17 @@ Internal endpoint는 운영 앱용 public API가 아닙니다.
 
 ~~~bash
 # 한 달의 공식 일정 수집
-curl -X POST 'http://localhost:8088/internal/schedule/import?year=2026&month=4'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/schedule/import?year=2026&month=4'
 
 # 한 경기의 상세·라인스코어 수집
-curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/import'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/import'
 
 # 같은 경기를 반복 갱신해 멱등성 확인
-curl -X POST 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/games/20260401-LG-KIA/detail/refresh?repeat=3'
 
 # 실행 계획만 확인하거나 한 번의 orchestration pass 수행
-curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
-curl -X POST 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=false'
+curl -X POST -H "X-Admin-Api-Key: ${ADMIN_API_KEY}" 'http://localhost:8088/internal/orchestration/detail-refresh-pass?date=2026-04-09&execute=true'
 ~~~
 
 원천 상태가 같으면 반복 실행 결과의 snapshotCreated와 lineScoresUpdated는 false가 됩니다.

@@ -10,6 +10,17 @@ import org.junit.jupiter.api.Test;
 class AppliedMigrationIntegrityTest {
 
     @Test
+    void migrationVersionsAreUniqueAfterMergingBranches() throws Exception {
+        try (var files = java.nio.file.Files.list(java.nio.file.Path.of("src/main/resources/db/migration"))) {
+            var versions = files.map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith("V") && name.endsWith(".sql"))
+                    .map(name -> name.substring(1, name.indexOf("__")).replace('_', '.'))
+                    .toList();
+            assertThat(versions).doesNotHaveDuplicates();
+        }
+    }
+
+    @Test
     void appliedV34MigrationRemainsImmutable() throws Exception {
         try (InputStream migration = getClass().getResourceAsStream(
                 "/db/migration/V34__add_monitored_game_to_notification_devices.sql"

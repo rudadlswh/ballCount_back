@@ -12,8 +12,6 @@ public interface NotificationDeviceRepository extends JpaRepository<Notification
 
     Optional<NotificationDevice> findByPlatformAndEnvironmentAndDeviceToken(String platform, String environment, String deviceToken);
 
-    Optional<NotificationDevice> findByPlatformAndEnvironmentAndInstallationId(String platform, String environment, String installationId);
-
     List<NotificationDevice> findByInstallationId(String installationId);
 
     Optional<NotificationDevice> findTopByInstallationIdAndEnvironmentOrderByUpdatedAtDesc(String installationId, String environment);

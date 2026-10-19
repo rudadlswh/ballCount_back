@@ -10,20 +10,16 @@ COPY src ./src
 
 RUN ./gradlew bootJar --no-daemon
 
-FROM eclipse-temurin:17-jre-jammy AS runtime
+FROM alpine:3.24 AS runtime
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app
-
-COPY --from=build --chown=app:app /workspace/build/libs/*.jar /app/app.jar
+RUN apk add --no-cache openjdk17-jre-headless tzdata ca-certificates curl \
+    && apk upgrade --no-cache
+COPY --from=build --chown=10001:10001 /workspace/build/libs/*.jar /app/app.jar
 
 ENV JAVA_TOOL_OPTIONS="-Xms128m -Xmx256m -Dfile.encoding=UTF-8"
 
-USER app
+USER 10001:10001
 EXPOSE 8088
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

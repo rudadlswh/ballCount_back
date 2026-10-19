@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         classes = SecurityBoundaryIntegrationTest.TestApplication.class,
-        properties = {"server.servlet.context-path=/test", "app.security.admin-api-key=test-key",
+        properties = {"server.servlet.context-path=/test", "spring.config.import=", "app.security.admin-api-key=test-key",
                 "app.security.registration-rate-limit-max-requests=1",
                 "app.security.admin-login-max-attempts=3", "app.admin-ui.username=operator",
                 "app.admin-ui.password=test-password"})
@@ -122,9 +122,9 @@ class SecurityBoundaryIntegrationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
-    @EnableAutoConfiguration(excludeName = {"org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
-            "org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration",
-            "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"})
+    @EnableAutoConfiguration(excludeName = {"org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+            "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
+            "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"})
     @EnableConfigurationProperties({AppSecurityProperties.class, KboAdminProperties.class, AdminUiProperties.class})
     @Import({AdminApiKeyFilterConfig.class, RegistrationRequestSizeLimitFilterConfig.class,
             RegistrationRateLimitFilterConfig.class, AdminLoginRateLimitFilterConfig.class,

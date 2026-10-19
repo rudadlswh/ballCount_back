@@ -77,17 +77,9 @@ public class DeviceRegistrationService {
                 normalizedEnvironment,
                 normalizedToken
         );
-        Optional<NotificationDevice> installationMatchedDevice = normalizedInstallationId == null
-                ? Optional.empty()
-                : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(
-                        normalizedPlatform,
-                        normalizedEnvironment,
-                        normalizedInstallationId
-                );
-
-        boolean created = installationMatchedDevice.isEmpty() && tokenMatchedDevice.isEmpty();
-        NotificationDevice device = installationMatchedDevice
-                .or(() -> tokenMatchedDevice)
+        // Installation IDs are metadata, never proof of control over another token.
+        boolean created = tokenMatchedDevice.isEmpty();
+        NotificationDevice device = tokenMatchedDevice
                 .orElseGet(() -> new NotificationDevice(
                         UUID.randomUUID(),
                         normalizedPlatform,
@@ -111,13 +103,6 @@ public class DeviceRegistrationService {
                         normalizedSettings.authorizationStatus(),
                         now
                 ));
-        tokenMatchedDevice
-                .filter(tokenDevice -> !tokenDevice.getId().equals(device.getId()))
-                .ifPresent(tokenDevice -> {
-                    notificationDeviceRepository.delete(tokenDevice);
-                    notificationDeviceRepository.flush();
-                });
-
         boolean tokenChanged = !normalizedToken.equals(device.getDeviceToken());
         String previousTokenHash = tokenChanged ? RegistrationInputNormalizer.tokenFingerprint(device.getDeviceToken()) : null;
         device.update(
@@ -160,9 +145,6 @@ public class DeviceRegistrationService {
         String normalizedInstallationId = RegistrationInputNormalizer.optionalText(installationId, "installationId", MAX_INSTALLATION_ID_LENGTH);
         OffsetDateTime now = OffsetDateTime.now(applicationClock);
         notificationDeviceRepository.findByPlatformAndEnvironmentAndDeviceToken(normalizedPlatform, normalizedEnvironment, RegistrationInputNormalizer.requireText(deviceToken, "deviceToken", MAX_DEVICE_TOKEN_LENGTH))
-                .or(() -> normalizedInstallationId == null
-                        ? java.util.Optional.empty()
-                        : notificationDeviceRepository.findByPlatformAndEnvironmentAndInstallationId(normalizedPlatform, normalizedEnvironment, normalizedInstallationId))
                 .ifPresent(device -> device.disable(now));
     }
 

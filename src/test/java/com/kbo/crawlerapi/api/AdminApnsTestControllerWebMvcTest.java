@@ -66,7 +66,8 @@ class AdminApnsTestControllerWebMvcTest {
         mockMvc.perform(post("/admin/test/apns")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson("ssg")))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
     @Test

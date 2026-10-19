@@ -14,11 +14,5 @@ public interface LiveActivityPushToStartTokenRepository extends JpaRepository<Li
             String pushToStartToken
     );
 
-    Optional<LiveActivityPushToStartToken> findByPlatformAndEnvironmentAndInstallationId(
-            String platform,
-            String environment,
-            String installationId
-    );
-
     List<LiveActivityPushToStartToken> findByActiveTrue();
 }

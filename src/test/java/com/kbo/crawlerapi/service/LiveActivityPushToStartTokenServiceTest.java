@@ -37,22 +37,37 @@ class LiveActivityPushToStartTokenServiceTest {
     private LiveActivityPushToStartTokenRepository repository;
 
     @Test
-    void registrationUpdatesExistingInstallationRow() {
+    void newTokenCannotOverwriteAnotherRegistrationWithTheSameInstallationId() {
         LiveActivityPushToStartToken existing = token("old-token", "lg");
         when(repository.findByPlatformAndEnvironmentAndPushToStartToken(eq("ios"), eq("sandbox"), eq("new-token")))
                 .thenReturn(Optional.empty());
-        when(repository.findByPlatformAndEnvironmentAndInstallationId(eq("ios"), eq("sandbox"), eq("install-1")))
-                .thenReturn(Optional.of(existing));
         LiveActivityPushToStartTokenService service = service();
 
         var result = service.register(command("new-token", true, true));
 
         ArgumentCaptor<LiveActivityPushToStartToken> captor = ArgumentCaptor.forClass(LiveActivityPushToStartToken.class);
         verify(repository).save(captor.capture());
-        assertThat(result.id()).isEqualTo(existing.getId());
+        assertThat(result.id()).isNotEqualTo(existing.getId());
+        assertThat(existing.getPushToStartToken()).isEqualTo("old-token");
         assertThat(captor.getValue().getPushToStartToken()).isEqualTo("new-token");
         assertThat(captor.getValue().isLiveActivityAutoStartEnabled()).isTrue();
         assertThat(captor.getValue().isActive()).isTrue();
+        verify(repository).findByPlatformAndEnvironmentAndPushToStartToken("ios", "sandbox", "new-token");
+        org.mockito.Mockito.verifyNoMoreInteractions(repository);
+    }
+
+    @Test
+    void sameTokenUpdatesSettingsAndPreservesDeliveryHistory() {
+        LiveActivityPushToStartToken existing = token("same-token", "lg");
+        existing.markStartDelivered("previous-game", OffsetDateTime.now(CLOCK));
+        when(repository.findByPlatformAndEnvironmentAndPushToStartToken("ios", "sandbox", "same-token"))
+                .thenReturn(Optional.of(existing));
+
+        var result = service().register(command("same-token", true, true));
+
+        assertThat(result.id()).isEqualTo(existing.getId());
+        assertThat(existing.getLastStartedGameKey()).isEqualTo("previous-game");
+        verify(repository).save(existing);
     }
 
     @Test

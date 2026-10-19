@@ -36,7 +36,7 @@ class AdminApiKeyFilterTest {
                         new AdminRankController(teamRankService),
                         new InternalDetailRefreshOrchestrationController(new StubDetailRefreshOrchestratorService())
                 )
-                .addFilters(new AdminApiKeyFilter(properties))
+                .addFilter(new AdminApiKeyFilter(properties), "/admin", "/admin/*", "/internal", "/internal/*")
                 .build();
     }
 

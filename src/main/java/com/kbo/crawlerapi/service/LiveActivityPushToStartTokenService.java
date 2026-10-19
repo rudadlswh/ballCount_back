@@ -73,21 +73,9 @@ public class LiveActivityPushToStartTokenService {
                 environment,
                 pushToStartToken
         );
-        Optional<LiveActivityPushToStartToken> installationMatch = repository.findByPlatformAndEnvironmentAndInstallationId(
-                platform,
-                environment,
-                installationId
-        );
-
-        LiveActivityPushToStartToken token = installationMatch
-                .or(() -> tokenMatch)
+        // Installation IDs are metadata, never proof of control over another token.
+        LiveActivityPushToStartToken token = tokenMatch
                 .orElseGet(() -> new LiveActivityPushToStartToken(UUID.randomUUID(), now));
-        tokenMatch
-                .filter(existing -> !existing.getId().equals(token.getId()))
-                .ifPresent(existing -> {
-                    repository.delete(existing);
-                    repository.flush();
-                });
         token.update(
                 platform,
                 environment,
