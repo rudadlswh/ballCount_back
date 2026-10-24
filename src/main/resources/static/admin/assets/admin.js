@@ -25,6 +25,29 @@
             });
         });
 
+        document.querySelectorAll('.schedule-import-form').forEach(form => {
+            const button = form.querySelector('button[type="submit"]');
+            const spinner = form.querySelector('[data-schedule-import-spinner]');
+            const label = form.querySelector('[data-schedule-import-label]');
+            const status = form.querySelector('[data-schedule-import-status]');
+            const setLoading = loading => {
+                button.disabled = loading;
+                form.setAttribute('aria-busy', String(loading));
+                spinner.hidden = !loading;
+                status.hidden = !loading;
+                label.textContent = loading ? '수집 중…' : '일정 수집 실행';
+            };
+            form.addEventListener('submit', event => {
+                if (event.defaultPrevented) return;
+                if (button.disabled) {
+                    event.preventDefault();
+                    return;
+                }
+                setLoading(true);
+            });
+            window.addEventListener('pageshow', () => setLoading(false));
+        });
+
         const pauseButton = document.querySelector('[data-refresh-toggle]');
         if (!pauseButton) return;
         pauseButton.hidden = false;

@@ -176,6 +176,8 @@ SPRING_DATASOURCE_PASSWORD=your-password
 ./gradlew bootRun
 ~~~
 
+IntelliJ에서는 공유 실행 설정 `KboCrawlerApiApplication (Gradle)`을 선택하면 `local` 프로필로 실행됩니다. Gradle의 `bootRun`을 사용하면 최신 `application.yml`, Flyway 마이그레이션, Thymeleaf 템플릿이 실행 classpath에 포함됩니다. 실행 로그에 템플릿 경로 누락이나 소스보다 낮은 Flyway 최신 버전이 표시되면 `build/resources/main`이 빠진 Java 직접 실행 설정인지 확인하세요.
+
 서버는 기본적으로 http://localhost:8088에서 실행됩니다.
 
 ~~~bash

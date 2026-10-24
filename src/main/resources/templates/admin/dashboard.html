@@ -43,7 +43,11 @@
                 <input type="hidden" name="_csrf" th:value="${session.KBO_ADMIN_CSRF_TOKEN}">
                 <label><span>시작 월</span><input type="month" name="fromMonth" required th:value="${scheduleImportFromMonth}"></label>
                 <label><span>종료 월</span><input type="month" name="toMonth" required th:value="${scheduleImportToMonth}"></label>
-                <button class="button button--primary" type="submit">일정 수집 실행</button>
+                <button class="button button--primary" type="submit">
+                    <span class="schedule-import-spinner" data-schedule-import-spinner aria-hidden="true" hidden></span>
+                    <span data-schedule-import-label>일정 수집 실행</span>
+                </button>
+                <p class="schedule-import-status" data-schedule-import-status role="status" aria-live="polite" hidden>일정을 수집하고 있습니다. 완료될 때까지 기다려 주세요.</p>
             </form>
 
             <div class="table-wrap" tabindex="0" role="region" aria-label="표 데이터 · 가로로 스크롤하여 모든 열 보기" th:if="${scheduleImportResult != null}">

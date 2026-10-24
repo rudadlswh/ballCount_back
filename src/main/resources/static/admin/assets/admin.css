@@ -271,6 +271,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 .manual-notification-actions { display: flex; align-items: center; justify-content: space-between; gap: 20px; color: var(--muted); }
 .schedule-import-panel { margin-top: 20px; }
 .schedule-import-form { grid-template-columns: minmax(160px, 220px) minmax(160px, 220px) auto; justify-content: start; margin-top: 20px; }
+.schedule-import-spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: schedule-import-spin .8s linear infinite; }
+.schedule-import-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .875rem; }
+@keyframes schedule-import-spin { to { transform: rotate(360deg); } }
 .panel-description { margin: -8px 0 0; color: var(--muted); font-size: .875rem; }
 .panel-note { display: block; margin-top: 16px; color: var(--muted); font-size: .8125rem; }
 .login-page { min-height: 100dvh; background: var(--paper); }
