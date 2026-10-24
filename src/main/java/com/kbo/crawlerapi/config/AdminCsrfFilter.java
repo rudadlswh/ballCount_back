@@ -18,7 +18,8 @@ public class AdminCsrfFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (SecurityRequestPath.withinApplication(request).startsWith("/admin/assets/")) {
+        String path = SecurityRequestPath.withinApplication(request);
+        if (path.startsWith("/admin/assets/")) {
             chain.doFilter(request, response);
             return;
         }
@@ -41,7 +42,14 @@ public class AdminCsrfFilter extends OncePerRequestFilter {
             String candidate = request.getParameter("_csrf");
             if (expected == null || candidate == null || !MessageDigest.isEqual(
                     expected.getBytes(StandardCharsets.UTF_8), candidate.getBytes(StandardCharsets.UTF_8))) {
-                response.setStatus(HttpStatus.FORBIDDEN.value());
+                // Login rotates the token, so a repeated successful login POST can carry the old one.
+                if ("POST".equals(request.getMethod()) && "/admin/login".equals(path)
+                        && session != null && Boolean.TRUE.equals(session.getAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE))) {
+                    response.setStatus(HttpStatus.SEE_OTHER.value());
+                    response.setHeader("Location", request.getContextPath() + "/admin/dashboard");
+                } else {
+                    response.setStatus(HttpStatus.FORBIDDEN.value());
+                }
                 return;
             }
         }

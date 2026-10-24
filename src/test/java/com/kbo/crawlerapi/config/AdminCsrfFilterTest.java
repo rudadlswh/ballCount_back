@@ -29,6 +29,7 @@ class AdminCsrfFilterTest {
     @Test
     void unsafeMethodsRequireTheExistingSessionToken() throws Exception {
         var session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
         session.setAttribute(AdminCsrfFilter.TOKEN_SESSION_ATTRIBUTE, "session-token");
         for (String method : new String[]{"POST", "PUT", "PATCH", "DELETE"}) {
             var missing = request(method, "/admin/schedule/import", session);
@@ -49,6 +50,30 @@ class AdminCsrfFilterTest {
         request.addParameter("_csrf", "arbitrary-token");
         assertThat(apply(request)).isEqualTo(403);
         assertThat(request.getSession(false)).isNull();
+    }
+
+    @Test
+    void authenticatedLoginRetryUsesTheContextPathWithoutProcessingCredentials() throws Exception {
+        var session = new MockHttpSession();
+        session.setAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true);
+        var request = request("POST", "/console/admin/login", session);
+        request.setContextPath("/console");
+        var response = new MockHttpServletResponse();
+        filter.doFilter(request, response, (req, res) -> {
+            throw new AssertionError("A stale login retry must not process credentials");
+        });
+        assertThat(response.getStatus()).isEqualTo(303);
+        assertThat(response.getHeader("Location")).isEqualTo("/console/admin/dashboard");
+    }
+
+    @Test
+    void unauthenticatedLoginWithTheWrongSessionTokenIsStillRejected() throws Exception {
+        var session = new MockHttpSession();
+        session.setAttribute(AdminCsrfFilter.TOKEN_SESSION_ATTRIBUTE, "expected-token");
+        var request = request("POST", "/admin/login", session);
+        request.addParameter("_csrf", "stale-token");
+        assertThat(apply(request)).isEqualTo(403);
+        assertThat(session.getAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE)).isNull();
     }
 
     @Test

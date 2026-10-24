@@ -9,21 +9,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
 import com.kbo.crawlerapi.config.AdminApiKeyFilter;
+import com.kbo.crawlerapi.config.AdminCsrfFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class AdminAuthenticationControllerTest {
 
     private MockMvc mockMvc;
+    private AdminAuthenticationService service;
 
     @BeforeEach
     void setUp() {
         AdminUiProperties properties = new AdminUiProperties();
         properties.setUsername("operator");
         properties.setPassword("very-secret");
-        AdminAuthenticationService service = new AdminAuthenticationService(properties);
+        service = new AdminAuthenticationService(properties);
         mockMvc = MockMvcBuilders.standaloneSetup(new AdminAuthenticationController(service)).build();
     }
 
@@ -43,6 +46,27 @@ class AdminAuthenticationControllerTest {
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/admin/dashboard"))
                 .andExpect(request().sessionAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true));
+    }
+
+    @Test
+    void repeatedLoginWithThePreviousTokenRedirectsInsteadOfShowingForbidden() throws Exception {
+        var guarded = MockMvcBuilders.standaloneSetup(new AdminAuthenticationController(service))
+                .addFilters(new AdminCsrfFilter()).build();
+        var page = guarded.perform(get("/admin/login")).andExpect(status().isOk()).andReturn();
+        var session = (MockHttpSession) page.getRequest().getSession(false);
+        var loginToken = (String) session.getAttribute(AdminCsrfFilter.TOKEN_SESSION_ATTRIBUTE);
+
+        guarded.perform(post("/admin/login").session(session)
+                        .param("username", "operator").param("password", "very-secret")
+                        .param("_csrf", loginToken))
+                .andExpect(status().isFound())
+                .andExpect(request().sessionAttribute(AdminApiKeyFilter.ADMIN_SESSION_ATTRIBUTE, true));
+
+        guarded.perform(post("/admin/login").session(session)
+                        .param("username", "operator").param("password", "very-secret")
+                        .param("_csrf", loginToken))
+                .andExpect(status().isSeeOther())
+                .andExpect(redirectedUrl("/admin/dashboard"));
     }
 
     @Test
