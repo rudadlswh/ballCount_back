@@ -78,9 +78,11 @@ public class AdminDataService {
         int issueCount = databaseHealthy ? issues().size() : 0;
 
         boolean schedulerEnabled = syncProperties.isEnabled();
+        boolean offSeason = syncProperties.isOffSeason(clock);
         String schedulerState = !schedulerEnabled ? "비활성"
+                : offSeason ? "비시즌 대기"
                 : scheduler.isRunning() ? "실행 중" : "중지됨";
-        String schedulerTone = !schedulerEnabled ? "muted" : scheduler.isRunning() ? "success" : "danger";
+        String schedulerTone = !schedulerEnabled || offSeason ? "muted" : scheduler.isRunning() ? "success" : "danger";
 
         return new DashboardView(
                 "정상",

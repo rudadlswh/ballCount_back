@@ -26,7 +26,7 @@ public class NotificationOutboxScheduler {
 
     @Scheduled(fixedDelay = 5_000, initialDelay = 10_000)
     public void recover() {
-        if (!sync.isEnabled()) return;
+        if (!sync.isActive(clock)) return;
         for (var eventId : outbox.due(OffsetDateTime.now(clock))) {
             try { executor.execute(() -> delivery.deliverDurable(eventId)); }
             catch (RejectedExecutionException exception) { break; }

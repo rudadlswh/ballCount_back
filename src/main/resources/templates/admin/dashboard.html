@@ -18,8 +18,19 @@
     <main class="main" id="main-content" tabindex="-1">
         <header class="page-header">
             <div><p class="eyebrow">실시간 운영</p><h1>대시보드</h1><p>경기 수집과 알림, 서버 상태를 한곳에서 확인합니다.</p></div>
-            <div class="header-actions">
+            <div class="header-actions dashboard-refresh-controls">
                 <div class="live-pill"><span aria-hidden="true"></span><span data-refresh-status>15초마다 자동 갱신</span></div>
+                <label class="refresh-duration-control" data-refresh-duration-control hidden>
+                    <span>일시정지 기간</span>
+                    <select data-refresh-duration aria-controls="dashboard-content">
+                        <option value="1">1분</option>
+                        <option value="5" selected>5분</option>
+                        <option value="10">10분</option>
+                        <option value="30">30분</option>
+                        <option value="60">1시간</option>
+                        <option value="0">수동 재개까지</option>
+                    </select>
+                </label>
                 <button class="button button--subtle" type="button" data-refresh-toggle aria-pressed="false" aria-controls="dashboard-content" hidden>자동 갱신 일시정지</button>
             </div>
         </header>

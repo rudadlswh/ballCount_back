@@ -2,6 +2,7 @@ package com.kbo.crawlerapi.service;
 
 import com.kbo.crawlerapi.api.InvalidParameterException;
 import com.kbo.crawlerapi.config.KboReconcileProperties;
+import com.kbo.crawlerapi.config.SyncProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,23 +23,31 @@ public class StaleGameReconciliationService {
     private final LiveGameSyncService liveGameSyncService;
     private final KboReconcileProperties properties;
     private final Clock applicationClock;
+    private final SyncProperties syncProperties;
     private final Set<LocalDate> inFlightDates = new HashSet<>();
     private Instant nextPublicAdmission = Instant.MIN;
 
     public StaleGameReconciliationService(
             LiveGameSyncService liveGameSyncService,
             KboReconcileProperties properties,
-            Clock applicationClock
+            Clock applicationClock,
+            SyncProperties syncProperties
     ) {
         this.liveGameSyncService = Objects.requireNonNull(liveGameSyncService, "liveGameSyncService must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.applicationClock = Objects.requireNonNull(applicationClock, "applicationClock must not be null");
+        this.syncProperties = Objects.requireNonNull(syncProperties, "syncProperties must not be null");
     }
 
     public StaleGameReconciliationResult reconcilePublic(List<LocalDate> dates) {
         validateMaxDates(dates, Math.max(1, Math.min(3, properties.getPublicMaxDates())), "dates");
         List<LocalDate> uniqueDates = normalizeDates(dates);
         validatePublicDateRange(uniqueDates);
+        if (!syncProperties.isActive(applicationClock)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "automatic refresh is paused; stored game data remains available");
+        }
         return reconcileValidated(uniqueDates, true);
     }
 

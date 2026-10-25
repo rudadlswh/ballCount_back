@@ -50,16 +50,36 @@
 
         const pauseButton = document.querySelector('[data-refresh-toggle]');
         if (!pauseButton) return;
+        const duration = document.querySelector('[data-refresh-duration]');
+        const status = document.querySelector('[data-refresh-status]');
+        document.querySelector('[data-refresh-duration-control]').hidden = false;
         pauseButton.hidden = false;
         let paused = false;
-        pauseButton.addEventListener('click', () => {
-            paused = !paused;
+        let pausedUntil = null;
+        let resumeTimer;
+
+        function setPaused(value) {
+            clearTimeout(resumeTimer);
+            paused = value;
+            const minutes = Number(duration.value);
+            pausedUntil = paused && minutes > 0 ? Date.now() + minutes * 60_000 : null;
+            duration.disabled = paused;
             pauseButton.setAttribute('aria-pressed', String(paused));
             pauseButton.textContent = paused ? '자동 갱신 재개' : '자동 갱신 일시정지';
-            const status = document.querySelector('[data-refresh-status]');
-            status.textContent = paused ? '자동 갱신 일시정지됨' : '15초마다 자동 갱신';
-        });
+            status.textContent = pausedUntil
+                ? `${new Date(pausedUntil).toLocaleTimeString('ko-KR')}까지 일시정지`
+                : (paused ? '수동 재개까지 일시정지됨' : '15초마다 자동 갱신');
+            if (pausedUntil) resumeTimer = setTimeout(() => setPaused(false), pausedUntil - Date.now());
+        }
+
+        function resumeIfExpired() {
+            if (pausedUntil && Date.now() >= pausedUntil) setPaused(false);
+        }
+
+        pauseButton.addEventListener('click', () => setPaused(!paused));
+        document.addEventListener('visibilitychange', resumeIfExpired);
         document.addEventListener('htmx:beforeRequest', event => {
+            resumeIfExpired();
             const region = event.detail.elt;
             if (region.id === 'dashboard-content' && (paused || region.contains(document.activeElement))) {
                 event.preventDefault();
