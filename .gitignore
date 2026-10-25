@@ -21,6 +21,8 @@ secrets/
 *.p12
 *.cer
 *.crt
+# Public CA certificates used by the trust-store regression test.
+!security/test-roots.pem
 
 # Operational database backups
 backups/
