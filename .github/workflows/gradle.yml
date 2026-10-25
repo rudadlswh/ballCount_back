@@ -33,7 +33,7 @@ jobs:
         javac --release 17 -d "$RUNNER_TEMP/java-security" security/TrustStorePolicy*.java
         java -cp "$RUNNER_TEMP/java-security" TrustStorePolicyTest security/test-roots.pem "$RUNNER_TEMP/trust-tests"
         sh security/test-entrypoint.sh
-        java -cp "$RUNNER_TEMP/java-security" TrustStorePolicy sanitize "$JAVA_HOME/lib/security/cacerts"
+        sudo "$JAVA_HOME/bin/java" -cp "$RUNNER_TEMP/java-security" TrustStorePolicy sanitize "$JAVA_HOME/lib/security/cacerts"
         java -cp "$RUNNER_TEMP/java-security" TrustStorePolicy
 
     # Configure Gradle for optimal use in GitHub Actions, including caching of downloaded dependencies.
@@ -72,7 +72,7 @@ jobs:
     - name: Apply Java trust policy
       run: |
         javac --release 17 -d "$RUNNER_TEMP/java-security" security/TrustStorePolicy.java
-        java -cp "$RUNNER_TEMP/java-security" TrustStorePolicy sanitize "$JAVA_HOME/lib/security/cacerts"
+        sudo "$JAVA_HOME/bin/java" -cp "$RUNNER_TEMP/java-security" TrustStorePolicy sanitize "$JAVA_HOME/lib/security/cacerts"
         java -cp "$RUNNER_TEMP/java-security" TrustStorePolicy
 
     # Generates and submits a dependency graph, enabling Dependabot Alerts for all project dependencies.
