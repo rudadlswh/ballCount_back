@@ -30,6 +30,12 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      - name: Apply Java trust policy
+        run: |
+          javac --release 17 -d "$RUNNER_TEMP/java-security" security/TrustStorePolicy.java
+          java -cp "$RUNNER_TEMP/java-security" TrustStorePolicy sanitize "$JAVA_HOME/lib/security/cacerts"
+          java -cp "$RUNNER_TEMP/java-security" TrustStorePolicy
+
       - name: Run tests
         run: ./gradlew test --no-daemon
 

@@ -7,3 +7,6 @@
 !gradle/**
 !src/
 !src/**
+!security/
+!security/TrustStorePolicy.java
+!security/docker-entrypoint.sh
