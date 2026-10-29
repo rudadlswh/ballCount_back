@@ -23,6 +23,7 @@ import com.kbo.crawlerapi.crawler.KboScheduleClient;
 import com.kbo.crawlerapi.crawler.KboScheduleClient.ScheduleResponse;
 import com.kbo.crawlerapi.domain.Game;
 import com.kbo.crawlerapi.domain.GameCancelReason;
+import com.kbo.crawlerapi.domain.GameSeasonType;
 import com.kbo.crawlerapi.domain.GameStatus;
 import com.kbo.crawlerapi.domain.Team;
 import com.kbo.crawlerapi.parser.KboGameListParser;
@@ -134,13 +135,14 @@ public class KboScheduleImportService {
                     suppressPrematureLiveStatuses(parseResult.games()),
                     parseResult.skippedRows()
             );
+            int removedCount = cancelRemovedPostseasonGames(parseResult, yearMonth.atDay(1), yearMonth.atEndOfMonth());
             crawlJobTrackingService.markScheduleSucceeded(crawlJob.getId(), parseResult.skippedRows().size());
             return new ScheduleIngestionResult(
                     yearMonth,
                     persistResult.teamCreatedCount(),
                     persistResult.teamUpdatedCount(),
                     persistResult.gameCreatedCount(),
-                    persistResult.gameUpdatedCount(),
+                    persistResult.gameUpdatedCount() + removedCount,
                     parseResult.skippedRows().size(),
                     parseResult.skippedMissingProviderGameIdCount(),
                     0,
@@ -234,13 +236,14 @@ public class KboScheduleImportService {
 
         try {
             PersistResult persistResult = persistParsedGames(gamesForDate, skippedRowsForDate);
+            int removedCount = cancelRemovedPostseasonGames(parseResult, date, date);
             crawlJobTrackingService.markScheduleSucceeded(crawlJob.getId(), skippedRowsForDate.size());
             log.info(
                     "Completed daily KBO schedule crawl. requestedDate={}, derivedMonth={}, gameCreatedCount={}, gameUpdatedCount={}, skippedRowCount={}, skippedMissingProviderGameIdCount={}",
                     date,
                     yearMonth,
                     persistResult.gameCreatedCount(),
-                    persistResult.gameUpdatedCount(),
+                    persistResult.gameUpdatedCount() + removedCount,
                     skippedRowsForDate.size(),
                     skippedMissingProviderGameIdCount(skippedRowsForDate)
             );
@@ -250,7 +253,7 @@ public class KboScheduleImportService {
                     persistResult.teamUpdatedCount(),
                     gamesForDate.size(),
                     persistResult.gameCreatedCount(),
-                    persistResult.gameUpdatedCount(),
+                    persistResult.gameUpdatedCount() + removedCount,
                     skippedRowsForDate.size(),
                     skippedMissingProviderGameIdCount(skippedRowsForDate),
                     0,
@@ -353,6 +356,43 @@ public class KboScheduleImportService {
                 failures,
                 dailyResults
         );
+    }
+
+    private int cancelRemovedPostseasonGames(MonthlyScheduleParseResult parsed, LocalDate from, LocalDate to) {
+        if (gameRepository == null || !parsed.skippedRows().isEmpty()) {
+            return 0;
+        }
+        Map<Integer, List<ParsedScheduleGame>> seriesGames = new HashMap<>();
+        for (var game : parsed.games()) {
+            if (GameSeasonType.fromSeriesId(game.seriesId()) == GameSeasonType.POSTSEASON) {
+                seriesGames.computeIfAbsent(game.seriesId(), ignored -> new ArrayList<>()).add(game);
+            }
+        }
+        // An empty or incomplete response cannot prove an old fixture was removed.
+        seriesGames.values().removeIf(games -> games.stream().anyMatch(game -> !hasText(game.providerGameId())));
+        if (seriesGames.isEmpty()) {
+            return 0;
+        }
+        int updatedCount = 0;
+        OffsetDateTime appliedAt = OffsetDateTime.now(applicationClock);
+        for (Game existing : gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+                from, to, GameStatus.SCHEDULED)) {
+            var currentGames = seriesGames.get(existing.getSeriesId());
+            if (existing.getStatus() != GameStatus.SCHEDULED || !"kbo".equals(existing.getProvider())
+                    || !hasText(existing.getProviderGameId()) || currentGames == null
+                    || currentGames.stream().anyMatch(game -> existing.getProviderGameId().equals(game.providerGameId()))) {
+                continue;
+            }
+            String reason = Game.REMOVED_SCHEDULE_REASON;
+            if (existing.syncDetail(GameStatus.CANCELLED, null, null, null, true, false,
+                    GameCancelReason.ETC, reason, null, null, null, reason, appliedAt)) {
+                gameRepository.save(existing);
+                updatedCount++;
+                log.info("Cancelled removed postseason fixture. providerGameId={} date={} seriesId={}",
+                        existing.getProviderGameId(), existing.getGameDate(), existing.getSeriesId());
+            }
+        }
+        return updatedCount;
     }
 
     private int skippedMissingProviderGameIdCount(List<KboScheduleParser.SkippedScheduleRow> skippedRows) {

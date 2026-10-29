@@ -83,6 +83,9 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .page-header p:not(.eyebrow) { margin: 8px 0 0; color: var(--muted); font-size: .875rem; }
 .eyebrow { margin: 0; color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .01em; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.dashboard-refresh-controls { flex-shrink: 1; flex-wrap: wrap; }
+.refresh-duration-control { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .8125rem; white-space: nowrap; }
+.refresh-duration-control select { width: auto; }
 .live-pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel); font-size: .75rem; white-space: nowrap; }
 .live-pill > span:first-child { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }

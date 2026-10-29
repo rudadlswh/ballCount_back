@@ -3,12 +3,15 @@ package com.kbo.crawlerapi.admin;
 import com.kbo.crawlerapi.config.LiveSyncProperties;
 import com.kbo.crawlerapi.config.SyncProperties;
 import com.kbo.crawlerapi.scheduler.LiveGameSyncScheduler;
+import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.domain.GameCancelReason;
 import java.lang.management.ManagementFactory;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -78,9 +81,11 @@ public class AdminDataService {
         int issueCount = databaseHealthy ? issues().size() : 0;
 
         boolean schedulerEnabled = syncProperties.isEnabled();
+        boolean offSeason = syncProperties.isOffSeason(clock);
         String schedulerState = !schedulerEnabled ? "비활성"
+                : offSeason ? "비시즌 대기"
                 : scheduler.isRunning() ? "실행 중" : "중지됨";
-        String schedulerTone = !schedulerEnabled ? "muted" : scheduler.isRunning() ? "success" : "danger";
+        String schedulerTone = !schedulerEnabled || offSeason ? "muted" : scheduler.isRunning() ? "success" : "danger";
 
         return new DashboardView(
                 "정상",
@@ -99,6 +104,58 @@ public class AdminDataService {
                 authenticationService.maskedPassword(),
                 mask(environment.getProperty("spring.datasource.username"))
         );
+    }
+
+    public Optional<GameEditView> gameEdit(String publicGameId) {
+        return jdbcTemplate.query("""
+                SELECT scheduled_at, stadium, status, COALESCE(status_reason, raw_cancel_text) AS status_reason, cancel_reason
+                FROM games WHERE public_game_id = ?
+                """, (rs, rowNum) -> {
+            OffsetDateTime scheduled = rs.getObject("scheduled_at", OffsetDateTime.class);
+            return new GameEditView(scheduled == null ? null : scheduled.atZoneSameInstant(KST).toLocalTime(),
+                    rs.getString("stadium"), rs.getString("status"), rs.getString("status_reason"), rs.getString("cancel_reason"));
+        }, publicGameId).stream().findFirst();
+    }
+
+    public boolean updateGame(String publicGameId, LocalTime scheduledTime, String stadium,
+                              String status, String statusReason, String cancelReason) {
+        var parsedStatus = GameStatus.fromApiValue(status);
+        if (parsedStatus == GameStatus.UNKNOWN) {
+            throw new IllegalArgumentException("경기 상태를 선택해 주세요.");
+        }
+        String normalizedStadium = editText(stadium, 100, "구장");
+        String normalizedReason = editText(statusReason, 255, "상태 사유");
+        boolean cancelled = parsedStatus == GameStatus.CANCELLED;
+        boolean postponed = parsedStatus == GameStatus.POSTPONED;
+        String normalizedCancelReason = cancelled
+                ? GameCancelReason.fromApiValue(
+                        cancelReason == null || cancelReason.isBlank() ? "unknown" : cancelReason).getApiValue() : null;
+        String time = scheduledTime == null ? null : scheduledTime.toString();
+        int updated = jdbcTemplate.update("""
+                UPDATE games SET
+                    scheduled_at = CASE WHEN CAST(? AS TIME) IS NULL THEN NULL
+                        ELSE (game_date + CAST(? AS TIME)) AT TIME ZONE 'Asia/Seoul' END,
+                    stadium = ?, status = ?, status_reason = ?, is_cancelled = ?, is_postponed = ?,
+                    cancel_reason = ?, raw_cancel_text = ?,
+                    final_confirmed_at = CASE WHEN ? = 'final' THEN final_confirmed_at ELSE NULL END,
+                    source_updated_at = ?, updated_at = ?
+                WHERE public_game_id = ?
+                """, time, time, normalizedStadium, parsedStatus.getApiValue(), normalizedReason, cancelled, postponed,
+                normalizedCancelReason, cancelled || postponed ? normalizedReason : null, parsedStatus.getApiValue(),
+                OffsetDateTime.now(clock), OffsetDateTime.now(clock), publicGameId);
+        return updated == 1;
+    }
+
+    private String editText(String value, int maxLength, String label) {
+        String normalized = value == null ? null : value.trim();
+        if (normalized != null && normalized.length() > maxLength) {
+            throw new IllegalArgumentException(label + "은(는) " + maxLength + "자 이하여야 합니다.");
+        }
+        return normalized == null || normalized.isBlank() ? null : normalized;
+    }
+
+    public record GameEditView(LocalTime scheduledTime, String stadium, String status,
+                               String statusReason, String cancelReason) {
     }
 
     public Optional<GameDetailView> gameDetail(String publicGameId) {

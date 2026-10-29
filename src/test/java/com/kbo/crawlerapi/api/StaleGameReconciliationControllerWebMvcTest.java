@@ -11,6 +11,7 @@ import com.kbo.crawlerapi.config.AdminApiKeyFilter;
 import com.kbo.crawlerapi.config.AppSecurityProperties;
 import com.kbo.crawlerapi.config.KboAdminProperties;
 import com.kbo.crawlerapi.config.KboReconcileProperties;
+import com.kbo.crawlerapi.config.SyncProperties;
 import com.kbo.crawlerapi.config.RegistrationRequestSizeLimitFilter;
 import com.kbo.crawlerapi.service.LiveGameSyncService.LiveSyncSummary;
 import com.kbo.crawlerapi.service.StaleGameReconciliationService;
@@ -254,7 +255,7 @@ class StaleGameReconciliationControllerWebMvcTest {
         private List<LocalDate> requestedDates = List.of();
 
         private RecordingStaleGameReconciliationService() {
-            super(new CountingLiveGameSyncService(), new KboReconcileProperties(), FIXED_CLOCK);
+            super(new CountingLiveGameSyncService(), new KboReconcileProperties(), FIXED_CLOCK, enabledSync());
         }
 
         @Override
@@ -325,7 +326,13 @@ class StaleGameReconciliationControllerWebMvcTest {
         properties.setPublicAllowedPastDays(7);
         properties.setPublicCooldown(java.time.Duration.ofMinutes(3));
         properties.setAdminMaxDates(31);
-        return new StaleGameReconciliationService(liveSyncService, properties, FIXED_CLOCK);
+        return new StaleGameReconciliationService(liveSyncService, properties, FIXED_CLOCK, enabledSync());
+    }
+
+    private static SyncProperties enabledSync() {
+        var properties = new SyncProperties();
+        properties.setEnabled(true);
+        return properties;
     }
 
     private static final class CountingLiveGameSyncService extends com.kbo.crawlerapi.service.LiveGameSyncService {

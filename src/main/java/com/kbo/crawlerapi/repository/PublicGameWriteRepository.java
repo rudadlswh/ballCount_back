@@ -273,6 +273,9 @@ public class PublicGameWriteRepository implements ScheduleGameWriteRepository {
     }
 
     private boolean shouldPreserveCancellation(PublicGameRow existing, ParsedScheduleGame parsedGame) {
+        if (com.kbo.crawlerapi.domain.Game.REMOVED_SCHEDULE_REASON.equals(existing.statusReason())) {
+            return false;
+        }
         boolean existingCancelledOrPostponed = existing.cancelled()
                 || existing.postponed()
                 || "cancelled".equals(existing.status())

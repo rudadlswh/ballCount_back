@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.kbo.crawlerapi.config.LiveSyncProperties;
@@ -70,7 +71,7 @@ class LiveGameSyncSchedulerTest {
     }
 
     @Test
-    void noGamesTodayDoesNotCallSyncToday() {
+    void noGamesTodayWaitsForIdleIntervalWithoutSync() {
         RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
         LiveGameSyncScheduler scheduler = scheduler(
                 service,
@@ -82,7 +83,24 @@ class LiveGameSyncSchedulerTest {
         Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
-        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(1));
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
+    }
+
+    @Test
+    void emptyDayWaitEndsAtKoreanMidnightAndNextDayGamesResume() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        GameRepository repository = mock(GameRepository.class);
+        when(repository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(GAME_DATE)).thenReturn(List.of());
+        when(repository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(GAME_DATE.plusDays(1)))
+                .thenReturn(List.of(game(GameStatus.LIVE, "2026-05-01T00:00:00+09:00")));
+        MutableClock clock = new MutableClock("2026-04-30T23:59:40+09:00");
+        LiveGameSyncScheduler scheduler = scheduler(service, properties(), repository, clock);
+
+        assertThat(scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofSeconds(20));
+        assertThat(service.invocationCount.get()).isZero();
+        clock.set("2026-05-01T00:00:00+09:00");
+        assertThat(scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofSeconds(1));
+        assertThat(service.invocationCount.get()).isEqualTo(1);
     }
 
     @Test
@@ -103,7 +121,31 @@ class LiveGameSyncSchedulerTest {
         Duration nextDelay = scheduler.runTickAndGetNextDelay();
 
         assertThat(service.invocationCount.get()).isZero();
-        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(1));
+        assertThat(nextDelay).isEqualTo(Duration.ofMinutes(30));
+    }
+
+    @Test
+    void cancellationOfLastScheduledGameStopsSyncAndWaitsUntilMidnight() {
+        RecordingLiveGameSyncService service = new RecordingLiveGameSyncService();
+        GameRepository repository = mock(GameRepository.class);
+        when(repository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(GAME_DATE))
+                .thenReturn(List.of(
+                        game(GameStatus.CANCELLED, "2026-04-30T18:30:00+09:00"),
+                        game(GameStatus.SCHEDULED, "2026-04-30T18:30:00+09:00")))
+                .thenReturn(List.of(
+                        game(GameStatus.CANCELLED, "2026-04-30T18:30:00+09:00"),
+                        game(GameStatus.CANCELLED, "2026-04-30T18:30:00+09:00")));
+        MutableClock clock = new MutableClock("2026-04-30T18:00:00+09:00");
+        LiveGameSyncScheduler scheduler = scheduler(service, properties(), repository, clock);
+
+        assertThat(scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofMinutes(1));
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+        clock.set("2026-04-30T18:01:00+09:00");
+        assertThat(scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofMinutes(30));
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+        clock.set("2026-04-30T23:59:40+09:00");
+        assertThat(scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofSeconds(20));
+        assertThat(service.invocationCount.get()).isEqualTo(1);
     }
 
     @Test
@@ -395,6 +437,28 @@ class LiveGameSyncSchedulerTest {
         assertThat(harness.tasks).hasSize(3);
     }
 
+    @Test
+    void schedulerStartedInWinterStaysAliveAndResumesInMarch() {
+        var service = new RecordingLiveGameSyncService();
+        var repository = mock(GameRepository.class);
+        var clock = new MutableClock("2027-02-28T23:59:40+09:00");
+        var harness = scheduledHarness(service, properties(), repository, clock);
+        harness.scheduler.start();
+        harness.tasks.get(0).run();
+        assertThat(harness.scheduler.isRunning()).isTrue();
+        assertThat(harness.tasks).hasSize(2);
+        verifyNoInteractions(repository);
+        assertThat(service.invocationCount.get()).isZero();
+        assertThat(harness.scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofSeconds(20));
+
+        clock.set("2027-03-01T00:00:00+09:00");
+        when(repository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(LocalDate.of(2027, 3, 1)))
+                .thenReturn(List.of(game(GameStatus.LIVE, "2027-03-01T00:00:00+09:00")));
+        harness.tasks.get(1).run();
+        assertThat(service.invocationCount.get()).isEqualTo(1);
+        assertThat(harness.tasks).hasSize(3);
+    }
+
     private static LiveGameSyncScheduler scheduler(
             LiveGameSyncService service,
             LiveSyncProperties properties,
@@ -421,6 +485,15 @@ class LiveGameSyncSchedulerTest {
             LiveSyncProperties properties,
             GameRepository repository
     ) {
+        return scheduledHarness(service, properties, repository, clockAt("2026-04-30T12:01:00+09:00"));
+    }
+
+    private static ScheduledHarness scheduledHarness(
+            LiveGameSyncService service,
+            LiveSyncProperties properties,
+            GameRepository repository,
+            Clock clock
+    ) {
         List<Runnable> tasks = new ArrayList<>();
         List<Instant> executionTimes = new ArrayList<>();
         TaskScheduler taskScheduler = mock(TaskScheduler.class);
@@ -441,7 +514,7 @@ class LiveGameSyncSchedulerTest {
                 syncProperties,
                 properties,
                 repository,
-                clockAt("2026-04-30T12:01:00+09:00"),
+                clock,
                 taskScheduler
         );
         return new ScheduledHarness(scheduler, tasks, executionTimes);

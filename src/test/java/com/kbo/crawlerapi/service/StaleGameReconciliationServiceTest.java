@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.kbo.crawlerapi.api.InvalidParameterException;
+import com.kbo.crawlerapi.config.SyncProperties;
 import java.time.*;
 import java.util.Arrays;
 import java.util.List;
@@ -17,7 +18,8 @@ import org.springframework.web.server.ResponseStatusException;
 class StaleGameReconciliationServiceTest {
     private final MutableClock clock = new MutableClock();
     private final LiveGameSyncService sync = mock(LiveGameSyncService.class);
-    private final StaleGameReconciliationService service = new StaleGameReconciliationService(sync, publicProperties(), clock);
+    private final SyncProperties syncProperties = enabledSync();
+    private final StaleGameReconciliationService service = new StaleGameReconciliationService(sync, publicProperties(), clock, syncProperties);
     private final LocalDate today = LocalDate.now(clock);
 
     @Test
@@ -77,6 +79,34 @@ class StaleGameReconciliationServiceTest {
         clock.now = clock.now.plusSeconds(30);
         doReturn(summary(today)).when(sync).sync(today, false);
         assertThat(service.reconcilePublic(List.of(today)).processedDateCount()).isEqualTo(1);
+    }
+
+    @Test
+    void publicRefreshStopsInWinterAndResumesInMarchWithoutRestart() {
+        clock.now = Instant.parse("2026-11-30T15:00:00Z");
+        assertThatThrownBy(() -> service.reconcilePublic(List.of(LocalDate.of(2026, 12, 1))))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        exception -> assertThat(exception.getStatusCode().value()).isEqualTo(503));
+        verifyNoInteractions(sync);
+        clock.now = Instant.parse("2027-02-28T15:00:00Z");
+        var march = LocalDate.of(2027, 3, 1);
+        when(sync.sync(march, false)).thenReturn(summary(march));
+        assertThat(service.reconcilePublic(List.of(march)).processedDateCount()).isEqualTo(1);
+    }
+
+    @Test
+    void explicitlyDisabledSyncAlsoBlocksPublicRefreshDuringSeason() {
+        syncProperties.setEnabled(false);
+        assertThatThrownBy(() -> service.reconcilePublic(List.of(today)))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        exception -> assertThat(exception.getStatusCode().value()).isEqualTo(503));
+        verifyNoInteractions(sync);
+    }
+
+    private static SyncProperties enabledSync() {
+        var properties = new SyncProperties();
+        properties.setEnabled(true);
+        return properties;
     }
 
     private static com.kbo.crawlerapi.config.KboReconcileProperties publicProperties() {

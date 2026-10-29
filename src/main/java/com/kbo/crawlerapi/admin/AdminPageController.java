@@ -7,6 +7,7 @@ import com.kbo.crawlerapi.service.GameReadService;
 import com.kbo.crawlerapi.api.dto.GameSummaryDto;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.Comparator;
@@ -78,9 +79,32 @@ public class AdminPageController {
             model.addAttribute("message", "경기를 찾을 수 없습니다: " + publicGameId);
             return "admin/not-found";
         }
-        model.addAttribute("activePage", "dashboard");
+        model.addAttribute("activePage", "games");
         model.addAttribute("detail", detail.get());
+        model.addAttribute("gameEdit", dataService.gameEdit(publicGameId).orElse(null));
         return "admin/game-detail";
+    }
+
+    @PostMapping("/admin/games/{publicGameId}")
+    public String updateGame(
+            @PathVariable String publicGameId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime scheduledTime,
+            @RequestParam(required = false) String stadium,
+            @RequestParam String status,
+            @RequestParam(required = false) String statusReason,
+            @RequestParam(required = false) String cancelReason,
+            RedirectAttributes redirectAttributes
+    ) {
+        try {
+            if (!dataService.updateGame(publicGameId, scheduledTime, stadium, status, statusReason, cancelReason)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "경기를 찾을 수 없습니다.");
+            }
+            redirectAttributes.addFlashAttribute("gameEditSuccess", "경기 정보를 저장했습니다.");
+        } catch (IllegalArgumentException exception) {
+            redirectAttributes.addFlashAttribute("gameEditError", exception.getMessage());
+        }
+        redirectAttributes.addAttribute("publicGameId", publicGameId);
+        return "redirect:/admin/games/{publicGameId}";
     }
 
     @GetMapping("/admin/games")

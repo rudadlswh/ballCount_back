@@ -14,7 +14,7 @@
 <div class="app-shell">
     <aside th:replace="~{admin/fragments/sidebar :: sidebar(${activePage})}"></aside>
     <main class="main" id="main-content" tabindex="-1">
-        <a class="back-link" href="/admin/dashboard" th:href="@{/admin/dashboard}">← 대시보드</a>
+        <a class="back-link" href="/admin/games" th:href="@{/admin/games(year=${#strings.substring(detail.game.gameDate,0,4)},month=${#strings.substring(detail.game.gameDate,5,7)})}">← 월별 경기</a>
         <header class="page-header game-heading">
             <div><p class="eyebrow" th:text="${detail.game.publicGameId}">GAME ID</p><h1 th:text="${detail.game.awayTeam + ' vs ' + detail.game.homeTeam}">경기 상세</h1></div>
             <span class="badge badge--success" th:text="${detail.game.status}">live</span>
@@ -36,6 +36,37 @@
             <div><dt>최근 확인</dt><dd th:text="${detail.game.lastCheckedAt}">-</dd></div>
             <div><dt>DB 갱신</dt><dd th:text="${detail.game.updatedAt}">-</dd></div>
         </dl>
+
+        <section class="panel" th:if="${gameEdit != null}">
+            <div class="panel__header"><div><p class="eyebrow">일정 관리</p><h2>경기 정보 수정</h2></div></div>
+            <div class="alert alert--success" role="status" th:if="${gameEditSuccess != null}" th:text="${gameEditSuccess}">저장 완료</div>
+            <div class="alert alert--danger" role="alert" th:if="${gameEditError != null}" th:text="${gameEditError}">저장 실패</div>
+            <form class="manual-notification-form" method="post" th:action="@{/admin/games/{id}(id=${detail.game.publicGameId})}">
+                <input type="hidden" name="_csrf" th:value="${session.KBO_ADMIN_CSRF_TOKEN}">
+                <label><span>경기 상태</span><select name="status" required>
+                    <option value="scheduled" th:selected="${gameEdit.status == 'scheduled'}">예정</option>
+                    <option value="live" th:selected="${gameEdit.status == 'live'}">진행 중</option>
+                    <option value="final" th:selected="${gameEdit.status == 'final'}">종료</option>
+                    <option value="cancelled" th:selected="${gameEdit.status == 'cancelled'}">취소</option>
+                    <option value="postponed" th:selected="${gameEdit.status == 'postponed'}">연기</option>
+                    <option value="delayed" th:selected="${gameEdit.status == 'delayed'}">지연</option>
+                    <option value="suspended" th:selected="${gameEdit.status == 'suspended'}">중단</option>
+                </select></label>
+                <label><span>시작 시각 (한국 시간)</span><input type="time" name="scheduledTime" step="1" th:value="${gameEdit.scheduledTime}"></label>
+                <label><span>구장</span><input name="stadium" maxlength="100" th:value="${gameEdit.stadium}"></label>
+                <label><span>취소 구분 (취소 상태일 때 적용)</span><select name="cancelReason">
+                    <option value="unknown" th:selected="${gameEdit.cancelReason == null || gameEdit.cancelReason == 'unknown'}">미상</option>
+                    <option value="rain" th:selected="${gameEdit.cancelReason == 'rain'}">우천</option>
+                    <option value="ground" th:selected="${gameEdit.cancelReason == 'ground'}">그라운드 사정</option>
+                    <option value="etc" th:selected="${gameEdit.cancelReason == 'etc'}">기타</option>
+                </select></label>
+                <label class="manual-notification-form__wide"><span>상태 사유</span><textarea name="statusReason" maxlength="255" rows="2" th:text="${gameEdit.statusReason}"></textarea></label>
+                <div class="manual-notification-form__wide manual-notification-actions">
+                    <small>저장 즉시 일정에 반영됩니다. 공식 데이터 재수집 시 자동 갱신될 수 있습니다.</small>
+                    <button class="button button--primary" type="submit">경기 정보 저장</button>
+                </div>
+            </form>
+        </section>
 
         <section class="panel" th:unless="${detail.issues.empty}">
             <div class="panel__header"><div><p class="eyebrow">자동 점검</p><h2>이 경기의 운영 이슈</h2></div><span class="count count--danger" th:text="${detail.issues.size()}">0</span></div>

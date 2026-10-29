@@ -1,6 +1,8 @@
 package com.kbo.crawlerapi.scheduler;
 
 import com.kbo.crawlerapi.config.SyncProperties;
+import com.kbo.crawlerapi.domain.GameStatus;
+import com.kbo.crawlerapi.repository.GameRepository;
 import com.kbo.crawlerapi.service.DateSyncLockService;
 import com.kbo.crawlerapi.service.KboScheduleImportService;
 import java.time.Clock;
@@ -22,33 +24,51 @@ public class ScheduleDiscoveryScheduler {
     private final DateSyncLockService locks;
     private final SyncProperties sync;
     private final Clock clock;
+    private final GameRepository games;
     private Instant lastSucceededAt;
-    private YearMonth lastMonth;
+    private Instant nextCheckAt;
+    private LocalDate lastSucceededDate;
 
     public ScheduleDiscoveryScheduler(KboScheduleImportService importer, DateSyncLockService locks,
-                                      SyncProperties sync, Clock clock) {
+                                      SyncProperties sync, Clock clock, GameRepository games) {
         this.importer = importer;
         this.locks = locks;
         this.sync = sync;
         this.clock = clock;
+        this.games = games;
     }
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 5_000)
     public void discover() {
-        if (!sync.isEnabled()) return;
+        if (!sync.isActive(clock)) return;
         LocalDate today = LocalDate.now(clock.withZone(ZoneId.of("Asia/Seoul")));
         YearMonth month = YearMonth.from(today);
-        if (month.equals(lastMonth) && lastSucceededAt != null
-                && clock.instant().isBefore(lastSucceededAt.plus(REFRESH_INTERVAL))) return;
+        if (today.equals(lastSucceededDate)) {
+            if (clock.instant().isBefore(nextCheckAt)) return;
+            // Keep one daily discovery even on off days so an empty database can recover.
+            if (!hasRemainingGames(today)) {
+                nextCheckAt = clock.instant().plus(REFRESH_INTERVAL);
+                return;
+            }
+        }
         try (var lock = locks.tryLock(today)) {
             if (!lock.acquired()) return;
             importer.importMonthlySchedule(month);
             importer.importMonthlySchedule(month.plusMonths(1));
             lastSucceededAt = clock.instant();
-            lastMonth = month;
+            nextCheckAt = lastSucceededAt.plus(REFRESH_INTERVAL);
+            lastSucceededDate = today;
             log.info("[ScheduleDiscovery] refreshed month={} nextMonth={} lastSucceededAt={}", month, month.plusMonths(1), lastSucceededAt);
         } catch (RuntimeException exception) {
             log.warn("[ScheduleDiscovery] refresh failed month={} retryOnNextTick=true", month, exception);
         }
+    }
+
+    private boolean hasRemainingGames(LocalDate date) {
+        return games.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(date).stream()
+                .anyMatch(game -> game.getStatus() != GameStatus.CANCELLED
+                        && game.getStatus() != GameStatus.POSTPONED
+                        && game.getStatus() != GameStatus.SUSPENDED
+                        && (game.getStatus() != GameStatus.FINAL || game.getFinalConfirmedAt() == null));
     }
 }

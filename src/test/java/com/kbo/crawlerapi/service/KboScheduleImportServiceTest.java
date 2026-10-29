@@ -32,6 +32,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -824,6 +826,74 @@ class KboScheduleImportServiceTest {
         assertThat(scheduleGameWriteRepository.awayTeam).isSameAs(kia);
         assertThat(scheduleGameWriteRepository.homeTeam).isSameAs(doosan);
         assertThat(scheduleGameWriteRepository.sourceUpdatedAt).isEqualTo(appliedAt);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void removedPostseasonFixtureIsCancelledInMonthlyAndDailyImports(boolean daily) {
+        LocalDate removedDate = LocalDate.of(2026, 10, 28);
+        Team away = new Team(UUID.randomUUID(), "samsung", "삼성", "삼성", "Samsung", null);
+        Team home = new Team(UUID.randomUUID(), "kia", "KIA", "KIA", "KIA", null);
+        ParsedScheduleGame shifted = new ParsedScheduleGame("kbo", "20261029SSHT0", removedDate.plusDays(1),
+                OffsetDateTime.parse("2026-10-29T18:30:00+09:00"), "광주", GameStatus.SCHEDULED,
+                false, false, "삼성", "KIA", null, null, null, null, null).withSeriesId(5);
+        kboScheduleParser.parseResult = new MonthlyScheduleParseResult(List.of(shifted), List.of());
+        if (!daily) {
+            when(teamRepository.findByTeamCode("samsung")).thenReturn(Optional.of(away));
+            when(teamRepository.findByTeamCode("kia")).thenReturn(Optional.of(home));
+        }
+        Game removed = postseasonFixture("20261028SSHT0", removedDate, GameStatus.SCHEDULED, 5, away, home);
+        Game retained = postseasonFixture("20261029SSHT0", removedDate.plusDays(1), GameStatus.SCHEDULED, 5, away, home);
+        Game regular = postseasonFixture("regular", removedDate, GameStatus.SCHEDULED, 0, away, home);
+        Game otherSeries = postseasonFixture("other-series", removedDate, GameStatus.SCHEDULED, 7, away, home);
+        Game finalGame = postseasonFixture("final", removedDate, GameStatus.FINAL, 5, away, home);
+        Game liveGame = postseasonFixture("live", removedDate, GameStatus.LIVE, 5, away, home);
+        when(gameRepository.findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+                daily ? removedDate : removedDate.withDayOfMonth(1),
+                daily ? removedDate : removedDate.withDayOfMonth(31), GameStatus.SCHEDULED))
+                .thenReturn(List.of(removed, retained, regular, otherSeries, finalGame, liveGame));
+
+        int updated = daily ? kboScheduleImportService.crawlDay(removedDate).gameUpdatedCount()
+                : kboScheduleImportService.importMonthlySchedule(YearMonth.from(removedDate)).gameUpdatedCount();
+
+        assertThat(updated).isEqualTo(1);
+        assertThat(removed.getStatus()).isEqualTo(GameStatus.CANCELLED);
+        assertThat(removed.isCancelled()).isTrue();
+        assertThat(removed.getCancelReason()).isEqualTo(GameCancelReason.ETC);
+        assertThat(removed.getRawCancelText()).contains("공식 일정 변경");
+        verify(gameRepository).save(removed);
+        for (Game untouched : List.of(retained, regular, otherSeries, finalGame, liveGame)) {
+            verify(gameRepository, never()).save(untouched);
+        }
+    }
+
+    @Test
+    void incompleteOrEmptyPostseasonResponseDoesNotCancelExistingFixtures() {
+        var shifted = new ParsedScheduleGame("kbo", "20261029SSHT0", LocalDate.of(2026, 10, 29),
+                null, "광주", GameStatus.SCHEDULED, false, false, "삼성", "KIA",
+                null, null, null, null, null).withSeriesId(5);
+        for (var parsed : List.of(
+                new MonthlyScheduleParseResult(List.of(), List.of()),
+                new MonthlyScheduleParseResult(List.of(shifted), List.of(
+                        new SkippedScheduleRow(LocalDate.of(2026, 10, 28), "ROW_PARSE_ERROR", "", ""))),
+                new MonthlyScheduleParseResult(List.of(new ParsedScheduleGame("kbo", null,
+                        shifted.gameDate(), null, "광주", GameStatus.SCHEDULED, false, false, "삼성", "KIA",
+                        null, null, null, null, null).withSeriesId(5)), List.of()))) {
+            kboScheduleParser.parseResult = parsed;
+            // The daily import has no rows for the old date, but still receives the full monthly response.
+            assertThat(kboScheduleImportService.crawlDay(LocalDate.of(2026, 10, 28)).gameUpdatedCount()).isZero();
+        }
+        verify(gameRepository, never()).findByGameDateBetweenAndStatusOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+                any(), any(), any());
+        verify(gameRepository, never()).save(any());
+    }
+
+    private Game postseasonFixture(String providerId, LocalDate date, GameStatus status, int seriesId, Team away, Team home) {
+        Game game = new Game(UUID.randomUUID(), providerId, "kbo", providerId, date,
+                date.atTime(18, 30).atOffset(ZoneOffset.ofHours(9)), "광주", status, home, away,
+                null, null, null, false, false, null, null, appliedAt.minusDays(1));
+        game.syncSeries(seriesId);
+        return game;
     }
 
     @Test

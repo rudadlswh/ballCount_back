@@ -137,7 +137,16 @@ class AdminTemplateRenderingTest {
 
         mockMvc.perform(get("/admin/games/20260725-LG-KIA"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("KIA vs LG")));
+                .andExpect(content().string(containsString("KIA vs LG")))
+                .andExpect(content().string(containsString("경기 정보 수정")))
+                .andExpect(content().string(containsString("name=\"statusReason\"")));
+        var html = mockMvc.perform(get("/admin/games/20260725-LG-KIA")
+                        .sessionAttr(AdminCsrfFilter.TOKEN_SESSION_ATTRIBUTE, "edit-token"))
+                .andReturn().getResponse().getContentAsString();
+        var form = Jsoup.parse(html).selectFirst("form[action=/admin/games/20260725-LG-KIA]");
+        org.assertj.core.api.Assertions.assertThat(form).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(form.select("input[name=_csrf]").attr("value")).isEqualTo("edit-token");
+        org.assertj.core.api.Assertions.assertThat(form.select("select[name=status] option[selected]").attr("value")).isEqualTo("live");
         mockMvc.perform(get("/admin/issues"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("현재 탐지된 운영 이슈가 없습니다")));
@@ -309,6 +318,11 @@ class AdminTemplateRenderingTest {
         @Override
         public Optional<GameDetailView> gameDetail(String publicGameId) {
             return detail;
+        }
+
+        @Override
+        public Optional<GameEditView> gameEdit(String publicGameId) {
+            return Optional.of(new GameEditView(java.time.LocalTime.of(18, 30), "잠실", "live", null, null));
         }
 
         @Override
