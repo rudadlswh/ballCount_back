@@ -47,7 +47,8 @@ public class CompatibilityBootstrapService {
 
     public CompatibilityBootstrapResponse getBootstrap() {
         LocalDate today = LocalDate.now(applicationClock);
-        List<Game> allGames = gameRepository.findAllByOrderByGameDateAscScheduledAtAscPublicGameIdAsc();
+        List<Game> allGames = gameRepository.findAllByOrderByGameDateAscScheduledAtAscPublicGameIdAsc()
+                .stream().filter(game -> !game.isRemovedFromSchedule()).toList();
 
         Map<UUID, GameSnapshot> todaysSnapshotsByGameId = new HashMap<>();
         allGames.stream()

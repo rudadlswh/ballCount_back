@@ -16,16 +16,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
 class PublicGameWriteRepositoryTest {
 
-    @Test
-    void scheduledRefreshDoesNotOverwriteExistingCancelledGame() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void scheduledRefreshPreservesRainCancellationButRestoresRepublishedFixture(boolean removed) throws Exception {
         UUID homeTeamId = UUID.randomUUID();
         UUID awayTeamId = UUID.randomUUID();
         CapturingJdbcTemplate jdbcTemplate = new CapturingJdbcTemplate(homeTeamId, awayTeamId);
+        jdbcTemplate.removed = removed;
         PublicGameWriteRepository repository = new PublicGameWriteRepository(jdbcTemplate);
         Team lg = new Team(homeTeamId, "lg", "LG Twins", "LG", "LG Twins", null);
         Team hanwha = new Team(awayTeamId, "hanwha", "Hanwha Eagles", "Hanwha", "Hanwha Eagles", null);
@@ -56,18 +60,19 @@ class PublicGameWriteRepositoryTest {
         );
 
         assertThat(result.updated()).isTrue();
-        assertThat(jdbcTemplate.updateArgs[5]).isEqualTo("cancelled");
-        assertThat(jdbcTemplate.updateArgs[10]).isEqualTo("우천취소");
-        assertThat(jdbcTemplate.updateArgs[11]).isEqualTo(true);
+        assertThat(jdbcTemplate.updateArgs[5]).isEqualTo(removed ? "scheduled" : "cancelled");
+        assertThat(jdbcTemplate.updateArgs[10]).isEqualTo(removed ? null : "우천취소");
+        assertThat(jdbcTemplate.updateArgs[11]).isEqualTo(!removed);
         assertThat(jdbcTemplate.updateArgs[12]).isEqualTo(false);
-        assertThat(jdbcTemplate.updateArgs[13]).isEqualTo("rain");
-        assertThat(jdbcTemplate.updateArgs[14]).isEqualTo("우천취소");
+        assertThat(jdbcTemplate.updateArgs[13]).isEqualTo(removed ? null : "rain");
+        assertThat(jdbcTemplate.updateArgs[14]).isEqualTo(removed ? null : "우천취소");
     }
 
     private static final class CapturingJdbcTemplate extends JdbcTemplate {
         private final UUID homeTeamId;
         private final UUID awayTeamId;
         private Object[] updateArgs = new Object[0];
+        private boolean removed;
 
         private CapturingJdbcTemplate(UUID homeTeamId, UUID awayTeamId) {
             this.homeTeamId = homeTeamId;
@@ -77,7 +82,7 @@ class PublicGameWriteRepositoryTest {
         @Override
         public <T> List<T> query(String sql, RowMapper<T> rowMapper, Object... args) {
             try {
-                return List.of(rowMapper.mapRow(cancelledResultSet(homeTeamId, awayTeamId), 0));
+                return List.of(rowMapper.mapRow(cancelledResultSet(homeTeamId, awayTeamId, removed), 0));
             } catch (Exception exception) {
                 throw new IllegalStateException(exception);
             }
@@ -90,7 +95,7 @@ class PublicGameWriteRepositoryTest {
         }
     }
 
-    private static ResultSet cancelledResultSet(UUID homeTeamId, UUID awayTeamId) throws Exception {
+    private static ResultSet cancelledResultSet(UUID homeTeamId, UUID awayTeamId, boolean removed) throws Exception {
         UUID gameId = UUID.randomUUID();
         OffsetDateTime previousUpdatedAt = OffsetDateTime.of(2026, 7, 5, 16, 0, 0, 0, ZoneOffset.ofHours(9));
         Map<String, Object> values = new HashMap<>();
@@ -106,7 +111,7 @@ class PublicGameWriteRepositoryTest {
         values.put("away_team_id", awayTeamId);
         values.put("home_score", null);
         values.put("away_score", null);
-        values.put("status_reason", "우천취소");
+        values.put("status_reason", removed ? com.kbo.crawlerapi.domain.Game.REMOVED_SCHEDULE_REASON : "우천취소");
         values.put("is_cancelled", true);
         values.put("is_postponed", false);
         values.put("cancel_reason", GameCancelReason.RAIN.getApiValue());

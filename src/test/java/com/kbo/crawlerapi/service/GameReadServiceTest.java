@@ -72,6 +72,30 @@ class GameReadServiceTest {
     }
 
     @Test
+    void removedFixturesDisappearFromSchedulesButRealRainCancellationsRemain() {
+        LocalDate date = LocalDate.of(2026, 10, 28);
+        Team home = new Team(UUID.randomUUID(), "kia", "KIA", "KIA", "KIA", null);
+        Team away = new Team(UUID.randomUUID(), "samsung", "삼성", "삼성", "Samsung", null);
+        Game removed = new Game(UUID.randomUUID(), "removed", "kbo", "20261028SSHT0", date,
+                date.atTime(18, 30).atOffset(ZoneOffset.ofHours(9)), "광주", GameStatus.CANCELLED,
+                home, away, null, null, null, true, false, GameCancelReason.ETC,
+                Game.REMOVED_SCHEDULE_REASON, OffsetDateTime.now(FIXED_CLOCK));
+        removed.syncSeries(5);
+        removed.syncDetail(GameStatus.CANCELLED, null, null, null, true, false, GameCancelReason.ETC,
+                Game.REMOVED_SCHEDULE_REASON, null, null, null, Game.REMOVED_SCHEDULE_REASON, OffsetDateTime.now(FIXED_CLOCK));
+        Game rain = new Game(UUID.randomUUID(), "rain", "kbo", "20261025HTSS0", date,
+                date.atTime(14, 0).atOffset(ZoneOffset.ofHours(9)), "대구", GameStatus.CANCELLED,
+                home, away, null, null, null, true, false, GameCancelReason.RAIN, "우천취소", OffsetDateTime.now(FIXED_CLOCK));
+        rain.syncSeries(5);
+        when(gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(date)).thenReturn(List.of(removed, rain));
+        when(gameRepository.findByGameDateBetweenOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
+                date.withDayOfMonth(1), date.withDayOfMonth(31))).thenReturn(List.of(removed, rain));
+        assertThat(gameReadService.getGamesByDate(date).games()).extracting(game -> game.id()).containsExactly("rain");
+        assertThat(gameReadService.getGamesByMonth(YearMonth.from(date)).games()).extracting(game -> game.id()).containsExactly("rain");
+        assertThat(gameReadService.getScoreboard(date).games()).hasSize(1);
+    }
+
+    @Test
     void getGamesByDateMapsScheduledGameWithNullableScores() {
         Team lg = new Team(
                 UUID.fromString("11111111-1111-1111-1111-111111111111"),

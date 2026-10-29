@@ -20,6 +20,14 @@ import jakarta.persistence.Table;
 @Table(name = "games")
 public class Game {
 
+    public static final String REMOVED_SCHEDULE_REASON = "포스트시즌 공식 일정 변경으로 기존 일정 제외";
+
+    public boolean isRemovedFromSchedule() {
+        return status == GameStatus.CANCELLED
+                && GameSeasonType.POSTSEASON.getApiValue().equals(seasonType)
+                && REMOVED_SCHEDULE_REASON.equals(statusReason);
+    }
+
     @Id
     private UUID id;
 

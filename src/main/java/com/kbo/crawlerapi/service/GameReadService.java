@@ -95,7 +95,8 @@ public class GameReadService {
     }
 
     public GamesByDateResponse getGamesByDate(LocalDate date) {
-        List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(date);
+        List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(date)
+                .stream().filter(game -> !game.isRemovedFromSchedule()).toList();
         return new GamesByDateResponse(date, toGameSummaries(games), latestUpdatedAt(games), false);
     }
 
@@ -103,13 +104,14 @@ public class GameReadService {
         List<Game> games = gameRepository.findByGameDateBetweenOrderByGameDateAscScheduledAtAscPublicGameIdAsc(
                 yearMonth.atDay(1),
                 yearMonth.atEndOfMonth()
-        );
+        ).stream().filter(game -> !game.isRemovedFromSchedule()).toList();
         return new GamesByMonthResponse(yearMonth.getYear(), yearMonth.getMonthValue(), toGameSummaries(games), latestUpdatedAt(games), false);
     }
 
     public ScoreboardResponse getScoreboard(LocalDate date) {
         LocalDate targetDate = date != null ? date : LocalDate.now(applicationClock);
-        List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate);
+        List<Game> games = gameRepository.findByGameDateOrderByScheduledAtAscPublicGameIdAsc(targetDate)
+                .stream().filter(game -> !game.isRemovedFromSchedule()).toList();
         return new ScoreboardResponse(targetDate, games.stream().map(this::toScoreboardGame).toList(), latestUpdatedAt(games), false);
     }
 
