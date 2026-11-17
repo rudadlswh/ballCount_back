@@ -95,7 +95,7 @@ public class LiveGameSyncScheduler implements SmartLifecycle {
         }
         if (syncProperties.isOffSeason(applicationClock)) {
             return logAndReturn(TickOutcome.skip("idle:off-season",
-                    idleDelay(LocalDate.now(applicationClock.withZone(KST))), "off season: December through February KST"));
+                    idleDelay(LocalDate.now(applicationClock.withZone(KST))), "off season: automatic sync paused until March KST"));
         }
 
         if (!running.compareAndSet(false, true)) {

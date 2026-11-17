@@ -19,8 +19,12 @@ public class SyncProperties {
     }
 
     public boolean isOffSeason(Clock clock) {
-        int month = LocalDate.now(clock.withZone(ZoneId.of("Asia/Seoul"))).getMonthValue();
-        return month == 12 || month <= 2;
+        LocalDate today = LocalDate.now(clock.withZone(ZoneId.of("Asia/Seoul")));
+        int month = today.getMonthValue();
+        // The 2026 season has ended; keep future November postseasons enabled.
+        boolean season2026Ended = !today.isBefore(LocalDate.of(2026, 11, 17))
+                && today.isBefore(LocalDate.of(2027, 3, 1));
+        return season2026Ended || month == 12 || month <= 2;
     }
 
     public boolean isActive(Clock clock) {

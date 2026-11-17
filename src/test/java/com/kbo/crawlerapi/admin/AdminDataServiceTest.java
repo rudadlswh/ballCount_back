@@ -17,7 +17,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 class AdminDataServiceTest {
     @ParameterizedTest
     @CsvSource({
-            "2026-11-30T14:59:59Z, true, 실행 중, success",
+            "2026-11-16T14:59:59Z, true, 실행 중, success",
+            "2026-11-16T15:00:00Z, true, 비시즌 대기, muted",
+            "2026-11-30T14:59:59Z, true, 비시즌 대기, muted",
             "2026-11-30T15:00:00Z, true, 비시즌 대기, muted",
             "2027-02-28T15:00:00Z, true, 실행 중, success",
             "2027-02-28T15:00:00Z, false, 비활성, muted"

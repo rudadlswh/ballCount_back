@@ -19,8 +19,12 @@ class NotificationOutboxSchedulerTest {
         var sync = new SyncProperties(); sync.setEnabled(true);
         var clock = mock(Clock.class);
         when(clock.withZone(any())).thenAnswer(invocation -> Clock.fixed(clock.instant(), invocation.getArgument(0)));
-        when(clock.instant()).thenReturn(Instant.parse("2027-02-28T14:59:59Z"));
+        when(clock.instant()).thenReturn(Instant.parse("2026-11-16T15:00:00Z"));
         var scheduler = new NotificationOutboxScheduler(outbox, delivery, sync, clock, Runnable::run);
+        scheduler.recover();
+        verifyNoInteractions(outbox, delivery);
+
+        when(clock.instant()).thenReturn(Instant.parse("2027-02-28T14:59:59Z"));
         scheduler.recover();
         verifyNoInteractions(outbox, delivery);
 
