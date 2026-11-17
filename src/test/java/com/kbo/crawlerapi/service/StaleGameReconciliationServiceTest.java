@@ -83,8 +83,8 @@ class StaleGameReconciliationServiceTest {
 
     @Test
     void publicRefreshStopsInWinterAndResumesInMarchWithoutRestart() {
-        clock.now = Instant.parse("2026-11-30T15:00:00Z");
-        assertThatThrownBy(() -> service.reconcilePublic(List.of(LocalDate.of(2026, 12, 1))))
+        clock.now = Instant.parse("2026-11-16T15:00:00Z");
+        assertThatThrownBy(() -> service.reconcilePublic(List.of(LocalDate.of(2026, 11, 17))))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         exception -> assertThat(exception.getStatusCode().value()).isEqualTo(503));
         verifyNoInteractions(sync);

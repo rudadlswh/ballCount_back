@@ -178,7 +178,7 @@ class ScheduleDiscoverySchedulerTest {
         var sync = new SyncProperties(); sync.setEnabled(true);
         var clock = mock(Clock.class);
         when(clock.withZone(any())).thenAnswer(invocation -> Clock.fixed(clock.instant(), invocation.getArgument(0)));
-        when(clock.instant()).thenReturn(Instant.parse("2026-11-30T15:00:00Z"));
+        when(clock.instant()).thenReturn(Instant.parse("2026-11-16T15:00:00Z"));
         var scheduler = new ScheduleDiscoveryScheduler(importer, new DateSyncLockService(), sync, clock, games);
         scheduler.discover();
         verifyNoInteractions(importer, games);

@@ -11,12 +11,17 @@ import org.junit.jupiter.params.provider.CsvSource;
 class SyncPropertiesTest {
     @ParameterizedTest
     @CsvSource({
-            "2026-11-30T14:59:59Z, false",
+            "2026-11-16T14:59:59Z, false",
+            "2026-11-16T15:00:00Z, true",
+            "2026-11-17T03:00:00Z, true",
+            "2026-11-30T14:59:59Z, true",
             "2026-11-30T15:00:00Z, true",
             "2027-01-15T00:00:00Z, true",
             "2027-02-15T00:00:00Z, true",
             "2027-02-28T14:59:59Z, true",
             "2027-02-28T15:00:00Z, false",
+            "2027-11-16T15:00:00Z, false",
+            "2027-11-30T14:59:59Z, false",
             "2027-11-30T15:00:00Z, true",
             "2028-02-29T00:00:00Z, true",
             "2028-02-29T14:59:59Z, true",

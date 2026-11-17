@@ -441,7 +441,7 @@ class LiveGameSyncSchedulerTest {
     void schedulerStartedInWinterStaysAliveAndResumesInMarch() {
         var service = new RecordingLiveGameSyncService();
         var repository = mock(GameRepository.class);
-        var clock = new MutableClock("2027-02-28T23:59:40+09:00");
+        var clock = new MutableClock("2026-11-17T00:00:00+09:00");
         var harness = scheduledHarness(service, properties(), repository, clock);
         harness.scheduler.start();
         harness.tasks.get(0).run();
@@ -449,6 +449,9 @@ class LiveGameSyncSchedulerTest {
         assertThat(harness.tasks).hasSize(2);
         verifyNoInteractions(repository);
         assertThat(service.invocationCount.get()).isZero();
+        assertThat(harness.scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofMinutes(30));
+
+        clock.set("2027-02-28T23:59:40+09:00");
         assertThat(harness.scheduler.runTickAndGetNextDelay()).isEqualTo(Duration.ofSeconds(20));
 
         clock.set("2027-03-01T00:00:00+09:00");

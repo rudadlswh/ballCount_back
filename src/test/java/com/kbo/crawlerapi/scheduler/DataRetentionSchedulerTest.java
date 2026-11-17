@@ -39,8 +39,11 @@ class DataRetentionSchedulerTest {
         sync.setEnabled(true);
         var changingClock = mock(Clock.class);
         when(changingClock.withZone(any())).thenAnswer(invocation -> Clock.fixed(changingClock.instant(), invocation.getArgument(0)));
-        when(changingClock.instant()).thenReturn(Instant.parse("2027-02-28T14:59:59Z"));
+        when(changingClock.instant()).thenReturn(Instant.parse("2026-11-16T15:00:00Z"));
         var scheduler = new DataRetentionScheduler(retention, sync, true, changingClock);
+        scheduler.cleanup();
+        verifyNoInteractions(retention);
+        when(changingClock.instant()).thenReturn(Instant.parse("2027-02-28T14:59:59Z"));
         scheduler.cleanup();
         verifyNoInteractions(retention);
         when(changingClock.instant()).thenReturn(Instant.parse("2027-02-28T15:00:00Z"));
